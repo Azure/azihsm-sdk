@@ -197,7 +197,7 @@ fn ecc_public_props_for(dev_pub: &HsmKeyProps, priv_props: &HsmKeyProps) -> HsmK
 /// 66 -> 68). DER SPKI expects big-endian coordinates of exactly the
 /// curve's component length, so each half is reversed and its leading
 /// zero padding removed.
-fn ecc_wire_pub_key_to_der(curve: HsmEccCurve, wire: &[u8]) -> HsmResult<Vec<u8>> {
+pub(crate) fn ecc_wire_pub_key_to_der(curve: HsmEccCurve, wire: &[u8]) -> HsmResult<Vec<u8>> {
     // TBOR public keys are exactly two word-aligned wire coordinates
     // (x ‖ y): 64 / 96 / 136 B for P-256 / P-384 / P-521.
     let coord = curve.component_size();
