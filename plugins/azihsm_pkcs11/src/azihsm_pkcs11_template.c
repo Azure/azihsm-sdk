@@ -12,6 +12,7 @@
 #include "azihsm_pkcs11_template.h"
 
 #include <stddef.h>
+#include <string.h>
 
 const CK_ATTRIBUTE *azihsm_pkcs11_tmpl_find(
     const CK_ATTRIBUTE *tmpl,
@@ -44,6 +45,32 @@ CK_RV azihsm_pkcs11_tmpl_bool(const CK_ATTRIBUTE *a, CK_BBOOL *out)
         return CKR_ATTRIBUTE_VALUE_INVALID;
     }
     *out = (*(const CK_BBOOL *)a->pValue != CK_FALSE) ? CK_TRUE : CK_FALSE;
+    return CKR_OK;
+}
+
+/* CKA_CLASS, CKA_KEY_TYPE and CKA_VALUE_LEN are all CK_ULONG-wide, so one
+ * decoder serves all three; the call sites keep naming their own type. */
+_Static_assert(sizeof(CK_OBJECT_CLASS) == sizeof(CK_ULONG), "CKA_CLASS is CK_ULONG-wide");
+_Static_assert(sizeof(CK_KEY_TYPE) == sizeof(CK_ULONG), "CKA_KEY_TYPE is CK_ULONG-wide");
+
+/*
+ * Read a CK_ULONG-wide template attribute into *out; length must match exactly.
+ * pValue is whatever pointer the caller handed us and carries no alignment
+ * guarantee (a template packed into a byte buffer is enough to misalign it),
+ * so the value is copied out instead of dereferenced through a cast. Reading
+ * a CK_BBOOL needs no such care: it is one byte wide.
+ */
+static CK_RV tmpl_ulong(const CK_ATTRIBUTE *a, CK_ULONG *out)
+{
+    if ((a == NULL) || (a->pValue == NULL) || (out == NULL))
+    {
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    if (a->ulValueLen != sizeof(CK_ULONG))
+    {
+        return CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    memcpy(out, a->pValue, sizeof(*out));
     return CKR_OK;
 }
 
@@ -81,35 +108,38 @@ CK_RV azihsm_pkcs11_keygen_check_template(
             return CKR_TEMPLATE_INCONSISTENT;
         }
         CK_BBOOL b = CK_FALSE;
+        CK_ULONG scalar = 0;
         CK_RV rv = CKR_OK;
         switch (a->type)
         {
         case CKA_CLASS:
-            if (a->ulValueLen != sizeof(CK_OBJECT_CLASS))
+            rv = tmpl_ulong(a, &scalar);
+            if (rv != CKR_OK)
             {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
+                return rv;
             }
-            if (*(const CK_OBJECT_CLASS *)a->pValue != CKO_SECRET_KEY)
+            if ((CK_OBJECT_CLASS)scalar != CKO_SECRET_KEY)
             {
                 return CKR_TEMPLATE_INCONSISTENT;
             }
             break;
         case CKA_KEY_TYPE:
-            if (a->ulValueLen != sizeof(CK_KEY_TYPE))
+            rv = tmpl_ulong(a, &scalar);
+            if (rv != CKR_OK)
             {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
+                return rv;
             }
-            if (*(const CK_KEY_TYPE *)a->pValue != CKK_AES)
+            if ((CK_KEY_TYPE)scalar != CKK_AES)
             {
                 return CKR_TEMPLATE_INCONSISTENT;
             }
             break;
         case CKA_VALUE_LEN:
-            if (a->ulValueLen != sizeof(CK_ULONG))
+            rv = tmpl_ulong(a, value_len);
+            if (rv != CKR_OK)
             {
-                return CKR_ATTRIBUTE_VALUE_INVALID;
+                return rv;
             }
-            *value_len = *(const CK_ULONG *)a->pValue;
             if ((*value_len != AES128_KEY_BYTES) && (*value_len != AES192_KEY_BYTES) &&
                 (*value_len != AES256_KEY_BYTES))
             {

@@ -208,11 +208,36 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
         return CKR_BUFFER_TOO_SMALL;
     }
 
+    /* Nothing stops a caller from passing one buffer as both pData and
+     * pEncryptedData. The native API would then hold an immutable slice over
+     * the input and a mutable one over the output while both describe the same
+     * bytes, which Rust does not allow, so stage the input in a private copy
+     * whenever the two ranges touch. Only the fill call needs this: the sizing
+     * pass above writes nothing. */
+    CK_BYTE *staged = NULL;
+    if ((in_len > 0) && ((uintptr_t)in < ((uintptr_t)out + required)) &&
+        ((uintptr_t)out < ((uintptr_t)in + in_len)))
+    {
+        staged = (CK_BYTE *)malloc(in_len);
+        if (staged == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        memcpy(staged, in, in_len);
+        inbuf.ptr = staged;
+    }
+
     memcpy(params.iv, iv, sizeof(params.iv)); /* the sizing pass advanced it */
     outbuf.ptr = out;
     outbuf.len = (uint32_t)required;
     st = encrypt ? azihsm_crypt_encrypt(&algo, key_handle, &inbuf, &outbuf)
                  : azihsm_crypt_decrypt(&algo, key_handle, &inbuf, &outbuf);
+    if (staged != NULL)
+    {
+        /* The copy held plaintext or ciphertext and does not outlive the call. */
+        azihsm_pkcs11_wipe(staged, in_len);
+        free(staged);
+    }
     if (st != AZIHSM_STATUS_SUCCESS)
     {
         AZIHSM_PKCS11_LOG("crypt_%s failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);

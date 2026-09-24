@@ -32,8 +32,10 @@ the spec requires). Implemented so far:
   `pkcs11-tool --keygen` needs its `--sensitive` flag for this reason).
 - **`C_Encrypt` / `C_Decrypt` one-shot (`CKM_AES_CBC`, `CKM_AES_CBC_PAD`)** —
   each `C_EncryptInit`/`C_DecryptInit` unmasks the stored blob into a fresh
-  session-scoped device key that lives exactly as long as the operation.
-  Multi-part (`C_EncryptUpdate`…), AES-GCM/XTS and the other key-backed
+  session-scoped device key that lives exactly as long as the operation. Input
+  and output may be the same buffer; the binding stages the input whenever the
+  two ranges overlap, because the native API cannot hold a read and a write
+  slice over the same bytes. Multi-part (`C_EncryptUpdate`…), AES-GCM/XTS and the other key-backed
   mechanisms (RSA/ECDSA, wrap/unwrap, derive) are not implemented yet.
 
 ## Layering
@@ -82,7 +84,8 @@ for stderr tracing.
 that link the translation unit directly: `tests/digest_kat_test.c` (NIST
 vectors), the object-store harnesses, and `tests/aes_template_test.c` (the
 complete CK_RV matrix of the keygen template validation and defaults, plus the
-status maps). `integration-tests/cpp/` is the functional suite (GoogleTest,
+status maps; built with UBSan, so the misaligned caller template it feeds the
+decoder is a real check). `integration-tests/cpp/` is the functional suite (GoogleTest,
 same shape as the OpenSSL provider's): it `dlopen`s the built module and
 drives the real Cryptoki ABI — keygen, one-shot CBC round trips, the two-call
 sizing discipline, the operation state machine and init precedence — so it

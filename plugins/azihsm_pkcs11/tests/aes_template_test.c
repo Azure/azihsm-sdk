@@ -264,6 +264,52 @@ static void test_check_accept(void)
     );
 }
 
+/*
+ * A caller that packs its whole template into one byte buffer hands us pValue
+ * pointers with no particular alignment. Built with -fsanitize=undefined (see
+ * the CI workflow and run_validation.sh) this is also what catches a plain
+ * cast creeping back into the decoder.
+ */
+static void test_check_unaligned(void)
+{
+    printf("== keygen_check_template: unaligned attribute values ==\n");
+    static unsigned char blob[64];
+    CK_OBJECT_CLASS cls = CKO_SECRET_KEY;
+    CK_KEY_TYPE kt = CKK_AES;
+    CK_ULONG vlen = AES192_KEY_BYTES;
+    CK_BBOOL tok = CK_TRUE;
+    /* Starting at offset 1 puts every CK_ULONG-wide value on an odd address. */
+    unsigned char *p_cls = blob + 1;
+    unsigned char *p_kt = p_cls + sizeof(CK_OBJECT_CLASS);
+    unsigned char *p_vlen = p_kt + sizeof(CK_KEY_TYPE);
+    unsigned char *p_tok = p_vlen + sizeof(CK_ULONG);
+    memcpy(p_cls, &cls, sizeof(cls));
+    memcpy(p_kt, &kt, sizeof(kt));
+    memcpy(p_vlen, &vlen, sizeof(vlen));
+    memcpy(p_tok, &tok, sizeof(tok));
+
+    CK_ATTRIBUTE tmpl[] = {
+        { CKA_CLASS, p_cls, sizeof(CK_OBJECT_CLASS) },
+        { CKA_KEY_TYPE, p_kt, sizeof(CK_KEY_TYPE) },
+        { CKA_VALUE_LEN, p_vlen, sizeof(CK_ULONG) },
+        { CKA_TOKEN, p_tok, sizeof(CK_BBOOL) },
+    };
+    CK_ULONG len = 0;
+    CK_BBOOL token = CK_FALSE;
+    CHECK(
+        (check(tmpl, COUNT(tmpl), &len, &token) == CKR_OK) && (len == AES192_KEY_BYTES) &&
+            (token == CK_TRUE),
+        "values at odd addresses decode as they would aligned"
+    );
+
+    CK_KEY_TYPE not_aes = CKK_DES3;
+    memcpy(p_kt, &not_aes, sizeof(not_aes));
+    CHECK(
+        check(tmpl, COUNT(tmpl), NULL, NULL) == CKR_TEMPLATE_INCONSISTENT,
+        "an unaligned non-AES CKA_KEY_TYPE is still rejected"
+    );
+}
+
 static void test_check_reject(void)
 {
     printf("== keygen_check_template: rejected templates ==\n");
@@ -727,6 +773,7 @@ int main(void)
     test_tmpl_bool();
     test_check_arguments();
     test_check_accept();
+    test_check_unaligned();
     test_check_reject();
     test_check_order();
     test_build();

@@ -60,8 +60,10 @@ gcc -Wall -Wextra -Werror $inc "$HERE/objstore_stress_test.c" $store_src \
 "$WORK/objstore_file_test" | tail -n 1
 "$WORK/objstore_stress_test" | tail -n 1
 
-echo; echo "== AES keygen template + status map unit test (no device) =="
-gcc -Wall -Wextra -Werror \
+echo; echo "== AES keygen template + status map unit test (no device, UBSan) =="
+# UBSan: the decoder reads caller-supplied pointers with no alignment
+# guarantee, and the harness feeds it a deliberately misaligned template.
+gcc -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     -I"$PLUGIN/include/pkcs11-v3.1" -I"$PLUGIN/src" \
     "$HERE/aes_template_test.c" \
     "$PLUGIN/src/azihsm_pkcs11_template.c" "$PLUGIN/src/azihsm_pkcs11_status.c" \

@@ -114,6 +114,45 @@ TEST_F(aes_cbc, same_input_same_iv_gives_same_ciphertext)
     EXPECT_EQ(a, b);
 }
 
+TEST_F(aes_cbc, in_place_matches_the_out_of_place_result)
+{
+    // Nothing stops an application from passing one buffer as both pData and
+    // pEncryptedData. The binding stages the input when the ranges overlap, so
+    // the answer has to be the one the out-of-place call gives.
+    std::vector<CK_BYTE> ref;
+    ASSERT_NO_FATAL_FAILURE(encrypt_plain_pad(ref));
+
+    std::vector<CK_BYTE> buf(48, 0);
+    std::copy(plain_.begin(), plain_.end(), buf.begin());
+    CK_ULONG len = static_cast<CK_ULONG>(buf.size());
+    ASSERT_CKR_OK(p11()->C_EncryptInit(s_, &pad_, key_));
+    ASSERT_CKR_OK(p11()->C_Encrypt(s_, buf.data(), 40, buf.data(), &len));
+    ASSERT_EQ(48u, len);
+    EXPECT_EQ(ref, buf);
+
+    len = static_cast<CK_ULONG>(buf.size());
+    ASSERT_CKR_OK(p11()->C_DecryptInit(s_, &pad_, key_));
+    ASSERT_CKR_OK(p11()->C_Decrypt(s_, buf.data(), 48, buf.data(), &len));
+    ASSERT_EQ(40u, len);
+    buf.resize(len);
+    EXPECT_EQ(plain_, buf);
+}
+
+TEST_F(aes_cbc, output_overlapping_the_tail_of_the_input_is_correct)
+{
+    // The other overlap: the buffers share bytes without sharing a start.
+    std::vector<CK_BYTE> ref;
+    ASSERT_NO_FATAL_FAILURE(encrypt_plain_pad(ref));
+
+    std::vector<CK_BYTE> buf(56, 0);
+    std::copy(plain_.begin(), plain_.end(), buf.begin());
+    CK_ULONG len = 48;
+    ASSERT_CKR_OK(p11()->C_EncryptInit(s_, &pad_, key_));
+    ASSERT_CKR_OK(p11()->C_Encrypt(s_, buf.data(), 40, buf.data() + 8, &len));
+    ASSERT_EQ(48u, len);
+    EXPECT_TRUE(std::equal(ref.begin(), ref.end(), buf.begin() + 8));
+}
+
 // ---------------------------------------------------------------------------
 // Failures that terminate the operation
 // ---------------------------------------------------------------------------
