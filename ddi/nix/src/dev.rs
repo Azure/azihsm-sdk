@@ -632,8 +632,8 @@ const MCR_FP_IOC_XTS: u8 = 0x0B;
 const MCR_FP_IOC_GCM: u8 = 0x0C;
 
 /*
- * Define ioctl codes for xts and gcm
- */
+* Define ioctl codes for xts and gcm
+*/
 ioctl_readwrite!(
     mcr_fp_ioctl_cmd_xts,
     MCR_HSM_IOC_MAGIC,
