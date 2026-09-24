@@ -18,7 +18,10 @@ parsed once from the OASIS pkcs11f.h. Regenerate that TSV with:
         print(f"{m.group(1)}\\t{args}")
     PY
 
-Then: python3 tools/gen_stubs.py > src/azihsm_pkcs11_stubs.c
+Then (the checked-in file is the clang-formatted output):
+
+    python3 tools/gen_stubs.py > src/azihsm_pkcs11_stubs.c && \\
+        clang-format-18 -i src/azihsm_pkcs11_stubs.c
 """
 import os
 import sys
@@ -37,6 +40,8 @@ IMPLEMENTED = {
     "C_CreateObject", "C_DestroyObject", "C_FindObjectsInit",
     "C_FindObjects", "C_FindObjectsFinal", "C_GetAttributeValue",
     "C_DigestInit", "C_Digest", "C_DigestUpdate", "C_DigestFinal",
+    "C_GenerateKey", "C_EncryptInit", "C_Encrypt",
+    "C_DecryptInit", "C_Decrypt",
 }
 # Legacy parallel-function calls return CKR_FUNCTION_NOT_PARALLEL per the spec.
 NOT_PARALLEL = {"C_GetFunctionStatus", "C_CancelFunction"}
@@ -50,11 +55,22 @@ HEADER = """// Copyright (c) Microsoft Corporation.
  * Every PKCS#11 entry point not implemented in a dedicated translation unit is
  * defined here as a real symbol returning CKR_FUNCTION_NOT_SUPPORTED (or
  * CKR_FUNCTION_NOT_PARALLEL for the two legacy parallel-execution calls), so the
- * module always exposes a complete CK_FUNCTION_LIST / _3_0.
+ * module always exposes a complete CK_FUNCTION_LIST / _3_0. Like the
+ * implemented entry points they report CKR_CRYPTOKI_NOT_INITIALIZED before
+ * C_Initialize — the spec puts that check first, ahead of what the function
+ * would do.
  */
 
 #include "azihsm_pkcs11_internal.h"
 """
+
+# Emitted first in every stub: the library-state check precedes everything.
+NOT_INITIALIZED_CHECK = [
+    "    if (!g_azihsm_pkcs11.initialized)",
+    "    {",
+    "        return CKR_CRYPTOKI_NOT_INITIALIZED;",
+    "    }",
+]
 
 
 def main():
@@ -65,7 +81,7 @@ def main():
             continue
         rv = "CKR_FUNCTION_NOT_PARALLEL" if name in NOT_PARALLEL \
             else "CKR_FUNCTION_NOT_SUPPORTED"
-        body = [f"\nCK_RV {name}({args})", "{"]
+        body = [f"\nCK_RV {name}({args})", "{"] + NOT_INITIALIZED_CHECK
         if args != "void":
             for a in args.split(","):
                 var = a.strip().split()[-1].lstrip("*")

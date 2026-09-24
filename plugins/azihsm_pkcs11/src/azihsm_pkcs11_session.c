@@ -12,6 +12,9 @@
 #include "azihsm_pkcs11_digest.h"
 #include "azihsm_pkcs11_hsm.h"
 #include "azihsm_pkcs11_internal.h"
+#include "azihsm_pkcs11_template.h"
+
+#include <stdlib.h>
 
 /* ========================================================================= */
 /* Operation state                                                           */
@@ -23,6 +26,10 @@ CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s)
     {
         azihsm_pkcs11_digest_op_free(s->op_ctx);
     }
+    if (((s->op == P11_OP_ENCRYPT) || (s->op == P11_OP_DECRYPT)) && (s->op_ctx != NULL))
+    {
+        azihsm_pkcs11_cipher_op_free(s->op_ctx);
+    }
     s->op_ctx = NULL;
     if (s->op == P11_OP_FIND && s->find_cursor != NULL)
     {
@@ -30,7 +37,79 @@ CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s)
     }
     s->find_cursor = NULL;
     s->op = P11_OP_NONE;
+    s->op_mode = P11_OP_MODE_UNSET;
     return CKR_OK;
+}
+
+/* ========================================================================= */
+/* Session objects (destroyed with their session — the C_CloseSession rule)   */
+/* ========================================================================= */
+
+/* First allocation of a session's owned-object list; doubles from there. */
+#define OWNED_OBJECTS_INITIAL_CAP 8
+
+CK_RV azihsm_pkcs11_session_own_object(azihsm_pkcs11_session_t *s, CK_OBJECT_HANDLE h)
+{
+    if (s == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if (s->owned_count == s->owned_cap)
+    {
+        CK_ULONG cap = (s->owned_cap == 0) ? OWNED_OBJECTS_INITIAL_CAP : (s->owned_cap * 2);
+        CK_OBJECT_HANDLE *grown = (CK_OBJECT_HANDLE *)realloc(s->owned, cap * sizeof(*grown));
+        if (grown == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        s->owned = grown;
+        s->owned_cap = cap;
+    }
+    s->owned[s->owned_count++] = h;
+    return CKR_OK;
+}
+
+void azihsm_pkcs11_session_disown_object(CK_SLOT_ID slot, CK_OBJECT_HANDLE h)
+{
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
+    {
+        azihsm_pkcs11_session_t *s = &g_azihsm_pkcs11.sessions[i];
+        if (!s->in_use || (s->slot != slot))
+        {
+            continue;
+        }
+        for (CK_ULONG j = 0; j < s->owned_count; j++)
+        {
+            if (s->owned[j] == h)
+            {
+                s->owned_count--;
+                s->owned[j] = s->owned[s->owned_count]; /* order is irrelevant */
+                return;
+            }
+        }
+    }
+}
+
+void azihsm_pkcs11_session_destroy_owned(azihsm_pkcs11_session_t *s)
+{
+    if (s == NULL)
+    {
+        return;
+    }
+    for (CK_ULONG i = 0; i < s->owned_count; i++)
+    {
+        /* A session reaps its own objects whatever the login state is: a
+         * C_Logout since they were created would hide the private ones from a
+         * logged-out destroy, hence CK_TRUE. An object a sibling session
+         * destroyed meanwhile is simply gone — store handles are never reused,
+         * so nothing else can be hit. */
+        (void)g_azihsm_pkcs11.store.ops
+            ->destroy(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, s->owned[i]);
+    }
+    free(s->owned);
+    s->owned = NULL;
+    s->owned_count = 0;
+    s->owned_cap = 0;
 }
 
 /* ========================================================================= */
@@ -123,6 +202,7 @@ CK_RV C_CloseSession(CK_SESSION_HANDLE hSession)
     }
     CK_SLOT_ID slot_id = s->slot;
     azihsm_pkcs11_session_reset_op(s);
+    azihsm_pkcs11_session_destroy_owned(s);
     s->in_use = false;
     /* The HSM login is token-wide: close it only when the last session on the
      * slot goes away, not whenever any one session closes. */
@@ -154,6 +234,7 @@ CK_RV C_CloseAllSessions(CK_SLOT_ID slotID)
         if (g_azihsm_pkcs11.sessions[i].in_use && g_azihsm_pkcs11.sessions[i].slot == slotID)
         {
             azihsm_pkcs11_session_reset_op(&g_azihsm_pkcs11.sessions[i]);
+            azihsm_pkcs11_session_destroy_owned(&g_azihsm_pkcs11.sessions[i]);
             g_azihsm_pkcs11.sessions[i].in_use = false;
         }
     }
@@ -307,6 +388,18 @@ CK_RV C_Logout(CK_SESSION_HANDLE hSession)
         azihsm_pkcs11_unlock();
         return CKR_USER_NOT_LOGGED_IN;
     }
+    /* Logout closes the token's device session, and cipher operations hold
+     * device key handles scoped to it: release them first, while the session
+     * they belong to is still alive. */
+    for (size_t i = 0; i < AZIHSM_PKCS11_MAX_SESSIONS; i++)
+    {
+        azihsm_pkcs11_session_t *t = &g_azihsm_pkcs11.sessions[i];
+        if (t->in_use && (t->slot == s->slot) &&
+            ((t->op == P11_OP_ENCRYPT) || (t->op == P11_OP_DECRYPT)))
+        {
+            azihsm_pkcs11_session_reset_op(t);
+        }
+    }
     /* Login is token-wide, so log the token out regardless of which session
      * calls C_Logout — including one that never called C_Login itself. */
     azihsm_pkcs11_hsm_logout(slot->hsm_session);
@@ -347,10 +440,46 @@ CK_RV C_CreateObject(
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
+    /*
+     * Settle CKA_TOKEN before anything is created: it decides both where the
+     * store puts the object and whether this session owns it, and the backends
+     * read the raw value more loosely than the spec allows. Same verdicts as
+     * C_GenerateKey — a wrongly sized value is invalid, and a token object
+     * needs a read/write session.
+     */
+    CK_BBOOL token = CK_FALSE;
+    const CK_ATTRIBUTE *t = azihsm_pkcs11_tmpl_find(pTemplate, ulCount, CKA_TOKEN);
+    CK_RV rv = CKR_OK;
+    if ((t != NULL) && (azihsm_pkcs11_tmpl_bool(t, &token) != CKR_OK))
+    {
+        rv = CKR_ATTRIBUTE_VALUE_INVALID;
+    }
+    else if (token && ((s->flags & CKF_RW_SESSION) == 0))
+    {
+        rv = CKR_SESSION_READ_ONLY;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+
     CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
-    CK_RV rv =
-        g_azihsm_pkcs11.store.ops
-            ->create(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, pTemplate, ulCount, phObject);
+    rv = g_azihsm_pkcs11.store.ops
+             ->create(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, pTemplate, ulCount, phObject);
+    if ((rv == CKR_OK) && !token)
+    {
+        /* CKA_TOKEN defaults to FALSE, so this is a session object: it dies
+         * with the session that created it (the C_CloseSession rule). */
+        rv = azihsm_pkcs11_session_own_object(s, *phObject);
+        if (rv != CKR_OK)
+        {
+            /* Untracked objects are not handed out. */
+            (void)g_azihsm_pkcs11.store.ops
+                ->destroy(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, *phObject);
+            *phObject = CK_INVALID_HANDLE;
+        }
+    }
     azihsm_pkcs11_unlock();
     return rv;
 }
@@ -371,6 +500,10 @@ CK_RV C_DestroyObject(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject)
     CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
     CK_RV rv =
         g_azihsm_pkcs11.store.ops->destroy(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, hObject);
+    if (rv == CKR_OK)
+    {
+        azihsm_pkcs11_session_disown_object(s->slot, hObject);
+    }
     azihsm_pkcs11_unlock();
     return rv;
 }
@@ -509,15 +642,22 @@ CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE hSession)
 /* Digest (host-side; see azihsm_pkcs11_digest.h)                            */
 /* ========================================================================= */
 
+/*
+ * Precedence in the digest entry points, in line with the spec's operation
+ * rules and what conformance tooling checks: a bad session handle is reported
+ * before anything else. C_DigestInit then checks arguments, then operation
+ * state. The data calls check operation state first — with no operation there
+ * is nothing to terminate, so CKR_OPERATION_NOT_INITIALIZED is the answer —
+ * then arguments and the one-shot/multi-part mode; from there on every failure
+ * terminates the operation, and only a successful sizing probe and
+ * CKR_BUFFER_TOO_SMALL keep it alive.
+ */
+
 CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
 {
     if (!g_azihsm_pkcs11.initialized)
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    }
-    if (pMechanism == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
     }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
@@ -525,6 +665,11 @@ CK_RV C_DigestInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism)
     {
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
+    }
+    if (pMechanism == NULL_PTR)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_ARGUMENTS_BAD;
     }
     if (s->op != P11_OP_NONE)
     {
@@ -561,10 +706,6 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulP
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (ulPartLen > 0 && pPart == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -577,6 +718,22 @@ CK_RV C_DigestUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulP
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
+    CK_RV rv = CKR_OK;
+    if ((ulPartLen > 0) && (pPart == NULL_PTR))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_ONESHOT)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* a one-shot C_Digest is in progress */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    s->op_mode = P11_OP_MODE_MULTIPART;
     if (ulPartLen > 0)
     {
         azihsm_pkcs11_digest_op_update(s->op_ctx, pPart, ulPartLen);
@@ -620,14 +777,6 @@ CK_RV C_Digest(
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (pulDigestLen == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
-    if (ulDataLen > 0 && pData == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -640,12 +789,30 @@ CK_RV C_Digest(
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
-    if (pDigest != NULL_PTR && *pulDigestLen >= azihsm_pkcs11_digest_op_len(s->op_ctx) &&
-        ulDataLen > 0)
+    CK_RV rv = CKR_OK;
+    if ((pulDigestLen == NULL_PTR) || ((ulDataLen > 0) && (pData == NULL_PTR)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_MULTIPART)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* only C_DigestFinal may finish it now */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    s->op_mode = P11_OP_MODE_ONESHOT;
+    /* Absorb the data only on the call that will complete: a sizing probe or a
+     * too-small buffer keeps the operation, and the retry supplies it again. */
+    if ((pDigest != NULL_PTR) && (*pulDigestLen >= azihsm_pkcs11_digest_op_len(s->op_ctx)) &&
+        (ulDataLen > 0))
     {
         azihsm_pkcs11_digest_op_update(s->op_ctx, pData, ulDataLen);
     }
-    CK_RV rv = digest_output(s, pDigest, pulDigestLen);
+    rv = digest_output(s, pDigest, pulDigestLen);
     azihsm_pkcs11_unlock();
     return rv;
 }
@@ -656,10 +823,6 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PT
     {
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     }
-    if (pulDigestLen == NULL_PTR)
-    {
-        return CKR_ARGUMENTS_BAD;
-    }
     azihsm_pkcs11_lock();
     azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
     if (s == NULL)
@@ -672,7 +835,24 @@ CK_RV C_DigestFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pDigest, CK_ULONG_PT
         azihsm_pkcs11_unlock();
         return CKR_OPERATION_NOT_INITIALIZED;
     }
-    CK_RV rv = digest_output(s, pDigest, pulDigestLen);
+    CK_RV rv = CKR_OK;
+    if (pulDigestLen == NULL_PTR)
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_ONESHOT)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* a one-shot C_Digest is in progress */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    /* Straight after C_DigestInit this is the (allowed) zero-part case. */
+    s->op_mode = P11_OP_MODE_MULTIPART;
+    rv = digest_output(s, pDigest, pulDigestLen);
     azihsm_pkcs11_unlock();
     return rv;
 }
