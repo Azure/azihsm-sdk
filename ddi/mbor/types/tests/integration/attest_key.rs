@@ -865,9 +865,9 @@ pub(crate) fn helper_get_cert_chain(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<Vec<
              }
  
              let resp = result
-                 .unwrap_or_else(|err| panic!("GetCertificate({i}) failed: {err:?}"));
+                 .unwrap_or_else(|err| panic!("GetCertificate failed: {err:?}"));
              let der = &resp.data.certificate.as_slice();
-             tracing::debug!(cert_id = i, cert_len = der.len(), "Fetched certificate");
+             tracing::debug!("Fetched certificate");
  
              cert_chain.push(der.to_vec());
          }

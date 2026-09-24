@@ -246,7 +246,7 @@ pub fn helper_get_cert_by_id_with_retry(
                  if start.elapsed() > retry_window {
                      return result.map(|r| vec![r]);
                  }
-                 println!("Retrying get_cert for cert_id {} ({:.1}s elapsed)", id, start.elapsed().as_secs_f64());
+                 println!("Retrying GetCertificate");
                  retry_needed = true;
                  break;
              }
@@ -277,7 +277,7 @@ pub fn helper_get_partition_id_pub_key(dev: &mut <DdiTest as Ddi>::Dev) -> Vec<u
          let num_certs = chain_resp.data.num_certs;
          let cert_id = num_certs - 1;
          helper_get_certificate(dev, cert_id)
-             .unwrap_or_else(|err| panic!("GetCertificate({cert_id}) failed: {err:?}"))
+             .unwrap_or_else(|err| panic!("GetCertificate failed: {err:?}"))
      };
     
     let cert_der = resp.data.certificate.as_slice();
@@ -377,9 +377,9 @@ pub fn helper_verify_leaf_cert(
         let mut cert_chain: Vec<Vec<u8>> = Vec::with_capacity(num_certs as usize);
         for i in 0..num_certs - 1 {
             let resp = helper_get_certificate(dev, i)
-                .unwrap_or_else(|err| panic!("GetCertificate({i}) failed: {err:?}"));
+                .unwrap_or_else(|err| panic!("GetCertificate failed: {err:?}"));
             let der = &resp.data.certificate.as_slice();
-            tracing::debug!(cert_id = i, cert_len = der.len(), "Fetched certificate");
+            tracing::debug!("Fetched certificate");
 
             cert_chain.push(der.to_vec());
         }
