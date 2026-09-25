@@ -17,7 +17,6 @@ use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
-use std::sync::LazyLock;
 
 pub type DdiTest = AzihsmDdi;
 

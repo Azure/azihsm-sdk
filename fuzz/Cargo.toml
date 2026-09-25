@@ -61,7 +61,6 @@ doc = false
 name = "fuzz_tbor_session_open_round_trip"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_round_trip.rs"
 test = false
-<<<<<<< HEAD
 
 [[bin]]
 bench = false
@@ -69,5 +68,3 @@ doc = false
 name = "fuzz_tbor_psk_change"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_psk_change.rs"
 test = false
-=======
->>>>>>> main
