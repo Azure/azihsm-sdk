@@ -7,7 +7,7 @@
 //! `GetCertChainInfo` is the TBOR analogue of MBOR `GetCertChainInfo`:
 //! it reports the number of certificates and the leaf-certificate
 //! SHA-256 thumbprint for the caller's partition at a chain slot,
-//! without first establishing a session.The tests round-trip the
+//! without first establishing a session. The tests round-trip the
 //! command, assert stability, cross-check the result against the MBOR
 //! path (same underlying cert store), and confirm an invalid slot is
 //! rejected.
@@ -578,20 +578,14 @@ fn repeated_invalid_slots_do_not_affect_valid_slot() {
     );
 }
 
-/// The maximum certificate index must also be rejected when it lies
-/// outside the range advertised by `num_certs`.
+/// The maximum certificate index must always be rejected because valid
+/// certificate indices are `0..num_certs`.
 #[test]
-fn maximum_certificate_index_rejected_when_out_of_range() {
+fn maximum_certificate_index_rejected() {
     let ctx = TestCtx::new();
 
-    let info = ctx
-        .tbor(&TborGetCertChainInfoReq::new(VALID_SLOT))
-        .expect("GetCertChainInfo");
-
-    if info.num_certs < u8::MAX {
-        ctx.expect_fw_reject(
-            &TborGetCertReq::new(VALID_SLOT, u8::MAX),
-            TborStatus::InvalidArg,
-        );
-    }
+    ctx.expect_fw_reject(
+        &TborGetCertReq::new(VALID_SLOT, u8::MAX),
+        TborStatus::InvalidArg,
+    );
 }

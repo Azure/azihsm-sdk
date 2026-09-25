@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts (last updated 2026-09-16):
-* emu: 97 tests
+* emu: 123 tests
 * mock: 6 tests
 
 ## Legend
@@ -176,6 +176,42 @@ role's partition PSK still matches the compiled-in default.
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 
+
+## `GetCertChainInfo` (opcode out-of-session)
+
+Integration and host-side response-codec coverage for the TBOR
+`GetCertChainInfo` command. The command reports the certificate count
+and leaf-certificate SHA-256 thumbprint for a certificate-chain slot
+without requiring an active session.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Valid slot returns a non-empty certificate chain and a populated SHA-256 thumbprint | ✅ | `get_cert_chain_info::round_trip` | Exercises provisioned slot 0 and verifies `num_certs > 0`, fixed thumbprint length, and non-zero thumbprint data |
+| `TborGetCertChainInfoReq::new` preserves `slot_id` across representative boundary values | ✅ 🔁 | `get_cert_chain_info::request_constructor_preserves_slot_id` | Covers `0`, `1`, `2`, `127`, `254`, and `u8::MAX` |
+| Default request targets slot 0 | ✅ | `get_cert_chain_info::default_request_targets_slot_zero` | Verifies the derived `Default` request value |
+| Default request is equivalent to explicit slot 0 | ✅ | `get_cert_chain_info::default_request_matches_explicit_slot_zero` | Compares complete FW responses |
+| Repeated calls return stable metadata | ✅ | `get_cert_chain_info::repeated_stable` | Two consecutive calls return identical responses |
+| Multiple consecutive calls remain stable | ✅ 🔁 | `get_cert_chain_info::repeated_calls_remain_stable` | Repeats the command several times to detect accidental mutable state |
+| TBOR result matches MBOR `GetCertChainInfo` | ✅ | `get_cert_chain_info::matches_mbor_path` | Cross-checks both `num_certs` and leaf thumbprint against the shared certificate store |
+| Reported `num_certs` defines the valid `GetCert` index range | ✅ 🔁 | `get_cert_chain_info::reported_count_defines_certificate_bounds` | Every advertised certificate is readable; index `num_certs` is rejected with `InvalidArg` |
+| Maximum out-of-range certificate index is rejected | ✅ | | Maximum certificate index is rejected | ✅ | `get_cert_chain_info::maximum_certificate_index_rejected` | `u8::MAX` is outside the valid `0..num_certs` certificate index range |
+| Reading certificates does not mutate chain metadata | ✅ | `get_cert_chain_info::certificate_reads_do_not_change_chain_info` | Compares metadata before and after reading every advertised certificate |
+| Certificate bytes are stable across repeated reads | ✅ 🔁 | `get_cert_chain_info::certificates_are_stable_across_reads` | Reads every advertised certificate twice |
+| Distinct certificate indices do not alias identical certificate bytes | ✅ 🔁 | `get_cert_chain_info::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain |
+| Unsupported slot IDs are rejected with `InvalidArg` | ✅ 🔁 | `get_cert_chain_info::unsupported_slot_boundaries_rejected` | Covers `1`, `2`, `127`, `254`, and `u8::MAX` |
+| First unsupported slot is rejected | ✅ | `get_cert_chain_info::first_unsupported_slot_rejected` | Explicit boundary test for slot 1 |
+| Maximum `slot_id` is rejected | ✅ | `get_cert_chain_info::maximum_slot_id_rejected` | Explicit request-field boundary test for `u8::MAX` |
+| A rejected slot request does not affect valid slot 0 | ✅ | `get_cert_chain_info::invalid_slot_does_not_affect_valid_slot` | Metadata before and after the rejected request must match |
+| Repeated rejected slot requests do not affect valid slot 0 | ✅ 🔁 | `get_cert_chain_info::repeated_invalid_slots_do_not_affect_valid_slot` | Exercises several unsupported IDs before re-reading slot 0 |
+| Out-of-session command remains stable across CO session activity | ✅ | `get_cert_chain_info::stable_across_co_session_activity` | Opens and closes a CO Authenticated session between reads |
+| Out-of-session command remains callable while a CO session is active | ✅ | `get_cert_chain_info::callable_while_co_session_active` | Validates session independence while the CO session remains open |
+| Out-of-session command remains stable across CU session activity | ✅ | `get_cert_chain_info::stable_across_cu_session_activity` | Uses the supported CU PlainText bootstrap session |
+| Out-of-session command remains callable while a CU session is active | ✅ | `get_cert_chain_info::callable_while_cu_session_active` | Uses the supported CU PlainText bootstrap session |
+| Response missing the thumbprint field is rejected as truncated | ✅ | `get_cert_chain_info::truncated_response_rejected` | Expects `DecodeError::MessageTruncated` |
+| Response with maximum TOC entries decodes the known prefix | ✅ | `get_cert_chain_info::max_toc_response_decodes_known_fields` | Verifies forward compatibility with trailing unknown TOC fields |
+| Single unknown trailing response field is ignored | ✅ | `get_cert_chain_info::trailing_unknown_field_is_ignored` | Known `num_certs` and thumbprint fields remain intact |
+| Wrong TOC type for `num_certs` is rejected | ✅ | `get_cert_chain_info::wrong_num_certs_type_rejected` | Encodes `num_certs` as `Uint16`; expects `UnexpectedTocType` |
+| Wrong TOC type for `thumbprint` is rejected | ✅ | `get_cert_chain_info::wrong_thumbprint_type_rejected` | Encodes the thumbprint as `Uint8`; expects `UnexpectedTocType` |
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
