@@ -608,14 +608,18 @@ impl StdHsm {
     /// same runtime-lifetime hazard this method exists to avoid.
     pub async fn shutdown_async(mut self) {
         if let Some(thread) = self.begin_shutdown() {
-            let (tx, rx) = tokio::sync::oneshot::channel();
             let tokio_rt = self.tokio_rt.take();
-            spawn_or_run(move || {
+            // `spawn_blocking` (unlike `spawn_or_run`'s raw `std::thread::spawn`)
+            // dispatches onto tokio's dedicated blocking-thread pool rather than
+            // the async worker threads, so this join can't stall other tasks
+            // scheduled on this runtime even under thread-creation pressure: the
+            // pool reuses idle threads and queues the job rather than running it
+            // synchronously on whatever thread happens to be polling this future.
+            let _ = tokio::task::spawn_blocking(move || {
                 let _ = thread.join();
                 drop(tokio_rt);
-                let _ = tx.send(());
-            });
-            let _ = rx.await;
+            })
+            .await;
         }
         drop(self.tokio_rt.take());
     }
@@ -682,6 +686,12 @@ fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtim
 /// but on failure it drops `job` without running it, so `job` is kept in
 /// a shareable slot here: on failure, this thread reclaims it from that
 /// slot and runs it synchronously instead of losing it.
+///
+/// Only used from [`Drop`]'s synchronous context, where no tokio runtime is
+/// guaranteed to be available; [`StdHsm::shutdown_async`] instead uses
+/// `tokio::task::spawn_blocking`, which can wait for a free blocking-pool
+/// thread instead of ever running the job on a caller-visible thread that
+/// other tasks may depend on.
 fn spawn_or_run(job: impl FnOnce() + Send + 'static) {
     type Job = Box<dyn FnOnce() + Send>;
 
