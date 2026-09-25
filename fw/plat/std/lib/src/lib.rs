@@ -703,11 +703,17 @@ fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtim
 /// a shareable slot here: on failure, this thread reclaims it from that
 /// slot and runs it synchronously instead of losing it.
 ///
-/// Only used from [`Drop`]'s synchronous context, where no tokio runtime is
-/// guaranteed to be available; [`StdHsm::shutdown_async`] instead uses
-/// `tokio::task::spawn_blocking`, which can wait for a free blocking-pool
-/// thread instead of ever running the job on a caller-visible thread that
-/// other tasks may depend on.
+/// Used from both [`Drop`]'s synchronous context (where no tokio runtime
+/// is guaranteed to be available) and [`StdHsm::shutdown_async`] (which
+/// must stay executor-agnostic, so it cannot rely on
+/// `tokio::task::spawn_blocking`'s ambient "current runtime" requirement,
+/// nor on a specific runtime's blocking pool, which would self-deadlock
+/// if that runtime is the very one being dropped by `job`). The
+/// synchronous fallback here is consequently the only way to guarantee
+/// `job` always runs; if OS thread creation fails while `shutdown_async`
+/// is polled from a saturated worker of the runtime it's draining, that
+/// fallback can block that worker until the drain completes — an
+/// accepted, extremely rare trade-off versus losing `job` or panicking.
 fn spawn_or_run(job: impl FnOnce() + Send + 'static) {
     type Job = Box<dyn FnOnce() + Send>;
 

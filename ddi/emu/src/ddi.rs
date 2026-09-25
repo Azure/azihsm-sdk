@@ -317,22 +317,51 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_shutdown_calls_serialize_instead_of_racing() {
+    fn shutdown_call_waits_for_an_in_progress_shutdown_to_settle() {
         let ddi = DdiEmu::default();
         let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
         drop(dev);
 
-        // Whichever thread locks `CTX` first takes ownership of the
-        // `EmuCtx` and performs the real (slow, unlocked) join; the
-        // other must wait for `CtxState::ShuttingDown` to settle rather
-        // than seeing a stale empty slot and returning early as if it
-        // had completed a shutdown it never actually performed.
-        let t1 = std::thread::spawn(DdiEmu::shutdown);
-        let t2 = std::thread::spawn(DdiEmu::shutdown);
-        t1.join().expect("shutdown thread 1 panicked");
-        t2.join().expect("shutdown thread 2 panicked");
+        // Starting two real `shutdown()` calls back-to-back doesn't
+        // reliably exercise the `ShuttingDown`/condvar-wait branch: the
+        // real join is fast enough that the first call can settle to
+        // `ShutDown` before the second thread even runs, so it would
+        // just see `ShutDown` directly instead of waiting. Instead,
+        // deterministically simulate a join already being in progress by
+        // taking the `EmuCtx` out and setting `ShuttingDown` directly —
+        // exactly the state `shutdown()` leaves `CTX` in right before its
+        // own unlocked, potentially slow `hsm.shutdown()` join.
+        let (rt, hsm) = {
+            let mut guard = CTX.lock();
+            match std::mem::replace(&mut *guard, CtxState::ShuttingDown) {
+                CtxState::Running(EmuCtx { rt, hsm }) => (rt, hsm),
+                _ => panic!("expected CtxState::Running after open_dev"),
+            }
+        };
 
-        // Idempotent afterwards.
-        DdiEmu::shutdown();
+        // A concurrent `shutdown()` call must wait on the condvar
+        // instead of seeing the (currently `ShuttingDown`, not
+        // empty/`Uninitialized`) slot and returning early as if it had
+        // completed a shutdown it never performed.
+        let waiter = std::thread::spawn(DdiEmu::shutdown);
+
+        // Give the waiter thread time to actually reach
+        // `CTX_CHANGED.wait` before settling the state below:
+        // best-effort, but generous enough in practice that the
+        // intended overlap is reliable.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Settle the state exactly as the real success path would, then
+        // wake the waiter.
+        *CTX.lock() = CtxState::ShutDown;
+        CTX_CHANGED.notify_all();
+
+        waiter.join().expect("waiting shutdown() call panicked");
+
+        // Actually release the resources this test borrowed from `CTX`,
+        // as the real success path would have.
+        let hsm = Arc::try_unwrap(hsm).unwrap_or_else(|_| panic!("StdHsm still shared"));
+        hsm.shutdown();
+        drop(rt);
     }
 }
