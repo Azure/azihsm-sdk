@@ -430,7 +430,6 @@ pub struct StdHsm {
     /// Kept alive for the lifetime of StdHsm; dropped on shutdown.
     #[allow(dead_code)]
     tokio_rt: Option<tokio::runtime::Runtime>,
-    #[allow(dead_code)]
     tokio_handle: tokio::runtime::Handle,
 }
 
@@ -608,20 +607,40 @@ impl StdHsm {
     /// same runtime-lifetime hazard this method exists to avoid.
     pub async fn shutdown_async(mut self) {
         if let Some(thread) = self.begin_shutdown() {
-            let tokio_rt = self.tokio_rt.take();
-            // `spawn_blocking` (unlike `spawn_or_run`'s raw `std::thread::spawn`)
-            // dispatches onto tokio's dedicated blocking-thread pool rather than
-            // the async worker threads, so this join can't stall other tasks
-            // scheduled on this runtime even under thread-creation pressure: the
-            // pool reuses idle threads and queues the job rather than running it
-            // synchronously on whatever thread happens to be polling this future.
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = thread.join();
-                drop(tokio_rt);
-            })
-            .await;
+            // `Handle::spawn_blocking` (unlike `spawn_or_run`'s raw
+            // `std::thread::spawn`) dispatches onto this specific runtime's
+            // dedicated blocking-thread pool rather than an async worker
+            // thread, so this join can't stall other tasks scheduled on that
+            // runtime even under thread-creation pressure: the pool reuses
+            // idle threads and queues the job rather than running it
+            // synchronously on whatever thread happens to be polling this
+            // future. Using `self.tokio_handle` explicitly (rather than
+            // `tokio::task::spawn_blocking`, which requires the *current*
+            // thread to already be inside a Tokio runtime) keeps this method
+            // executor-agnostic: it works even when awaited from a
+            // non-Tokio executor.
+            let _ = self
+                .tokio_handle
+                .spawn_blocking(move || {
+                    let _ = thread.join();
+                })
+                .await;
         }
-        drop(self.tokio_rt.take());
+        // Drop any internally owned runtime on a fresh, plain OS thread via
+        // `spawn_or_run` rather than inline here or via `spawn_blocking`:
+        // `Runtime::drop` panics if run from inside any Tokio-entered
+        // context, and this runtime's own blocking-pool threads (used just
+        // above to join) count as such a context, so dropping it there
+        // would self-deadlock. The `oneshot` is polled here, not blocked on,
+        // so this stays executor-agnostic too.
+        if let Some(tokio_rt) = self.tokio_rt.take() {
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            spawn_or_run(move || {
+                drop(tokio_rt);
+                let _ = done_tx.send(());
+            });
+            let _ = done_rx.await;
+        }
     }
 
     /// Stops accepting new work and takes ownership of the Embassy thread.
