@@ -448,7 +448,7 @@ fn all_reject_classes_preserve_entire_chain() {
 }
 
 /// `GetCertificate` is out-of-session and remains callable while an unrelated
-/// authenticated CU session is active. This complements the CO-session case
+/// CU PlainText session is active. This complements the CO-session case
 /// and verifies that partition-user session identity does not affect the
 /// certificate store lookup.
 #[test]
@@ -459,7 +459,7 @@ fn callable_while_cu_session_active() {
 
     let session = ctx
         .open_session(CU, SessionType::PlainText)
-        .expect("open CU authenticated session");
+        .expect("open CU PlainText session");
 
     let during = ctx
         .tbor(&request)
@@ -470,7 +470,7 @@ fn callable_while_cu_session_active() {
         "active CU session must not affect out-of-session certificate reads",
     );
 
-    session.close().expect("close CU authenticated session");
+    session.close().expect("close CU PlainText session");
 }
 
 /// `GetCert` remains stable across both supported CO and CU session
