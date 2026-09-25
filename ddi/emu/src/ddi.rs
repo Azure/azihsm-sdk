@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_interface::DevInfo;
 use azihsm_fw_hsm_std::StdHsm;
@@ -99,6 +100,35 @@ static CTX: Mutex<CtxState> = Mutex::new(CtxState::Uninitialized);
 /// instead of racing ahead on a stale, temporarily-empty slot.
 static CTX_CHANGED: Condvar = Condvar::new();
 
+/// Test-only rendezvous point, fired immediately before a caller blocks
+/// on [`CTX_CHANGED`] while still holding the [`CTX`] lock. Lets tests
+/// deterministically wait for a concurrent caller to actually reach the
+/// wait point (and thus be registered to receive the next notification)
+/// instead of racing it with a sleep — since [`CTX`] is still locked at
+/// that point, a test that subsequently takes the lock itself is
+/// guaranteed to only succeed once the waiter has called
+/// [`Condvar::wait`], never before. A no-op outside tests.
+#[cfg(test)]
+static WAIT_HOOK: Mutex<Option<Arc<std::sync::Barrier>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn on_about_to_wait_for_ctx_change() {
+    if let Some(barrier) = WAIT_HOOK.lock().clone() {
+        barrier.wait();
+    }
+}
+
+#[cfg(not(test))]
+fn on_about_to_wait_for_ctx_change() {}
+
+/// Blocks on [`CTX_CHANGED`] while holding `guard`, firing the
+/// test-only [`on_about_to_wait_for_ctx_change`] hook immediately
+/// beforehand.
+fn wait_for_ctx_change(guard: &mut parking_lot::MutexGuard<'_, CtxState>) {
+    on_about_to_wait_for_ctx_change();
+    CTX_CHANGED.wait(guard);
+}
+
 /// Runs `f` with a reference to the global emulator context, creating it
 /// on first use.
 ///
@@ -106,9 +136,13 @@ static CTX_CHANGED: Condvar = Condvar::new();
 /// to settle (either restoring the context or fully releasing it) rather
 /// than racing ahead on a temporarily-empty slot.
 ///
-/// Panics if called after a [`DdiEmu::shutdown`] call has fully released
-/// the context; see [`CTX`].
-fn with_ctx<T>(f: impl FnOnce(&EmuCtx) -> T) -> T {
+/// Returns [`DdiError::DeviceNotReady`] if called after a
+/// [`DdiEmu::shutdown`] call has fully released the context; see
+/// [`CTX`]. This is a normal, expected outcome of the `open_dev`/
+/// `shutdown` teardown race (a concurrent `open_dev` can lose the race
+/// and observe `ShutDown` right after it settles), so it must be
+/// reported through [`DdiResult`] rather than panicking.
+fn with_ctx<T>(f: impl FnOnce(&EmuCtx) -> T) -> DdiResult<T> {
     let mut guard = CTX.lock();
     loop {
         match &*guard {
@@ -117,17 +151,14 @@ fn with_ctx<T>(f: impl FnOnce(&EmuCtx) -> T) -> T {
                 *guard = CtxState::Running(EmuCtx::new());
                 break;
             }
-            CtxState::ShuttingDown => CTX_CHANGED.wait(&mut guard),
-            CtxState::ShutDown => panic!(
-                "azihsm_ddi_emu: cannot open a device after DdiEmu::shutdown \
-                 has released the process-global StdHsm singleton"
-            ),
+            CtxState::ShuttingDown => wait_for_ctx_change(&mut guard),
+            CtxState::ShutDown => return Err(DdiError::DeviceNotReady),
         }
     }
     let CtxState::Running(ctx) = &*guard else {
         unreachable!("loop above only exits with CtxState::Running")
     };
-    f(ctx)
+    Ok(f(ctx))
 }
 
 /// DDI Implementation - AZIHSM Emulator interface.
@@ -179,7 +210,7 @@ impl DdiEmu {
         let (rt, hsm) = loop {
             match &mut *guard {
                 CtxState::Uninitialized | CtxState::ShutDown => return,
-                CtxState::ShuttingDown => CTX_CHANGED.wait(&mut guard),
+                CtxState::ShuttingDown => wait_for_ctx_change(&mut guard),
                 CtxState::Running(_) => {
                     let CtxState::Running(EmuCtx { rt, hsm }) =
                         std::mem::replace(&mut *guard, CtxState::ShuttingDown)
@@ -252,8 +283,12 @@ impl Ddi for DdiEmu {
     ///
     /// `path` must equal [`EMU_DEVICE_PATH`]; any other value yields
     /// [`DdiError::DeviceNotFound`](azihsm_ddi_interface::DdiError::DeviceNotFound).
+    /// Returns [`DdiError::DeviceNotReady`] if [`DdiEmu::shutdown`] has
+    /// already fully released the process-global context (the
+    /// underlying `StdHsm` core is a singleton that cannot be
+    /// re-initialised).
     fn open_dev(&self, path: &str) -> DdiResult<Self::Dev> {
-        let (hsm, handle) = with_ctx(|ctx| (ctx.hsm.clone(), ctx.rt.handle().clone()));
+        let (hsm, handle) = with_ctx(|ctx| (ctx.hsm.clone(), ctx.rt.handle().clone()))?;
         DdiEmuDev::open(hsm, handle, path)
     }
 }
@@ -298,6 +333,24 @@ mod tests {
     }
 
     #[test]
+    fn open_dev_after_shutdown_returns_device_not_ready_instead_of_panicking() {
+        let ddi = DdiEmu::default();
+        let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
+        drop(dev);
+        DdiEmu::shutdown();
+
+        // Once `CtxState::ShutDown` is permanent, `open_dev` must report
+        // it through `DdiResult` instead of panicking/aborting — a
+        // concurrent `open_dev` that loses the race with a real
+        // `shutdown()` can observe exactly this state.
+        let res = ddi.open_dev(EMU_DEVICE_PATH);
+        assert!(
+            matches!(res, Err(azihsm_ddi_interface::DdiError::DeviceNotReady)),
+            "expected DeviceNotReady, got {res:?}"
+        );
+    }
+
+    #[test]
     fn shutdown_with_live_handle_is_retryable() {
         let ddi = DdiEmu::default();
         let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
@@ -339,17 +392,31 @@ mod tests {
             }
         };
 
+        // Deterministically wait for the waiter thread below to reach
+        // its `wait_for_ctx_change` call (i.e. to be registered on
+        // `CTX_CHANGED` and waiting) before settling the state: a fixed
+        // sleep here would be racy (if the waiter isn't scheduled in
+        // time, this thread could set `ShutDown` and notify before the
+        // waiter ever calls `Condvar::wait`, so it would just observe
+        // `ShutDown` directly and return without exercising the wait
+        // path at all — the test would still pass without covering it).
+        // `barrier.wait()` below only unblocks once the waiter's hook
+        // fires *while it still holds the `CTX` lock*, so this thread's
+        // subsequent `CTX.lock()` is guaranteed to block until the
+        // waiter actually calls `Condvar::wait` (which atomically
+        // releases the lock as it registers to be woken) — no lost
+        // wakeup is possible.
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        *WAIT_HOOK.lock() = Some(barrier.clone());
+
         // A concurrent `shutdown()` call must wait on the condvar
         // instead of seeing the (currently `ShuttingDown`, not
         // empty/`Uninitialized`) slot and returning early as if it had
         // completed a shutdown it never performed.
         let waiter = std::thread::spawn(DdiEmu::shutdown);
 
-        // Give the waiter thread time to actually reach
-        // `CTX_CHANGED.wait` before settling the state below:
-        // best-effort, but generous enough in practice that the
-        // intended overlap is reliable.
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        barrier.wait();
+        *WAIT_HOOK.lock() = None;
 
         // Settle the state exactly as the real success path would, then
         // wake the waiter.
