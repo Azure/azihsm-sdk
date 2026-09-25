@@ -59,7 +59,7 @@ struct DdiTestActionResp {
 #[derive(Debug, Copy, Clone)]
 #[repr(u32)]
 enum SupportedTestAction {
-    /// Inject a crash into the CP1 HSM core.
+    /// Inject a crash into the HSM or Admin core.
     #[cfg(feature = "azihsm_test_hooks")]
     TriggerCrash = 8,
     /// Clear the partition's stored user credential.
@@ -131,7 +131,8 @@ pub(super) async fn dispatch<'p>(
         }
         #[cfg(feature = "azihsm_test_hooks")]
         SupportedTestAction::TriggerCrash => {
-            trigger_crash::dispatch(decoder, selector.request_field_count, request_len)
+            trigger_crash::dispatch(pal, decoder, selector.request_field_count, request_len)
+                .await
                 .map(|never| match never {})
         }
         #[cfg(feature = "fips_validation_hooks")]

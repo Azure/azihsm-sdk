@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Decode and execute `TestAction::TriggerCrash` for the CP1 HSM core.
+//! Decode and execute `TestAction::TriggerCrash` for the HSM and Admin cores.
 //!
 //! The wire enums and request map mirror the host test-hooks definitions
 //! locally so the PAL remains independent of the host crate.
@@ -21,6 +21,11 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use open_enum::open_enum;
 
 use super::test_action::decode_payload;
+use crate::ipc::CrashType;
+use crate::ipc::SocCpuId;
+use crate::ipc::encode_trigger_crash;
+use crate::pal::IpcChannel;
+use crate::pal::UnoHsmPal;
 
 /// On-wire crash mechanism, matching the host `DdiTestActionCrashType`.
 #[open_enum]
@@ -113,21 +118,24 @@ struct DdiTestActionCrashReqInfo {
     cpu_id: DdiTestActionSocCpuId,
 }
 
-/// Validated crash request for the local CP1 HSM core.
+/// Validated crash request.
 #[derive(Debug, Copy, Clone)]
 struct CrashRequest {
     /// Crash mechanism to execute.
     crash_type: DdiTestActionCrashType,
+    /// Core that should execute the crash.
+    cpu_id: DdiTestActionSocCpuId,
 }
 
 /// Decode, validate, and execute `TestAction::TriggerCrash`.
-pub(super) fn dispatch(
-    decoder: &mut MborDecoder,
+pub(super) async fn dispatch(
+    pal: &UnoHsmPal,
+    decoder: &mut MborDecoder<'_>,
     request_field_count: u8,
     request_len: usize,
 ) -> HsmResult<Infallible> {
     let request = decode_request(decoder, request_field_count, request_len)?;
-    execute(request)
+    execute(pal, request).await
 }
 
 fn decode_request(
@@ -138,8 +146,11 @@ fn decode_request(
     let wire_request: DdiTestActionCrashReqInfo =
         decode_payload(decoder, request_field_count, request_len)?;
 
-    if wire_request.cpu_id != DdiTestActionSocCpuId::Hsm {
-        return Err(HsmError::UnsupportedCmd);
+    // Only local HSM and remote Admin crash injection are implemented here.
+    // FP crash routing is separate from the existing bulk-key IPC channel.
+    match wire_request.cpu_id {
+        DdiTestActionSocCpuId::Hsm | DdiTestActionSocCpuId::Admin => {}
+        _ => return Err(HsmError::UnsupportedCmd),
     }
 
     match wire_request.crash_type {
@@ -148,14 +159,77 @@ fn decode_request(
         | DdiTestActionCrashType::Panic
         | DdiTestActionCrashType::Hang => Ok(CrashRequest {
             crash_type: wire_request.crash_type,
+            cpu_id: wire_request.cpu_id,
         }),
         _ => Err(HsmError::InvalidArg),
     }
 }
 
-/// Execute a validated local crash request.
+/// Route a validated request to the core that should crash.
+async fn execute(pal: &UnoHsmPal, request: CrashRequest) -> HsmResult<Infallible> {
+    match request.cpu_id {
+        DdiTestActionSocCpuId::Admin => execute_remote(pal, request.crash_type).await,
+        _ => execute_local(request),
+    }
+}
+
+/// Map the host-facing crash mechanism onto the HSM↔Admin IPC wire enum.
+///
+/// The two enums share discriminants today but are separate contracts, so the
+/// mapping is written out rather than transmuted.
+fn ipc_crash_type(crash_type: DdiTestActionCrashType) -> CrashType {
+    match crash_type {
+        DdiTestActionCrashType::HardFault => CrashType::HardFault,
+        DdiTestActionCrashType::ExplicitCrash => CrashType::ExplicitCrash,
+        DdiTestActionCrashType::Panic => CrashType::Panic,
+        DdiTestActionCrashType::Hang => CrashType::Hang,
+        _ => CrashType::HardFault,
+    }
+}
+
+/// Tag used to match the Admin core's reply to the crash request.
+const CRASH_REQUEST_TAG: u8 = 0;
+
+/// Ask the Admin core to crash itself, then stop.
+///
+/// The request is sent without waiting for a reply, mirroring the reference
+/// firmware: its HSM core moves the command to `State::Final` and returns
+/// `HsmErr::Pending` as soon as the IPC send succeeds, and has no FSM state
+/// that consumes a crash acknowledgement. The Admin core does still reply
+/// before crashing, but nothing on the requesting side depends on that, so
+/// an Admin-side change that stops replying cannot silently disable this
+/// path.
+///
+/// The command must never produce a completion: the Admin core is going down
+/// and the SP will reset the whole CP, so answering the host would race that
+/// reset and could hand back a success. `HsmErr::Pending` is how the
+/// reference parks the command; here the equivalent is a future that never
+/// resolves, which also keeps this core free to serve other work until the
+/// reset lands. The host observes the resulting IO abort, which is what the
+/// crash-recovery test asserts.
+async fn execute_remote(
+    pal: &UnoHsmPal,
+    crash_type: DdiTestActionCrashType,
+) -> HsmResult<Infallible> {
+    let msg = encode_trigger_crash(
+        CRASH_REQUEST_TAG,
+        SocCpuId::Admin,
+        ipc_crash_type(crash_type),
+    );
+
+    // `reply` is this pair's fire-and-forget transmit: copy into the TX ring,
+    // advance PI, ring the doorbell. Unlike `send` it allocates no slot and
+    // leaves `in_flight` clear, so Admin's acknowledgement arrives with no
+    // waiter and is discarded. `AdminRequest` carries no other traffic, so
+    // the unread reply cannot be mistaken for another command's response.
+    pal.ipc.reply(IpcChannel::AdminRequest as u8, &msg);
+
+    core::future::pending().await
+}
+
+/// Execute a validated crash request on this core.
 #[allow(clippy::empty_loop)]
-fn execute(request: CrashRequest) -> HsmResult<Infallible> {
+fn execute_local(request: CrashRequest) -> HsmResult<Infallible> {
     match request.crash_type {
         DdiTestActionCrashType::Hang => loop {},
         DdiTestActionCrashType::Panic => {
