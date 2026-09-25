@@ -19,60 +19,201 @@
 //! let c = hsm.submit([0u32; 16], 0, 0, 0).await;
 //! assert_eq!(c.cqe[3], expected_cmd_id);
 //!
-//! // With caller's tokio runtime:
+//! // With caller's tokio runtime (from an async context):
 //! let hsm = StdHsm::with_tokio(tokio::runtime::Handle::current());
+//! hsm.shutdown_async().await;
 //! ```
 
+use core::future::poll_fn;
+use core::future::Future;
+use core::task::Poll;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use azihsm_fw_hsm_core::Hsm;
 use azihsm_fw_hsm_pal_std::*;
 use azihsm_fw_hsm_pal_traits::*;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::once_lock::OnceLock;
+use embassy_sync::semaphore::GreedySemaphore;
+use embassy_sync::semaphore::Semaphore;
+use embassy_sync::signal::Signal;
+use parking_lot::Mutex;
 
 /// Global HSM singleton — concrete type with StdHsmPal.
+///
+/// [`OnceLock::init`] atomically succeeds at most once, so it also serves
+/// as the one-instance-ever [`StdHsm`] lifecycle reservation: no separate
+/// flag is needed. Note that unlike the previous `AtomicBool`-based guard,
+/// this reservation is *not* rolled back if the Embassy thread fails to
+/// spawn afterward — a transient startup failure permanently prevents any
+/// further `StdHsm` in the process. This is an accepted trade-off for
+/// avoiding a redundant synchronization primitive.
 static HSM: OnceLock<Hsm<StdHsmPal>> = OnceLock::new();
+
+/// Number of long-running Embassy loops [`ShutdownTracker`] must wait to
+/// exit before it is drained: [`poll_io`] and [`ipc_task`].
+const LONG_RUNNING_TASKS: usize = 2;
+
+/// Coordinates a drain-then-stop shutdown of the Embassy executor.
+///
+/// `active_tasks` starts at [`LONG_RUNNING_TASKS`], accounting for the
+/// long-running [`poll_io`] and [`ipc_task`] loops. Each in-flight
+/// [`handle_io`] spawn adds one more. Every task decrements the count
+/// exactly once when it permanently exits — `poll_io`/`ipc_task` only
+/// exit once their channel is closed and drained, and `handle_io` always
+/// exits after finishing its single IO. Once the task count reaches
+/// zero, [`run_core`] is woken to deinitialize the PAL; only then may
+/// `run_until` stop the executor.
+struct ShutdownTracker {
+    active_tasks: AtomicUsize,
+    drained: Signal<CriticalSectionRawMutex, ()>,
+    deinitialized: AtomicBool,
+    /// Free slots in the `handle_io` Embassy task pool
+    /// ([`MAX_CONCURRENT_IOS`]), mirrored 1:1 with the pool's own
+    /// capacity. See [`reserve_handle_io_slot`](Self::reserve_handle_io_slot).
+    /// `poll_io` is the only caller, and it only ever awaits one permit at
+    /// a time (never concurrently), so `GreedySemaphore`'s single-waker
+    /// registration is sufficient here.
+    handle_io_permits: GreedySemaphore<CriticalSectionRawMutex>,
+}
+
+impl ShutdownTracker {
+    fn new(active_tasks: usize) -> Self {
+        Self {
+            active_tasks: AtomicUsize::new(active_tasks),
+            drained: Signal::new(),
+            deinitialized: AtomicBool::new(false),
+            handle_io_permits: GreedySemaphore::new(MAX_CONCURRENT_IOS),
+        }
+    }
+
+    /// Marks one tracked task as permanently finished.
+    fn task_done(&self) {
+        if self.active_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.drained.signal(());
+        }
+    }
+
+    /// Waits for one of the `handle_io` pool's [`MAX_CONCURRENT_IOS`]
+    /// slots to become free, then reserves it.
+    ///
+    /// `poll_io` must call this *before* invoking `handle_io`: a failed
+    /// spawn (Embassy's pool full) still consumes — and silently drops —
+    /// the `StdHsmIo` argument passed to it, leaking its buffer-pool
+    /// slot, since Embassy gives no way to recover the argument once
+    /// spawning fails. Mirroring the pool's capacity here 1:1 lets
+    /// `poll_io` know a spawn will succeed before calling `handle_io`.
+    ///
+    /// Blocking here (rather than discarding the IO when the pool is
+    /// full) is what gives [`StdHsm::io`](crate::StdHsm::io) its
+    /// documented backpressure: the caller's submit awaits a channel
+    /// slot, and every dequeued IO in turn awaits a `handle_io` slot, so
+    /// the total number of in-flight IOs never exceeds
+    /// [`MAX_CONCURRENT_IOS`].
+    async fn reserve_handle_io_slot(&self) {
+        // Infallible: `GreedySemaphore::acquire` never returns `Err`.
+        let Ok(permit) = self.handle_io_permits.acquire(1).await;
+        // Give up RAII ownership — the slot is released explicitly by
+        // `release_handle_io_slot` once the corresponding `handle_io`
+        // task finishes, not when this function returns.
+        permit.disarm();
+    }
+
+    /// Releases a slot reserved by
+    /// [`reserve_handle_io_slot`](Self::reserve_handle_io_slot), called
+    /// once the corresponding `handle_io` task finishes.
+    fn release_handle_io_slot(&self) {
+        self.handle_io_permits.release(1);
+    }
+
+    async fn wait_drained(&self) {
+        self.drained.wait().await;
+    }
+
+    fn mark_deinitialized(&self) {
+        self.deinitialized.store(true, Ordering::Release);
+    }
+}
 
 /// Embassy task that runs the HSM core lifecycle.
 ///
-/// Initialises the PAL, spawns the IO recv/send task pool, enters the
-/// PAL's main event loop, then deinitialises. This task never returns
-/// under normal operation.
+/// Initialises the PAL, spawns the IO recv/send task pool, waits for
+/// shutdown drain, then deinitialises before allowing the executor to stop.
 #[embassy_executor::task]
-async fn run_core(spawner: embassy_executor::Spawner) {
+async fn run_core(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracker>) {
     let hsm = HSM.get().await;
     hsm.pal().init();
     if hsm.pal().init_cert_store().await.is_err() {
+        // poll_io never starts — account for its reserved slot.
+        tracker.task_done();
+        run_pal_until_drained(hsm, &tracker).await;
+        hsm.pal().deinit();
+        tracker.mark_deinitialized();
         return;
     }
 
-    if let Ok(token) = poll_io(spawner) {
+    if let Ok(token) = poll_io(spawner, tracker.clone()) {
         spawner.spawn(token);
     } else {
+        // poll_io never starts — account for its reserved slot.
+        tracker.task_done();
+        run_pal_until_drained(hsm, &tracker).await;
+        hsm.pal().deinit();
+        tracker.mark_deinitialized();
         return;
     }
 
-    hsm.pal().run().await;
+    run_pal_until_drained(hsm, &tracker).await;
     hsm.pal().deinit();
+    tracker.mark_deinitialized();
 }
 
-/// IO receive loop — runs forever as a single Embassy task.
+/// Drives the PAL until its run loop exits or all work has drained.
+async fn run_pal_until_drained(hsm: &Hsm<StdHsmPal>, tracker: &ShutdownTracker) {
+    let mut run = core::pin::pin!(hsm.pal().run());
+    let mut drained = core::pin::pin!(tracker.wait_drained());
+
+    poll_fn(|cx| {
+        if run.as_mut().poll(cx).is_ready() || drained.as_mut().poll(cx).is_ready() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
+}
+
+/// IO receive loop — runs until the submission channel is closed.
 ///
-/// Awaits the next IO from the PAL submission queue, then spawns a
-/// `handle_io` task from the 32-slot pool. If no pool slots are
-/// available, the IO is silently skipped and the loop continues.
+/// Awaits the next IO from the PAL submission queue, then waits for a
+/// free slot in the `handle_io` pool ([`MAX_CONCURRENT_IOS`]) before
+/// spawning it — this is what gives [`StdHsm::io`](crate::StdHsm::io)
+/// its documented backpressure rather than erroring when the pool is
+/// momentarily full. Only exits once the submission channel is closed
+/// and drained, and only then marks itself done in `tracker` — the
+/// executor won't stop until this loop (and every `handle_io` it
+/// spawned) has finished.
 #[embassy_executor::task]
-async fn poll_io(spawner: embassy_executor::Spawner) -> ! {
+async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracker>) {
     loop {
         let Ok(io) = HSM.get().await.pal().poll_io().await else {
-            continue;
+            break;
         };
 
-        let Ok(token) = handle_io(io) else {
-            continue;
-        };
+        tracker.reserve_handle_io_slot().await;
+
+        tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
+        // A slot was just reserved above, so this mirrors the pool's
+        // own capacity 1:1 and is guaranteed to succeed.
+        let token =
+            handle_io(io, tracker.clone()).expect("handle_io slot reserved but spawn failed");
         spawner.spawn(token);
     }
+    tracker.task_done();
 }
 
 /// Processes a single IO to completion.
@@ -80,18 +221,22 @@ async fn poll_io(spawner: embassy_executor::Spawner) -> ! {
 /// Delegates all parsing, validation, and CQE population to
 /// [`Hsm::handle_io`]. Runs in a 32-task Embassy pool, allowing
 /// up to 32 IOs to be processed concurrently.
-#[embassy_executor::task(pool_size = 32)]
-async fn handle_io(io: StdHsmIo) {
+#[embassy_executor::task(pool_size = MAX_CONCURRENT_IOS)]
+async fn handle_io(io: StdHsmIo, tracker: Arc<ShutdownTracker>) {
     HSM.get().await.handle_io(io).await;
+    tracker.release_handle_io_slot();
+    tracker.task_done();
 }
 
 /// Embassy task that processes sideband partition commands.
 ///
 /// Receives [`PartCommand`]s from the user-facing [`StdHsm`] and
 /// dispatches them to [`StdHsmPal`]'s internal alloc/free methods.
-/// Replies via the per-command oneshot channel.
+/// Replies via the per-command oneshot channel. Only exits once the
+/// command channel is closed and drained, then marks itself done in
+/// `tracker`.
 #[embassy_executor::task]
-async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
+async fn ipc_task(rx: async_channel::Receiver<PartCommand>, tracker: Arc<ShutdownTracker>) {
     loop {
         let Ok(cmd) = rx.recv().await else {
             break;
@@ -116,6 +261,7 @@ async fn ipc_task(rx: async_channel::Receiver<PartCommand>) {
             }
         }
     }
+    tracker.task_done();
 }
 
 /// Maximum concurrent IOs — matches core's `send_task` pool size.
@@ -142,7 +288,7 @@ impl StdHsmBuilder {
     ///
     /// When set, `StdHsm` does not create or own a tokio runtime.
     /// The caller must keep their runtime alive for the lifetime of
-    /// the `StdHsm`.
+    /// the `StdHsm`. The runtime must use Tokio's multi-thread scheduler.
     pub fn tokio_handle(mut self, handle: tokio::runtime::Handle) -> Self {
         self.tokio_handle = Some(handle);
         self
@@ -156,8 +302,23 @@ impl StdHsmBuilder {
     ///
     /// # Panics
     ///
-    /// Panics if the Embassy thread or tokio runtime fails to start.
+    /// Panics if a [`StdHsm`] has already been built in this process, or if the
+    /// Embassy thread or tokio runtime fails to start. Also panics if the
+    /// supplied Tokio handle belongs to a current-thread runtime.
+    ///
+    /// A failure to spawn the Embassy thread after the one-instance-ever
+    /// reservation succeeds (see the [`HSM`] doc comment) permanently
+    /// prevents any further `StdHsm` from being built in this process.
     pub fn build(self) -> StdHsm {
+        if let Some(handle) = &self.tokio_handle {
+            assert!(
+                matches!(
+                    handle.runtime_flavor(),
+                    tokio::runtime::RuntimeFlavor::MultiThread
+                ),
+                "StdHsm requires a multi-thread Tokio runtime"
+            );
+        }
         let (owned_rt, handle) = if let Some(h) = self.tokio_handle {
             (None, h)
         } else {
@@ -174,6 +335,18 @@ impl StdHsmBuilder {
         let (ipc_tx, ipc_rx) = async_channel::bounded(4);
 
         let pool_handle = handle.clone();
+
+        // `HSM.init` doubles as the one-instance-ever reservation (see the
+        // `HSM` doc comment): it can only succeed once per process.
+        let pal = StdHsmPal::new(io_rx, pool_handle);
+        if HSM.init(Hsm::new(pal)).is_err() {
+            panic!("StdHsm can only be built once per process");
+        }
+
+        // Reserves one slot each for `poll_io` and `ipc_task`; decremented
+        // as those loops (and any in-flight `handle_io`) permanently exit.
+        let shutdown_tracker = Arc::new(ShutdownTracker::new(LONG_RUNNING_TASKS));
+        let executor_shutdown = shutdown_tracker.clone();
 
         // Embassy + Hsm task frames in debug builds are large enough
         // to overflow Linux's default 2 MiB thread stack — every
@@ -195,17 +368,18 @@ impl StdHsmBuilder {
                 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
                 let executor = EXECUTOR.init(Executor::new());
 
-                executor.run(|spawner| {
-                    let pal = StdHsmPal::new(io_rx, pool_handle);
+                executor.run_until(
+                    |spawner| {
+                        let token = run_core(spawner, shutdown_tracker.clone())
+                            .expect("run_core spawn failed");
+                        spawner.spawn(token);
 
-                    let _ = HSM.init(Hsm::new(pal));
-
-                    let token = run_core(spawner).expect("run_core spawn failed");
-                    spawner.spawn(token);
-
-                    let token = ipc_task(ipc_rx).expect("part_cmd_task spawn failed");
-                    spawner.spawn(token);
-                });
+                        let token = ipc_task(ipc_rx, shutdown_tracker.clone())
+                            .expect("ipc_task spawn failed");
+                        spawner.spawn(token);
+                    },
+                    || executor_shutdown.deinitialized.load(Ordering::Acquire),
+                );
             })
             .expect("failed to spawn Embassy thread");
 
@@ -234,8 +408,19 @@ impl StdHsmBuilder {
 ///
 /// # Shutdown
 ///
-/// Dropping `StdHsm` cleanly shuts down the Embassy thread and
-/// (if owned) the tokio runtime.
+/// Prefer the explicit [`shutdown`](Self::shutdown) /
+/// [`shutdown_async`](Self::shutdown_async) methods: both close the submission
+/// channels and return only once the Embassy executor has drained every
+/// in-flight IO and IPC command and stopped. This is required when the caller
+/// owns the tokio runtime, since that runtime must outlive the drain.
+///
+/// Dropping `StdHsm` without calling them also closes the submission channels,
+/// but the drain is joined on a background thread, so `Drop` returns before the
+/// Embassy thread has finished. An owned tokio runtime is dropped by that
+/// thread after the drain completes; a caller-owned runtime is not coordinated.
+///
+/// `StdHsm` owns process-global HSM and executor singletons, so only one
+/// instance can ever be built per process, even after that instance is dropped.
 #[derive(Debug)]
 pub struct StdHsm {
     io_tx: async_channel::Sender<HsmIoRequest>,
@@ -267,7 +452,8 @@ impl StdHsm {
     /// Create and start using an existing tokio runtime handle.
     ///
     /// The caller must keep their tokio runtime alive. No delays are
-    /// configured — use [`builder`](Self::builder) for that.
+    /// configured — use [`builder`](Self::builder) for that. The runtime
+    /// must use Tokio's multi-thread scheduler.
     pub fn with_tokio(handle: tokio::runtime::Handle) -> Self {
         Self::builder().tokio_handle(handle).build()
     }
@@ -375,23 +561,172 @@ impl StdHsm {
         self.ipc_tx.send(cmd).await.expect("Embassy thread stopped");
         reply_rx.await.expect("partition command reply dropped")
     }
+
+    /// Shut down the HSM, blocking until all in-flight work has drained.
+    ///
+    /// Callers that supplied their own tokio runtime
+    /// ([`with_tokio`](Self::with_tokio) /
+    /// [`tokio_handle`](StdHsmBuilder::tokio_handle)) must use this method (or
+    /// [`shutdown_async`](Self::shutdown_async)) instead of relying on `Drop`:
+    /// `Drop` joins the Embassy thread in the background and returns
+    /// immediately, so the caller-owned runtime could be dropped while
+    /// in-flight work still needs it, aborting that work and stalling the
+    /// drain. This method returns only once the Embassy executor has stopped,
+    /// after which the runtime can safely be dropped.
+    ///
+    /// Must not be called from a thread of the tokio runtime backing this HSM —
+    /// blocking a worker that in-flight work needs would deadlock the drain.
+    /// Use [`shutdown_async`](Self::shutdown_async) from async contexts.
+    pub fn shutdown(mut self) {
+        if let Some(thread) = self.begin_shutdown() {
+            let _ = thread.join();
+        }
+        drop(self.tokio_rt.take());
+    }
+
+    /// Shut down the HSM, awaiting until all in-flight work has drained.
+    ///
+    /// Async counterpart of [`shutdown`](Self::shutdown): the Embassy thread is
+    /// joined on a dedicated thread, so no tokio worker is blocked while
+    /// in-flight work drains. Awaiting this future to completion guarantees the
+    /// executor has stopped, so a caller-owned runtime can then be dropped
+    /// safely.
+    ///
+    /// # Cancellation
+    ///
+    /// This future takes ownership of the Embassy thread (and any
+    /// self-owned tokio runtime) for the dedicated join thread before its
+    /// first `.await` point, so dropping it early does not abort the
+    /// drain — shutdown continues in the background exactly as with
+    /// [`Drop`], detached from this future. But the "safe to drop your
+    /// runtime now" guarantee above only holds once this future runs to
+    /// completion. There is no way to observe completion of a cancelled
+    /// shutdown from the caller side, so if you supplied an external tokio
+    /// runtime via [`with_tokio`](Self::with_tokio), do not cancel this
+    /// future (e.g. via `select!` or a timeout): keep that runtime alive
+    /// indefinitely instead, since dropping it after cancellation risks the
+    /// same runtime-lifetime hazard this method exists to avoid.
+    pub async fn shutdown_async(mut self) {
+        if let Some(thread) = self.begin_shutdown() {
+            // Move both the Embassy `JoinHandle` and any self-owned tokio
+            // runtime into `job` here, before the first `.await` point:
+            // if this future is dropped while the join is pending, `job`
+            // keeps running to completion in the background exactly as
+            // with `Drop`, so a cancelled shutdown still joins the thread
+            // and only then drops the runtime, instead of `self`'s
+            // `Drop` impl (which sees `embassy_thread` already taken)
+            // dropping `tokio_rt` immediately and aborting work the
+            // still-running drain may need.
+            //
+            // `job` runs on a plain OS thread via `spawn_or_run`, not
+            // `tokio::task::spawn_blocking`: the latter both requires the
+            // *polling* thread to already be inside a Tokio runtime
+            // (this method is documented and tested to work from any
+            // executor) and, when this HSM owns its runtime, would have
+            // this closure drop that very runtime from inside one of its
+            // own blocking-pool threads, which self-deadlocks (Tokio
+            // disallows dropping a runtime from any Tokio-entered
+            // context). A oneshot is polled here, not blocked on, so
+            // this stays executor-agnostic.
+            let tokio_rt = self.tokio_rt.take();
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            spawn_or_run(move || {
+                let _ = thread.join();
+                drop(tokio_rt);
+                let _ = done_tx.send(());
+            });
+            let _ = done_rx.await;
+        }
+        drop(self.tokio_rt.take());
+    }
+
+    /// Stops accepting new work and takes ownership of the Embassy thread.
+    ///
+    /// Closing both channels lets `poll_io`/`ipc_task` exit once drained,
+    /// which in turn wakes `run_core` to deinitialize the PAL. Returns `None`
+    /// if shutdown was already started.
+    fn begin_shutdown(&mut self) -> Option<JoinHandle<()>> {
+        self.io_tx.close();
+        self.ipc_tx.close();
+        self.embassy_thread.take()
+    }
 }
 
 /// Cleanly shuts down the HSM.
 ///
 /// Closes both the IO submission and partition command channels, which
-/// causes the corresponding Embassy tasks (`run_core` / `part_cmd_task`)
-/// to exit. Then joins the Embassy background thread to ensure all
-/// in-flight work is completed before the `StdHsm` is dropped.
+/// causes the corresponding Embassy tasks (`poll_io` / `ipc_task`) to exit
+/// once drained; `run_core` then deinitializes the PAL. A shutdown thread
+/// joins the Embassy background thread after all in-flight work is
+/// complete, without blocking a Tokio worker that may be needed by the
+/// work being drained.
+///
+/// Because that join is detached, `Drop` returns before the drain finishes.
+/// Callers owning the tokio runtime must instead use
+/// [`StdHsm::shutdown`]/[`StdHsm::shutdown_async`], which return only after the
+/// Embassy executor has stopped, so their runtime outlives the drain.
 ///
 /// If a tokio runtime is owned (`tokio_rt` is `Some`), it is dropped
 /// after the Embassy thread exits, shutting down the worker pool.
 impl Drop for StdHsm {
     fn drop(&mut self) {
-        self.io_tx.close();
-        self.ipc_tx.close();
-        if let Some(thread) = self.embassy_thread.take() {
-            let _ = thread.join();
+        // Stop accepting new work; `poll_io`/`ipc_task` exit their loops
+        // once these channels are closed and drained. `ShutdownTracker`
+        // then wakes `run_core` to deinitialize the PAL before the
+        // `run_until` predicate lets the Embassy thread stop.
+        if let Some(thread) = self.begin_shutdown() {
+            join_shutdown(thread, self.tokio_rt.take());
+        }
+    }
+}
+
+fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtime>) {
+    spawn_or_run(move || {
+        let _ = thread.join();
+        drop(tokio_rt);
+    });
+}
+
+/// Runs `job` on a new OS thread if possible, otherwise runs it
+/// synchronously on the calling thread instead of panicking.
+///
+/// `std::thread::spawn` panics if the OS refuses to create a thread (e.g.
+/// resource exhaustion). That would be unsafe here: panicking during
+/// `Drop` while another panic is already unwinding aborts the process,
+/// and panicking anywhere else would still drop `job` — along with
+/// whatever it owns, such as an embassy thread's `JoinHandle` or an
+/// owned tokio `Runtime` — without ever running it, stalling or
+/// skipping the drain.
+///
+/// `std::thread::Builder::spawn` fails gracefully instead of panicking,
+/// but on failure it drops `job` without running it, so `job` is kept in
+/// a shareable slot here: on failure, this thread reclaims it from that
+/// slot and runs it synchronously instead of losing it.
+///
+/// Used from both [`Drop`]'s synchronous context (where no tokio runtime
+/// is guaranteed to be available) and [`StdHsm::shutdown_async`] (which
+/// must stay executor-agnostic, so it cannot rely on
+/// `tokio::task::spawn_blocking`'s ambient "current runtime" requirement,
+/// nor on a specific runtime's blocking pool, which would self-deadlock
+/// if that runtime is the very one being dropped by `job`). The
+/// synchronous fallback here is consequently the only way to guarantee
+/// `job` always runs; if OS thread creation fails while `shutdown_async`
+/// is polled from a saturated worker of the runtime it's draining, that
+/// fallback can block that worker until the drain completes — an
+/// accepted, extremely rare trade-off versus losing `job` or panicking.
+fn spawn_or_run(job: impl FnOnce() + Send + 'static) {
+    type Job = Box<dyn FnOnce() + Send>;
+
+    let job: Arc<Mutex<Option<Job>>> = Arc::new(Mutex::new(Some(Box::new(job))));
+    let job_for_thread = Arc::clone(&job);
+    let spawned = std::thread::Builder::new().spawn(move || {
+        if let Some(job) = job_for_thread.lock().take() {
+            job();
+        }
+    });
+    if spawned.is_err() {
+        if let Some(job) = job.lock().take() {
+            job();
         }
     }
 }
@@ -399,5 +734,87 @@ impl Drop for StdHsm {
 impl Default for StdHsm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Regression test for the shutdown drain protocol: shutdown must not
+    /// drain while `handle_io` work is still in flight, and draining must
+    /// not by itself satisfy the `run_until` predicate before `run_core`
+    /// has deinitialized the PAL.
+    #[test]
+    fn shutdown_tracker_waits_for_all_tasks() {
+        let tracker = ShutdownTracker::new(LONG_RUNNING_TASKS);
+
+        // Simulate an IO accepted by `poll_io` and still being processed
+        // by `handle_io` when shutdown begins.
+        tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
+
+        // `poll_io`'s loop exits (its channel closed and drained).
+        tracker.task_done();
+        assert!(
+            !tracker.drained.signaled(),
+            "must not stop while handle_io is still in flight"
+        );
+
+        // `ipc_task`'s loop exits (its channel closed and drained).
+        tracker.task_done();
+        assert!(
+            !tracker.drained.signaled(),
+            "must not stop while handle_io is still in flight"
+        );
+
+        // The in-flight `handle_io` finally finishes.
+        tracker.task_done();
+        assert!(
+            tracker.drained.signaled(),
+            "must drain only once every accepted task has finished"
+        );
+        assert!(
+            !tracker.deinitialized.load(Ordering::Acquire),
+            "must not stop before run_core deinitializes the PAL"
+        );
+
+        tracker.mark_deinitialized();
+        assert!(
+            tracker.deinitialized.load(Ordering::Acquire),
+            "must stop after run_core deinitializes the PAL"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "StdHsm requires a multi-thread Tokio runtime")]
+    fn current_thread_tokio_runtime_is_rejected() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("failed to create tokio runtime");
+        let _hsm = StdHsm::with_tokio(runtime.handle().clone());
+    }
+
+    #[test]
+    fn shutdown_join_does_not_block_caller() {
+        let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            release_rx.recv().expect("release sender dropped");
+            done_tx.send(()).expect("completion receiver dropped");
+        });
+
+        join_shutdown(thread, None);
+
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(10)).is_err(),
+            "shutdown must not join on the calling thread"
+        );
+        release_tx.send(()).expect("shutdown thread dropped");
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown thread did not complete");
     }
 }
