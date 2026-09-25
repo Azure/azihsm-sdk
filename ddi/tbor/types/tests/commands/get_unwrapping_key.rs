@@ -46,27 +46,7 @@ fn get_unwrapping_key_returns_rsa_pub_key() {
     };
     let resp = ctx.tbor(&req).expect("GetUnwrappingKey");
 
-    assert_eq!(
-        resp.pub_key.len(),
-        UNWRAPPING_PUB_KEY_LEN,
-        "unwrapping pub key must be the pinned length",
-    );
-    let (modulus, exponent) = resp.pub_key.split_at(RSA_2048_MODULUS_LEN);
-
-    // A generated RSA-2048 modulus has exactly 2048 significant bits and
-    // is odd. The HSM wire format is little-endian, so those properties
-    // live in the last and first modulus bytes respectively.
-    assert!(
-        modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0,
-        "RSA modulus must have exactly 2048 significant bits",
-    );
-    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd");
-
-    let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
-    assert_eq!(
-        exponent, RSA_PUBLIC_EXPONENT,
-        "unwrapping key must use the standard RSA public exponent",
-    );
+    assert_valid_unwrapping_pub_key(&resp.pub_key);
 }
 
 /// Returns the same stable partition unwrapping key across repeated calls.
@@ -118,32 +98,7 @@ fn get_unwrapping_key_available_to_crypto_user() {
         })
         .expect("GetUnwrappingKey must be available to Crypto-User sessions");
 
-    assert_eq!(
-        resp.pub_key.len(),
-        UNWRAPPING_PUB_KEY_LEN,
-        "unwrapping pub key must be the pinned length",
-    );
-
-    let (modulus, exponent) = resp.pub_key.split_at(RSA_2048_MODULUS_LEN);
-
-    assert!(
-        modulus.iter().any(|&byte| byte != 0),
-        "RSA modulus must not be all zero",
-    );
-
-    assert!(
-        modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0,
-        "RSA modulus must have exactly 2048 significant bits",
-    );
-
-    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd");
-
-    let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
-
-    assert_eq!(
-        exponent, RSA_PUBLIC_EXPONENT,
-        "unwrapping key must use the standard RSA public exponent",
-    );
+    assert_valid_unwrapping_pub_key(&resp.pub_key);
 }
 
 /// Rejects a request that references a closed session.
@@ -480,16 +435,30 @@ fn get_unwrapping_key_stable_across_role_transitions() {
     assert_eq!(first.pub_key, last.pub_key);
 }
 
+/// Validates the HSM wire-format RSA-2048 unwrapping public key.
 fn assert_valid_unwrapping_pub_key(pub_key: &[u8]) {
-    assert_eq!(pub_key.len(), UNWRAPPING_PUB_KEY_LEN);
+    assert_eq!(
+        pub_key.len(),
+        UNWRAPPING_PUB_KEY_LEN,
+        "unwrapping pub key must be the pinned length",
+    );
 
     let (modulus, exponent) = pub_key.split_at(RSA_2048_MODULUS_LEN);
 
-    assert!(modulus.iter().any(|&byte| byte != 0));
-    assert!(modulus[0] & 1 != 0);
-    assert!(modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0);
+    assert!(
+        modulus.iter().any(|&byte| byte != 0),
+        "RSA modulus must not be all zero",
+    );
+    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd");
+    assert!(
+        modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0,
+        "RSA modulus must have exactly 2048 significant bits",
+    );
 
     let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
 
-    assert_eq!(exponent, RSA_PUBLIC_EXPONENT);
+    assert_eq!(
+        exponent, RSA_PUBLIC_EXPONENT,
+        "unwrapping key must use the standard RSA public exponent",
+    );
 }
