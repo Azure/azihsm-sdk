@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts (last updated 2026-09-16):
-* emu: 97 tests
+* emu: 114 tests
 * mock: 6 tests
 
 ## Legend
@@ -176,6 +176,37 @@ role's partition PSK still matches the compiled-in default.
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 
+
+## `GetCertificate` (opcode out-of-session)
+
+Firmware integration coverage for the TBOR `GetCertificate` command. These tests exercise
+certificate retrieval from slot 0, cross-check TBOR against the MBOR certificate path,
+validate invalid slot/index status handling, and verify that the out-of-session command is
+independent of CO/CU session state.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Every certificate index advertised by `GetCertChainInfo` returns non-empty, valid DER/X.509 within `CERT_MAX_LEN` | ✅ 🔁 | `get_cert::all_indices_round_trip` | Iterates over the full advertised chain and verifies DER SEQUENCE encoding and X.509 parsing. |
+| TBOR certificate bytes match the MBOR certificate path at every index | ✅ 🔁 | `get_cert::matches_mbor_path` | Both interfaces read the same underlying certificate store. |
+| Repeated reads of every advertised certificate are stable | ✅ 🔁 | `get_cert::repeated_reads_are_stable` | Reads each certificate twice and compares the full response. |
+| Distinct certificate indices do not alias the same certificate bytes | ✅ 🔁 | `get_cert::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain. |
+| First index beyond the advertised chain and `u8::MAX` are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_indices_rejected` | Covers the immediate boundary and maximum representable certificate id. |
+| Non-zero / unsupported certificate slots are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_slots_rejected` | Covers slots `1`, `2`, `127`, `254`, and `u8::MAX`. |
+| Invalid requests do not alter a valid certificate | ✅ | `get_cert::rejected_requests_do_not_affect_valid_certificate` | Valid certificate is identical before and after invalid slot/index requests. |
+| Out-of-session `GetCertificate` remains callable while a CO Authenticated session is active | ✅ | `get_cert::callable_while_session_active` | Uses shared `common::CO`; active in-session state must not gate the command. |
+| `GetCertChainInfo::num_certs` exactly matches the readable `GetCertificate` boundary | ✅ | `get_cert::chain_info_count_matches_get_certificate_boundary` | Every advertised index succeeds and index `num_certs` is rejected with `InvalidArg`. |
+| Interleaved reads of other certificate indices do not alter certificate 0 | ✅ | `get_cert::interleaved_reads_are_stable` | Exercises non-isolated read ordering. |
+| Certificate reads are stable before, during, and after a CO Authenticated-session lifecycle | ✅ | `get_cert::stable_across_session_lifecycle` | Verifies session open/close does not affect this out-of-session command. |
+| A rejected request does not affect any certificate in the valid chain | ✅ 🔁 | `get_cert::rejected_request_does_not_affect_entire_chain` | Snapshots the entire chain before an invalid request and compares afterward. |
+| Reading certificates does not change `GetCertChainInfo` metadata | ✅ | `get_cert::certificate_reads_do_not_change_chain_info` | Compares chain-info response before and after reading every certificate. |
+| Certificates can be fetched in reverse order | ✅ 🔁 | `get_cert::certificates_can_be_read_in_reverse_order` | Confirms reads do not depend on sequential traversal. |
+| First and last advertised certificate indices are readable | ✅ | `get_cert::first_and_last_valid_indices_succeed` | Explicit lower/upper valid-boundary coverage. |
+| Invalid slot rejection is independent of certificate id | ✅ 🔁 | `get_cert::invalid_slot_rejected_for_multiple_cert_indices` | Uses certificate ids `0`, `1`, and `u8::MAX` with slot `u8::MAX`. |
+| Maximum certificate id is rejected with `InvalidArg` | ✅ | `get_cert::max_cert_id_rejected` | Explicit `u8::MAX` certificate-index status coverage. |
+| Interleaving MBOR and TBOR reads preserves byte-identical certificate results | ✅ 🔁 | `get_cert::mbor_tbor_interleaved_reads_remain_identical` | TBOR-before, MBOR, and TBOR-after remain consistent for every certificate. |
+| Invalid slot and invalid certificate-index failures preserve the entire valid chain | ✅ | `get_cert::all_reject_classes_preserve_entire_chain` | Covers both rejection classes against a full-chain snapshot. |
+| Out-of-session `GetCertificate` remains callable while a CU PlainText session is active | ✅ | `get_cert::callable_while_cu_session_active` | Uses shared `common::CU`; CU uses the supported `SessionType::PlainText` pairing. |
+| `GetCertificate` remains stable across both supported CO Authenticated and CU PlainText session lifecycles | ✅ 🔁 | `get_cert::stable_across_co_and_cu_session_lifecycles` | Verifies the same certificate before, during, and after each supported role/session pairing. |
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
