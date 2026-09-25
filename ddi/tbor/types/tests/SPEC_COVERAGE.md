@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts (last updated 2026-09-16):
-* emu: 97 tests
+* emu: 121 tests
 * mock: 6 tests
 
 ## Legend
@@ -175,6 +175,39 @@ role's partition PSK still matches the compiled-in default.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
+
+## 'Hash' (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR 'Hash' command. These tests exercise
+SHA-256, SHA-384, and SHA-512 through 'TestCtx::tbor' and validate successful
+responses byte-for-byte against 'azihsm_crypto'.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| SHA-256, SHA-384, and SHA-512 match the host implementation for empty, short, and longer messages | ✅ 🔁 | 'hash::hash_matches_host_all_algos' | Loops over all three algorithms and varied message sizes |
+| Unsupported hash algorithm is rejected with 'InvalidArg' | ✅ | 'hash::hash_unknown_algo_rejected' | Uses algorithm discriminant '0' |
+| Unknown session id is rejected with 'SessionNotFound' | ✅ | 'hash::hash_invalid_session_id_rejected' | Uses 'u16::MAX' |
+| Multiple invalid algorithm discriminants are rejected with 'InvalidArg' | ✅ 🔁 | 'hash::hash_invalid_algos_rejected' | Covers values below, above, and far outside the supported range |
+| Arbitrary binary input hashes correctly | ✅ 🔁 | 'hash::hash_binary_message_matches_host' | Includes '0x00', '0x80', and '0xff' bytes |
+| Different messages produce different digests | ✅ 🔁 | 'hash::hash_different_messages_produce_different_digests' | Exercised for all supported algorithms |
+| SHA padding and compression-block boundaries match the host | ✅ 🔁 | 'hash::hash_block_boundary_lengths_match_host' | Covers 55/56, 63/64/65, 111/112, and 127/128/129-byte boundaries |
+| Closed session is rejected with 'SessionNotFound' | ✅ | 'hash::hash_closed_session_rejected' | Hash request is sent after closing the CO session |
+| Same message hashes correctly under each supported algorithm | ✅ | 'hash::hash_same_message_different_algos' | Also verifies 32/48/64-byte digest lengths |
+| One-bit input change produces a different digest | ✅ 🔁 | 'hash::hash_one_bit_message_change_changes_digest' | Both results are independently checked against the host |
+| Rotated Crypto-User session may execute Hash | ✅ 🔁 | 'hash::hash_crypto_user_session_matches_host' | Exercises SHA-256, SHA-384, and SHA-512 |
+| SHA-256, SHA-384, and SHA-512 known-answer vectors match | ✅ | 'hash::hash_known_answer_vectors' | Uses the standard '"abc"' vectors |
+| Crypto-User session using the default PSK is rejected with 'DefaultPskMustRotate' | ✅ | 'hash::hash_default_psk_cu_rejected' | Verifies the dispatcher default-PSK gate |
+| Repeated identical requests are deterministic | ✅ 🔁 | 'hash::hash_same_request_is_deterministic' | Same session, message, and algorithm return identical digests |
+| Full '0x00..=0xff' byte range hashes correctly | ✅ 🔁 | 'hash::hash_all_byte_values_matches_host' | Exercises every possible byte value |
+| Rejected invalid-algorithm request does not poison the active session | ✅ 🔁 | 'hash::hash_session_usable_after_invalid_algo' | Valid requests succeed after 'InvalidArg' |
+| Consecutive messages of different lengths do not retain prior Hash state | ✅ 🔁 | 'hash::hash_consecutive_different_length_messages_match_host' | Includes 1, 17, 513, 1000, and 0-byte messages |
+| Switching algorithms on one active session does not leak Hash state | ✅ 🔁 | 'hash::hash_alternating_algorithms_match_host' | Alternates SHA-256, SHA-512, and SHA-384 |
+| Leading, embedded, trailing, and repeated zero bytes are preserved as message data | ✅ 🔁 | 'hash::hash_zero_byte_positions_match_host' | Guards against accidental zero-termination/truncation behavior |
+| CO and rotated-CU sessions produce identical digests for identical requests | ✅ 🔁 | 'hash::hash_matches_across_co_and_cu_sessions' | Sessions are exercised sequentially because the fixture may not permit concurrent authenticated CO/CU sessions |
+| Invalid-session request does not affect a separate valid session | ✅ 🔁 | 'hash::hash_valid_session_usable_after_invalid_session_request' | Valid session remains usable after 'SessionNotFound' |
+| Closing a CO session releases it and a subsequently opened CU session can Hash normally | ✅ 🔁 | 'hash::hash_new_session_works_after_previous_session_closed' | Also confirms the closed session id is rejected |
+| Maximum 2048-byte Hash message succeeds | ✅ 🔁 | 'hash::hash_max_message_length_matches_host' | Exercises the protocol maximum for all supported algorithms |
+| 2049-byte Hash message is rejected | ✅ | 'hash::hash_over_max_message_length_rejected' | Accepts rejection at the TBOR/firmware boundary without pinning where length validation occurs |
 
 
 ## `EccGenerateKey` (opcode in-session, gated)

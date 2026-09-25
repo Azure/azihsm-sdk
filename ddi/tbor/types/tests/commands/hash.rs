@@ -470,7 +470,7 @@ fn hash_alternating_algorithms_match_host() {
 }
 
 /// Verifies leading, embedded, and trailing zero bytes are treated as message
-/// data rather than terminators or padding supplied by the host.
+/// data rather than terminators.
 #[test]
 fn hash_zero_byte_positions_match_host() {
     let ctx = TestCtx::new();
@@ -498,16 +498,14 @@ fn hash_zero_byte_positions_match_host() {
     }
 }
 
-/// Verifies CO and CU sessions produce the same digest for the same request.
-///
-/// The sessions are exercised sequentially because the test fixture does not
-/// assume multiple concurrently active sessions.
+/// Verifies CO and rotated-CU sessions produce the same digest for the same
+/// request. Sessions are exercised sequentially because authenticated CO and
+/// CU setup may consume the same limited session resource in the test fixture.
 #[test]
 fn hash_matches_across_co_and_cu_sessions() {
     let ctx = TestCtx::new();
     let msg = b"same hash request across sessions".to_vec();
 
-    // Exercise Hash through a finalized CO session first.
     let co_session = finalized_co_session(&ctx);
 
     let co_digests: Vec<(u8, Vec<u8>)> = [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512]
@@ -528,7 +526,6 @@ fn hash_matches_across_co_and_cu_sessions() {
     ctx.session_close(co_session.session_id)
         .expect("close CO session");
 
-    // Open CU only after the CO session has been released.
     let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
 
     for (algo, co_digest) in co_digests {
@@ -576,8 +573,8 @@ fn hash_valid_session_usable_after_invalid_session_request() {
     }
 }
 
-/// Verifies closing a CO session releases it cleanly and a subsequent CU
-/// session can perform Hash operations normally.
+/// Verifies closing one session releases its slot and a subsequently opened CU
+/// session can execute Hash normally.
 #[test]
 fn hash_new_session_works_after_previous_session_closed() {
     let ctx = TestCtx::new();
@@ -585,9 +582,7 @@ fn hash_new_session_works_after_previous_session_closed() {
     let co_session = finalized_co_session(&ctx);
     let closed_session_id = co_session.session_id;
 
-    // Verify the first session works before closing it.
     let first_msg = b"hash before closing CO session".to_vec();
-
     let digest = device_digest(&ctx, closed_session_id, HASH_ALGO_SHA256, first_msg.clone());
 
     assert_eq!(
@@ -599,7 +594,6 @@ fn hash_new_session_works_after_previous_session_closed() {
     ctx.session_close(closed_session_id)
         .expect("close CO session");
 
-    // The closed session must no longer be usable.
     ctx.expect_fw_reject(
         &TborHashReq {
             session_id: closed_session_id,
@@ -609,7 +603,6 @@ fn hash_new_session_works_after_previous_session_closed() {
         TborStatus::SessionNotFound,
     );
 
-    // A new CU session should still be able to use Hash normally.
     let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
     let msg = b"new session after previous session closed".to_vec();
 
@@ -622,4 +615,46 @@ fn hash_new_session_works_after_previous_session_closed() {
             "new CU session must hash correctly after CO session was closed for algo {algo}",
         );
     }
+}
+
+/// Verifies the protocol maximum Hash message length succeeds and matches the
+/// host implementation for every supported algorithm.
+#[test]
+fn hash_max_message_length_matches_host() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let msg: Vec<u8> = (0..2048usize).map(|i| (i % 251) as u8).collect();
+
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            dev,
+            host_digest(algo, &msg),
+            "maximum-length Hash request must match host for algo {algo}",
+        );
+    }
+}
+
+/// Verifies a Hash message one byte beyond the protocol maximum is rejected.
+///
+/// Keep this assertion at the request boundary rather than pinning a firmware
+/// status: depending on where length validation occurs, the request may be
+/// rejected by TBOR encoding/decoding before the Hash handler executes.
+#[test]
+fn hash_over_max_message_length_rejected() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let result = ctx.tbor(&TborHashReq {
+        session_id: session.session_id,
+        algo: HASH_ALGO_SHA256,
+        msg: vec![0x5a; 2049],
+    });
+
+    assert!(
+        result.is_err(),
+        "2049-byte Hash message must be rejected by the TBOR/firmware path",
+    );
 }
