@@ -109,7 +109,7 @@ impl HkdfHandler for AzihsmHkdf {
 
         let ikm_blob: Zeroizing<Vec<u8>> = match &params.ikm {
             IkmSource::Bytes(bytes) => Zeroizing::new(bytes.to_vec()),
-            IkmSource::File(path) => Zeroizing::new(crate::keyload::read_masked_key(path)?),
+            IkmSource::File(path) => crate::keyload::read_masked_key(path)?,
         };
 
         let slot = engine_data_slot()?;
