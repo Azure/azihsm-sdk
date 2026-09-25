@@ -59,18 +59,21 @@ impl EmuCtx {
 /// slot: without an explicit release, the last `Arc<StdHsm>` reference
 /// would never drop for the life of the process, so `StdHsm`'s Embassy
 /// and Tokio background threads would never stop — reproducing the
-/// hypervisor shutdown hang this crate exists to avoid. Once
-/// [`shutdown`](DdiEmu::shutdown) has released the context, this slot is
-/// left `None` permanently: the underlying `StdHsm` core is a
-/// process-global singleton (see above) that cannot be re-initialised,
-/// so [`open_dev`](Ddi::open_dev) must not be called again afterwards.
+/// hypervisor shutdown hang this crate exists to avoid. If live
+/// `DdiEmuDev` handles remain when `shutdown` is called, the context is
+/// put back rather than released, so a later retry can still complete
+/// it — see [`shutdown`](DdiEmu::shutdown). Once a call *does* release
+/// it, this slot is left `None` permanently: the underlying `StdHsm`
+/// core is a process-global singleton (see above) that cannot be
+/// re-initialised, so [`open_dev`](Ddi::open_dev) must not be called
+/// again afterwards.
 static CTX: Mutex<Option<EmuCtx>> = Mutex::new(None);
 
 /// Runs `f` with a reference to the global emulator context, creating it
 /// on first use.
 ///
-/// Panics if called after [`DdiEmu::shutdown`] has released the context;
-/// see [`CTX`].
+/// Panics if called after a [`DdiEmu::shutdown`] call has fully released
+/// the context; see [`CTX`].
 fn with_ctx<T>(f: impl FnOnce(&EmuCtx) -> T) -> T {
     let mut guard = CTX.lock();
     let ctx = guard.get_or_insert_with(EmuCtx::new);
@@ -95,45 +98,57 @@ impl DdiEmu {
     /// the last outstanding device handle drops the last other
     /// reference to the shared `Arc<StdHsm>`, letting this call take
     /// sole ownership and actually join the background threads via
-    /// [`StdHsm::shutdown`]. If device handles are still alive, this
-    /// call instead leaks the runtime so it keeps serving them, and the
-    /// background threads only stop once those handles are also
-    /// dropped and the process exits — calling with outstanding handles
-    /// therefore does not by itself fix a hang; callers should still
-    /// drop all `DdiEmuDev`s first.
+    /// [`StdHsm::shutdown`].
+    ///
+    /// If device handles are still alive, this call is a no-op that
+    /// leaves the context in place (rather than releasing it
+    /// irreversibly): callers should drop all `DdiEmuDev`s and call
+    /// [`shutdown`](Self::shutdown) again, which then completes
+    /// normally. Retrying is important — there is no other way to stop
+    /// the background threads once this call has released the context,
+    /// so silently discarding it here would leak them permanently and
+    /// reintroduce the hang this crate exists to avoid.
     ///
     /// A no-op if the context was never initialised (no device was ever
-    /// opened) or has already been shut down. After this call returns,
-    /// no `DdiEmu` in this process may open a new device: the
-    /// underlying firmware core is a process-global singleton that
-    /// cannot be re-initialised (see [`CTX`]).
+    /// opened) or has already been fully released by a prior call.
+    /// After a call that *does* release the context, no `DdiEmu` in
+    /// this process may open a new device: the underlying firmware core
+    /// is a process-global singleton that cannot be re-initialised (see
+    /// [`CTX`]).
     ///
     /// Must not be called from a worker thread of the emulator's own
     /// tokio runtime — see [`StdHsm::shutdown`].
     pub fn shutdown() {
-        let Some(ctx) = CTX.lock().take() else {
+        let mut guard = CTX.lock();
+        let Some(EmuCtx { rt, hsm }) = guard.take() else {
             return;
         };
 
-        match Arc::try_unwrap(ctx.hsm) {
+        match Arc::try_unwrap(hsm) {
             Ok(hsm) => {
+                // Release the lock before the blocking join below: nothing
+                // else needs `CTX` while `shutdown` drains, and holding a
+                // mutex across it would needlessly block any concurrent
+                // `open_dev`/`shutdown` caller (the latter would otherwise
+                // see a spurious empty slot and reinitialise `EmuCtx`,
+                // which panics — `StdHsm` can only ever be built once).
+                drop(guard);
                 hsm.shutdown();
-                drop(ctx.rt);
             }
             Err(hsm) => {
                 tracing::warn!(
                     refs = Arc::strong_count(&hsm),
                     "azihsm_ddi_emu: shutdown called with live DdiEmuDev handles \
-                     outstanding; leaking the runtime so it keeps serving them \
-                     until they are all dropped"
+                     outstanding; leaving the context in place so a later \
+                     shutdown() call (after they are all dropped) can complete"
                 );
-                // Don't drop `ctx.rt`: other `Arc<StdHsm>` clones still need
-                // it, and dropping a `Runtime` that's still in use can
-                // panic or deadlock. A hypervisor shutdown is expected to
-                // exit the process shortly after, so leaking its worker
-                // threads here is an acceptable trade-off against that
-                // risk.
-                std::mem::forget(ctx.rt);
+                // Put the context back rather than releasing `rt`/`hsm`:
+                // dropping `rt` here would be unsound (other `Arc<StdHsm>`
+                // clones still need it), but discarding it without dropping
+                // it (e.g. via `mem::forget`) would leak it irrecoverably —
+                // no future call could ever join it, permanently
+                // reintroducing the hang this crate exists to avoid.
+                *guard = Some(EmuCtx { rt, hsm });
             }
         }
     }
@@ -209,12 +224,21 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_with_live_handle_does_not_panic() {
+    fn shutdown_with_live_handle_is_retryable() {
         let ddi = DdiEmu::default();
-        let _dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
+        let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
 
-        // A live handle still holds an `Arc<StdHsm>` clone, so this
-        // takes the leak-the-runtime fallback path rather than joining.
+        // A live handle still holds an `Arc<StdHsm>` clone, so this is a
+        // no-op that leaves the context in place rather than releasing
+        // or leaking it.
+        DdiEmu::shutdown();
+
+        // Dropping the last handle and retrying now succeeds: the
+        // context was preserved, not lost.
+        drop(dev);
+        DdiEmu::shutdown();
+
+        // Idempotent: calling again after release is still a no-op.
         DdiEmu::shutdown();
     }
 }
