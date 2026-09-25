@@ -9,6 +9,7 @@ use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_interface::DevInfo;
 use azihsm_fw_hsm_std::StdHsm;
+use parking_lot::Condvar;
 use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 
@@ -51,32 +52,81 @@ impl EmuCtx {
     }
 }
 
+/// Lifecycle state of the process-global emulator context.
+///
+/// Kept as an explicit state machine (rather than folding all "no live
+/// `EmuCtx`" cases into a single `None`) so [`with_ctx`] and
+/// [`DdiEmu::shutdown`] can each tell apart "never initialised" (safe to
+/// lazily create), "a shutdown join is in progress on another thread"
+/// (must wait, not race ahead), and "fully released" (must reject, since
+/// the underlying `StdHsm` core cannot be re-initialised) — see [`CTX`].
+enum CtxState {
+    /// No device has ever been opened.
+    Uninitialized,
+    /// A live `EmuCtx` exists and may be used.
+    Running(EmuCtx),
+    /// A [`DdiEmu::shutdown`] call has taken the `EmuCtx` out to run its
+    /// (potentially slow) blocking join outside the lock; the slot is
+    /// temporarily empty until that call either restores `Running` (live
+    /// handles remained) or transitions to `ShutDown` (join completed).
+    ShuttingDown,
+    /// [`DdiEmu::shutdown`] has fully released the context. Permanent:
+    /// the underlying `StdHsm` core is a process-global singleton that
+    /// cannot be re-initialised.
+    ShutDown,
+}
+
 /// Global emulator context, lazily initialised on first access and
 /// released by [`DdiEmu::shutdown`].
 ///
-/// Held behind a mutex (rather than a [`std::sync::LazyLock`]) so that
-/// [`DdiEmu::shutdown`] can take ownership of the `EmuCtx` out of the
-/// slot: without an explicit release, the last `Arc<StdHsm>` reference
-/// would never drop for the life of the process, so `StdHsm`'s Embassy
-/// and Tokio background threads would never stop — reproducing the
-/// hypervisor shutdown hang this crate exists to avoid. If live
-/// `DdiEmuDev` handles remain when `shutdown` is called, the context is
-/// put back rather than released, so a later retry can still complete
-/// it — see [`shutdown`](DdiEmu::shutdown). Once a call *does* release
-/// it, this slot is left `None` permanently: the underlying `StdHsm`
-/// core is a process-global singleton (see above) that cannot be
-/// re-initialised, so [`open_dev`](Ddi::open_dev) must not be called
+/// Held behind a mutex+condvar (rather than a [`std::sync::LazyLock`])
+/// so that [`DdiEmu::shutdown`] can take ownership of the `EmuCtx` out of
+/// the slot: without an explicit release, the last `Arc<StdHsm>`
+/// reference would never drop for the life of the process, so
+/// `StdHsm`'s Embassy and Tokio background threads would never stop —
+/// reproducing the hypervisor shutdown hang this crate exists to avoid.
+/// If live `DdiEmuDev` handles remain when `shutdown` is called, the
+/// context is put back rather than released, so a later retry can still
+/// complete it — see [`shutdown`](DdiEmu::shutdown). Once a call *does*
+/// release it, [`CtxState::ShutDown`] is permanent: the underlying
+/// `StdHsm` core is a process-global singleton (see above) that cannot
+/// be re-initialised, so [`open_dev`](Ddi::open_dev) must not be called
 /// again afterwards.
-static CTX: Mutex<Option<EmuCtx>> = Mutex::new(None);
+static CTX: Mutex<CtxState> = Mutex::new(CtxState::Uninitialized);
+
+/// Signalled whenever [`CTX`]'s state changes, so callers blocked behind
+/// an in-progress [`CtxState::ShuttingDown`] wake up and re-check it
+/// instead of racing ahead on a stale, temporarily-empty slot.
+static CTX_CHANGED: Condvar = Condvar::new();
 
 /// Runs `f` with a reference to the global emulator context, creating it
 /// on first use.
+///
+/// If a concurrent [`DdiEmu::shutdown`] join is in progress, waits for it
+/// to settle (either restoring the context or fully releasing it) rather
+/// than racing ahead on a temporarily-empty slot.
 ///
 /// Panics if called after a [`DdiEmu::shutdown`] call has fully released
 /// the context; see [`CTX`].
 fn with_ctx<T>(f: impl FnOnce(&EmuCtx) -> T) -> T {
     let mut guard = CTX.lock();
-    let ctx = guard.get_or_insert_with(EmuCtx::new);
+    loop {
+        match &*guard {
+            CtxState::Running(_) => break,
+            CtxState::Uninitialized => {
+                *guard = CtxState::Running(EmuCtx::new());
+                break;
+            }
+            CtxState::ShuttingDown => CTX_CHANGED.wait(&mut guard),
+            CtxState::ShutDown => panic!(
+                "azihsm_ddi_emu: cannot open a device after DdiEmu::shutdown \
+                 has released the process-global StdHsm singleton"
+            ),
+        }
+    }
+    let CtxState::Running(ctx) = &*guard else {
+        unreachable!("loop above only exits with CtxState::Running")
+    };
     f(ctx)
 }
 
@@ -110,7 +160,13 @@ impl DdiEmu {
     /// reintroduce the hang this crate exists to avoid.
     ///
     /// A no-op if the context was never initialised (no device was ever
-    /// opened) or has already been fully released by a prior call.
+    /// opened) or has already been fully released by a prior call. If
+    /// another call's join is already in progress on another thread,
+    /// this call waits for it to settle before deciding whether to join
+    /// itself, retry, or return, instead of racing ahead on a
+    /// temporarily-empty slot and returning early as if it had completed
+    /// a shutdown it never actually performed.
+    ///
     /// After a call that *does* release the context, no `DdiEmu` in
     /// this process may open a new device: the underlying firmware core
     /// is a process-global singleton that cannot be re-initialised (see
@@ -120,8 +176,19 @@ impl DdiEmu {
     /// tokio runtime — see [`StdHsm::shutdown`].
     pub fn shutdown() {
         let mut guard = CTX.lock();
-        let Some(EmuCtx { rt, hsm }) = guard.take() else {
-            return;
+        let (rt, hsm) = loop {
+            match &mut *guard {
+                CtxState::Uninitialized | CtxState::ShutDown => return,
+                CtxState::ShuttingDown => CTX_CHANGED.wait(&mut guard),
+                CtxState::Running(_) => {
+                    let CtxState::Running(EmuCtx { rt, hsm }) =
+                        std::mem::replace(&mut *guard, CtxState::ShuttingDown)
+                    else {
+                        unreachable!("just matched CtxState::Running");
+                    };
+                    break (rt, hsm);
+                }
+            }
         };
 
         match Arc::try_unwrap(hsm) {
@@ -129,11 +196,17 @@ impl DdiEmu {
                 // Release the lock before the blocking join below: nothing
                 // else needs `CTX` while `shutdown` drains, and holding a
                 // mutex across it would needlessly block any concurrent
-                // `open_dev`/`shutdown` caller (the latter would otherwise
-                // see a spurious empty slot and reinitialise `EmuCtx`,
-                // which panics — `StdHsm` can only ever be built once).
+                // `open_dev`/`shutdown` caller. They instead see (and wait
+                // on) the explicit `ShuttingDown` state set above, rather
+                // than a plain empty slot that would make `open_dev` try
+                // to reinitialise `EmuCtx` (which panics — `StdHsm` can
+                // only ever be built once) or make a concurrent `shutdown`
+                // return early as if it had completed this join itself.
                 drop(guard);
                 hsm.shutdown();
+                let mut guard = CTX.lock();
+                *guard = CtxState::ShutDown;
+                CTX_CHANGED.notify_all();
             }
             Err(hsm) => {
                 tracing::warn!(
@@ -148,7 +221,8 @@ impl DdiEmu {
                 // it (e.g. via `mem::forget`) would leak it irrecoverably —
                 // no future call could ever join it, permanently
                 // reintroducing the hang this crate exists to avoid.
-                *guard = Some(EmuCtx { rt, hsm });
+                *guard = CtxState::Running(EmuCtx { rt, hsm });
+                CTX_CHANGED.notify_all();
             }
         }
     }
@@ -239,6 +313,26 @@ mod tests {
         DdiEmu::shutdown();
 
         // Idempotent: calling again after release is still a no-op.
+        DdiEmu::shutdown();
+    }
+
+    #[test]
+    fn concurrent_shutdown_calls_serialize_instead_of_racing() {
+        let ddi = DdiEmu::default();
+        let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
+        drop(dev);
+
+        // Whichever thread locks `CTX` first takes ownership of the
+        // `EmuCtx` and performs the real (slow, unlocked) join; the
+        // other must wait for `CtxState::ShuttingDown` to settle rather
+        // than seeing a stale empty slot and returning early as if it
+        // had completed a shutdown it never actually performed.
+        let t1 = std::thread::spawn(DdiEmu::shutdown);
+        let t2 = std::thread::spawn(DdiEmu::shutdown);
+        t1.join().expect("shutdown thread 1 panicked");
+        t2.join().expect("shutdown thread 2 panicked");
+
+        // Idempotent afterwards.
         DdiEmu::shutdown();
     }
 }
