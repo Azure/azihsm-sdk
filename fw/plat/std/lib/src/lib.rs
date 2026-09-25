@@ -38,7 +38,10 @@ use azihsm_fw_hsm_pal_std::*;
 use azihsm_fw_hsm_pal_traits::*;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::once_lock::OnceLock;
+use embassy_sync::semaphore::GreedySemaphore;
+use embassy_sync::semaphore::Semaphore;
 use embassy_sync::signal::Signal;
+use parking_lot::Mutex;
 
 /// Global HSM singleton — concrete type with StdHsmPal.
 ///
@@ -71,8 +74,11 @@ struct ShutdownTracker {
     deinitialized: AtomicBool,
     /// Free slots in the `handle_io` Embassy task pool
     /// ([`MAX_CONCURRENT_IOS`]), mirrored 1:1 with the pool's own
-    /// capacity. See [`try_reserve_handle_io_slot`](Self::try_reserve_handle_io_slot).
-    handle_io_permits: AtomicUsize,
+    /// capacity. See [`reserve_handle_io_slot`](Self::reserve_handle_io_slot).
+    /// `poll_io` is the only caller, and it only ever awaits one permit at
+    /// a time (never concurrently), so `GreedySemaphore`'s single-waker
+    /// registration is sufficient here.
+    handle_io_permits: GreedySemaphore<CriticalSectionRawMutex>,
 }
 
 impl ShutdownTracker {
@@ -81,7 +87,7 @@ impl ShutdownTracker {
             active_tasks: AtomicUsize::new(active_tasks),
             drained: Signal::new(),
             deinitialized: AtomicBool::new(false),
-            handle_io_permits: AtomicUsize::new(MAX_CONCURRENT_IOS),
+            handle_io_permits: GreedySemaphore::new(MAX_CONCURRENT_IOS),
         }
     }
 
@@ -92,28 +98,36 @@ impl ShutdownTracker {
         }
     }
 
-    /// Attempts to reserve one of the `handle_io` pool's
-    /// [`MAX_CONCURRENT_IOS`] slots.
+    /// Waits for one of the `handle_io` pool's [`MAX_CONCURRENT_IOS`]
+    /// slots to become free, then reserves it.
     ///
     /// `poll_io` must call this *before* invoking `handle_io`: a failed
     /// spawn (Embassy's pool full) still consumes — and silently drops —
     /// the `StdHsmIo` argument passed to it, leaking its buffer-pool
     /// slot, since Embassy gives no way to recover the argument once
     /// spawning fails. Mirroring the pool's capacity here 1:1 lets
-    /// `poll_io` know *before* calling `handle_io` whether the spawn
-    /// will succeed, so it can release the IO's slot itself via
-    /// `drop_io` when none are free instead.
-    fn try_reserve_handle_io_slot(&self) -> bool {
-        self.handle_io_permits
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
-            .is_ok()
+    /// `poll_io` know a spawn will succeed before calling `handle_io`.
+    ///
+    /// Blocking here (rather than discarding the IO when the pool is
+    /// full) is what gives [`StdHsm::io`](crate::StdHsm::io) its
+    /// documented backpressure: the caller's submit awaits a channel
+    /// slot, and every dequeued IO in turn awaits a `handle_io` slot, so
+    /// the total number of in-flight IOs never exceeds
+    /// [`MAX_CONCURRENT_IOS`].
+    async fn reserve_handle_io_slot(&self) {
+        // Infallible: `GreedySemaphore::acquire` never returns `Err`.
+        let Ok(permit) = self.handle_io_permits.acquire(1).await;
+        // Give up RAII ownership — the slot is released explicitly by
+        // `release_handle_io_slot` once the corresponding `handle_io`
+        // task finishes, not when this function returns.
+        permit.disarm();
     }
 
     /// Releases a slot reserved by
-    /// [`try_reserve_handle_io_slot`](Self::try_reserve_handle_io_slot),
-    /// called once the corresponding `handle_io` task finishes.
+    /// [`reserve_handle_io_slot`](Self::reserve_handle_io_slot), called
+    /// once the corresponding `handle_io` task finishes.
     fn release_handle_io_slot(&self) {
-        self.handle_io_permits.fetch_add(1, Ordering::AcqRel);
+        self.handle_io_permits.release(1);
     }
 
     async fn wait_drained(&self) {
@@ -175,13 +189,14 @@ async fn run_pal_until_drained(hsm: &Hsm<StdHsmPal>, tracker: &ShutdownTracker) 
 
 /// IO receive loop — runs until the submission channel is closed.
 ///
-/// Awaits the next IO from the PAL submission queue, then spawns a
-/// `handle_io` task from the 32-slot pool. If no pool slots are
-/// available, the IO is discarded — its buffer-pool slot is released
-/// via [`HsmIoController::drop_io`] — and the loop continues. Only
-/// exits once the submission channel is closed and drained, and only
-/// then marks itself done in `tracker` — the executor won't stop
-/// until this loop (and every `handle_io` it spawned) has finished.
+/// Awaits the next IO from the PAL submission queue, then waits for a
+/// free slot in the `handle_io` pool ([`MAX_CONCURRENT_IOS`]) before
+/// spawning it — this is what gives [`StdHsm::io`](crate::StdHsm::io)
+/// its documented backpressure rather than erroring when the pool is
+/// momentarily full. Only exits once the submission channel is closed
+/// and drained, and only then marks itself done in `tracker` — the
+/// executor won't stop until this loop (and every `handle_io` it
+/// spawned) has finished.
 #[embassy_executor::task]
 async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracker>) {
     loop {
@@ -189,13 +204,7 @@ async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracke
             break;
         };
 
-        if !tracker.try_reserve_handle_io_slot() {
-            // No `handle_io` pool slot is free: discard the IO, but
-            // release its buffer-pool slot rather than just dropping
-            // it (see `try_reserve_handle_io_slot`'s doc comment).
-            let _ = HSM.get().await.pal().drop_io(io).await;
-            continue;
-        }
+        tracker.reserve_handle_io_slot().await;
 
         tracker.active_tasks.fetch_add(1, Ordering::AcqRel);
         // A slot was just reserved above, so this mirrors the pool's
@@ -212,7 +221,7 @@ async fn poll_io(spawner: embassy_executor::Spawner, tracker: Arc<ShutdownTracke
 /// Delegates all parsing, validation, and CQE population to
 /// [`Hsm::handle_io`]. Runs in a 32-task Embassy pool, allowing
 /// up to 32 IOs to be processed concurrently.
-#[embassy_executor::task(pool_size = 32)]
+#[embassy_executor::task(pool_size = MAX_CONCURRENT_IOS)]
 async fn handle_io(io: StdHsmIo, tracker: Arc<ShutdownTracker>) {
     HSM.get().await.handle_io(io).await;
     tracker.release_handle_io_slot();
@@ -601,7 +610,7 @@ impl StdHsm {
         if let Some(thread) = self.begin_shutdown() {
             let (tx, rx) = tokio::sync::oneshot::channel();
             let tokio_rt = self.tokio_rt.take();
-            std::thread::spawn(move || {
+            spawn_or_run(move || {
                 let _ = thread.join();
                 drop(tokio_rt);
                 let _ = tx.send(());
@@ -652,10 +661,42 @@ impl Drop for StdHsm {
 }
 
 fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtime>) {
-    std::thread::spawn(move || {
+    spawn_or_run(move || {
         let _ = thread.join();
         drop(tokio_rt);
     });
+}
+
+/// Runs `job` on a new OS thread if possible, otherwise runs it
+/// synchronously on the calling thread instead of panicking.
+///
+/// `std::thread::spawn` panics if the OS refuses to create a thread (e.g.
+/// resource exhaustion). That would be unsafe here: panicking during
+/// `Drop` while another panic is already unwinding aborts the process,
+/// and panicking anywhere else would still drop `job` — along with
+/// whatever it owns, such as an embassy thread's `JoinHandle` or an
+/// owned tokio `Runtime` — without ever running it, stalling or
+/// skipping the drain.
+///
+/// `std::thread::Builder::spawn` fails gracefully instead of panicking,
+/// but on failure it drops `job` without running it, so `job` is kept in
+/// a shareable slot here: on failure, this thread reclaims it from that
+/// slot and runs it synchronously instead of losing it.
+fn spawn_or_run(job: impl FnOnce() + Send + 'static) {
+    type Job = Box<dyn FnOnce() + Send>;
+
+    let job: Arc<Mutex<Option<Job>>> = Arc::new(Mutex::new(Some(Box::new(job))));
+    let job_for_thread = Arc::clone(&job);
+    let spawned = std::thread::Builder::new().spawn(move || {
+        if let Some(job) = job_for_thread.lock().take() {
+            job();
+        }
+    });
+    if spawned.is_err() {
+        if let Some(job) = job.lock().take() {
+            job();
+        }
+    }
 }
 
 impl Default for StdHsm {
