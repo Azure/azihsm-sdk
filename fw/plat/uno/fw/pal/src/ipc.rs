@@ -59,6 +59,12 @@ pub struct IpcMessage {
 
 const _: () = assert!(core::mem::size_of::<IpcMessage>() == IPC_MESSAGE_LENGTH * 4);
 
+impl zeroize::Zeroize for IpcMessage {
+    fn zeroize(&mut self) {
+        self.data.zeroize();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IO controller / channel identifiers
 // ---------------------------------------------------------------------------

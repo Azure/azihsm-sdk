@@ -34,7 +34,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use crate::UnoHsmPal;
 
@@ -356,10 +356,9 @@ async fn fp_bulk_create(
         key_data: [0u8; FP_BULK_KEY_LEN],
     };
     info.key_data.copy_from_slice(key_bytes);
-    if let Err(e) = fp_send_key_update(pal, info).await {
-        fp_slot_free(vault_id, key_index);
-        return Err(e);
-    }
+    // On failure the backend may already own the key; keep the slot reserved
+    // (don't free it) so a later create can't alias it — reclaimed on reset.
+    fp_send_key_update(pal, info).await?;
     let bulk_id = AesBulk256KeyId::new()
         .with_key_index(key_index)
         .with_vault_id(vault_id)
@@ -451,30 +450,28 @@ async fn fp_delete_session_only(
 }
 
 /// Send an `AesKeyUpdate` message to the bulk-crypto backend over the
-/// HSM↔backend IPC channel and await the response, mapping a
-/// non-`Success` status to an error.
+/// HSM↔backend IPC channel and await the response, mapping a non-`Success`
+/// reply to an error.
 ///
-/// The message body carries raw 32-byte AES key material.  The backend
-/// zeroizes `key_data` in the shared IPC payload after consuming it, so
-/// the HSM does not scrub the ring slot itself; only the local stack copy
-/// of the request is zeroized here once the send completes.
+/// The request is wrapped in [`Zeroizing`] so its copy of the raw key
+/// material is scrubbed on any exit from this future, including a mid-send
+/// drop.
 async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<()> {
-    let mut request = IpcMessageKeyUpdate {
-        header: IpcMessageHeader::new()
-            .with_msg_op(IpcMessageKeyUpdate::OP as u32)
-            .with_length(IpcMessageKeyUpdate::LEN as u32),
-        info,
-        _rsvd: [0u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
-    }
-    .encode();
+    let request = Zeroizing::new(
+        IpcMessageKeyUpdate {
+            header: IpcMessageHeader::new()
+                .with_msg_op(IpcMessageKeyUpdate::OP as u32)
+                .with_length(IpcMessageKeyUpdate::LEN as u32),
+            info,
+            _rsvd: [0u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
+        }
+        .encode(),
+    );
 
     let mut resp = [0u32; IPC_MESSAGE_LENGTH];
     pal.ipc
         .send(IpcChannel::FpMessage as u8, &request.data, &mut resp)
         .await;
-    // Scrub our local copy of the key material; the backend owns and
-    // clears the shared ring slot.
-    request.data.zeroize();
 
     let header = IpcMessageDecoder::decode_header(&IpcMessage { data: resp })
         .map_err(|_| HsmError::InternalError)?;
@@ -484,9 +481,7 @@ async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<(
     if !header.response() {
         return Err(HsmError::InternalError);
     }
-    // Reject a reply whose opcode is not the AesKeyUpdate we sent: FP echoes
-    // the request opcode on its response, so a mismatch means stale or
-    // unexpected data in the RX ring, not our key-update ack.
+    // FP echoes the request opcode; a mismatch means stale RX data, not our ack.
     if header.msg_op() != IpcMessageKeyUpdate::OP as u32 {
         return Err(HsmError::InternalError);
     }
