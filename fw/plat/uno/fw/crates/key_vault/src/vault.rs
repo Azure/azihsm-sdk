@@ -345,6 +345,14 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(self.read_attrs(table, entry.attrs_byte_offset())?.attrs)
     }
 
+    /// Returns the owning session id for a session-scoped key, or `None`
+    /// for a partition-scoped (tag-addressed) key.
+    pub fn key_session(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+        let (table, slot) = split_key_id(key_id);
+        let entry = self.entry(table, slot)?;
+        Ok(entry.session().then(|| entry.session_or_tag()))
+    }
+
     /// Returns the canonical byte length for a key `kind` — the fixed size
     /// for fixed kinds, the maximum for variable kinds.
     pub fn key_len(kind: HsmVaultKeyKind) -> HsmResult<u16> {
