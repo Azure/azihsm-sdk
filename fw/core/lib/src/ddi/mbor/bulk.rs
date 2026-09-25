@@ -54,7 +54,15 @@ pub(crate) async fn commit_key<P: HsmPal>(
             attrs,
         )
         .await?;
-    let bulk_key_id = pal.bulk_key_id(io, handle)?;
+    let bulk_key_id = match pal.bulk_key_id(io, handle) {
+        Ok(id) => id,
+        // Roll back the just-created key so a lookup failure can't leave the
+        // vault entry (and Uno backend key/slot) behind with no handle.
+        Err(e) => {
+            let _ = pal.vault_key_delete(io, handle).await;
+            return Err(e);
+        }
+    };
     if is_gcm_bulk(kind) && bulk_key_id.is_none() {
         let _ = pal.vault_key_delete(io, handle).await;
         return Err(HsmError::UnsupportedCmd);

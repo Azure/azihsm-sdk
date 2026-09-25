@@ -191,35 +191,6 @@ impl<const MAX_PAIRS: usize> core::fmt::Debug for IpcDriver<MAX_PAIRS> {
 // Raw pointers in PairState point to stable shared memory (SRAM/DTCM).
 unsafe impl<const MAX_PAIRS: usize> Sync for IpcDriver<MAX_PAIRS> {}
 
-/// Releases an in-flight send slot if an [`IpcDriver::send`] future is dropped
-/// mid-flight, so a cancelled send can't wedge the pair. `send` clears
-/// `slot_id` on clean completion, making the drop a no-op.
-struct SendSlotGuard<'a, const MAX_PAIRS: usize> {
-    driver: &'a IpcDriver<MAX_PAIRS>,
-    pair: u8,
-    slot_id: Option<u8>,
-}
-
-impl<const MAX_PAIRS: usize> Drop for SendSlotGuard<'_, MAX_PAIRS> {
-    fn drop(&mut self) {
-        let Some(sid) = self.slot_id else {
-            return;
-        };
-        self.driver.state.with(|s| {
-            let p = &mut s.pairs[self.pair as usize];
-            if p.in_flight == Some(sid) {
-                p.in_flight = None;
-            }
-            let slot = &mut s.send_slots[sid as usize];
-            slot.completed = false;
-            slot.pair_index = 0xFF;
-            s.slot_free |= 1u32 << sid;
-            // Let the next queued sender claim the pair.
-            p.waker.wake();
-        });
-    }
-}
-
 impl PairState {
     /// # Safety
     ///
@@ -448,21 +419,17 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
 
     /// Send a request on a send pair and await the response (async).
     ///
-    /// Multiple callers are serialized via the slot pool. Only the in-flight
-    /// sender holds a slot. Dropping the future is safe: a queued waiter holds
-    /// no slot, and an in-flight sender's [`SendSlotGuard`] releases its slot
-    /// and wakes the next sender so the pair never wedges.
+    /// Multiple callers are serialized via the slot pool. Only the
+    /// in-flight sender holds a slot — queued senders wait on the
+    /// pair waker without consuming a slot. This ensures no slot is
+    /// leaked if a future is dropped while waiting in the queue.
     pub fn send<'a>(
         &'a self,
         pair: u8,
         msg: &'a [u32],
         resp: &'a mut [u32],
     ) -> impl core::future::Future<Output = ()> + 'a {
-        let mut guard = SendSlotGuard {
-            driver: self,
-            pair,
-            slot_id: None,
-        };
+        let mut slot_id: Option<u8> = None;
         let mut sent = false;
 
         poll_fn(move |cx| {
@@ -477,7 +444,7 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                     }
 
                     // Allocate a slot now that we're in-flight
-                    if guard.slot_id.is_none() {
+                    if slot_id.is_none() {
                         if s.slot_free == 0 {
                             p.waker.register(cx.waker());
                             return Poll::Pending;
@@ -486,10 +453,10 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                         s.slot_free &= !(1u32 << sid);
                         s.send_slots[sid as usize].pair_index = pair;
                         s.send_slots[sid as usize].completed = false;
-                        guard.slot_id = Some(sid);
+                        slot_id = Some(sid);
                     }
 
-                    let sid = guard.slot_id.unwrap();
+                    let sid = slot_id.unwrap();
                     p.in_flight = Some(sid);
 
                     // Send the message
@@ -505,7 +472,7 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                 }
 
                 // Phase 2: wait for response
-                let sid = guard.slot_id.unwrap();
+                let sid = slot_id.unwrap();
                 let slot = &mut s.send_slots[sid as usize];
                 if !slot.completed {
                     slot.waker.register(cx.waker());
@@ -526,8 +493,7 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                 let pend_clr = &self.regs.pend_clr[self.int_block as usize];
                 pend_clr.set(1u32 << p.inbound_desc);
 
-                // Release slot; clear the guard first so its drop is a no-op.
-                guard.slot_id = None;
+                // Release slot
                 slot.completed = false;
                 slot.pair_index = 0xFF;
                 s.slot_free |= 1u32 << sid;
