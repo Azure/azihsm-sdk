@@ -368,3 +368,128 @@ fn get_unwrapping_key_stable_across_co_psk_rotation() {
         "CO PSK rotation must not change the partition unwrapping key",
     );
 }
+
+/// Preserves the partition unwrapping key across a CU PSK rotation.
+#[test]
+fn get_unwrapping_key_stable_across_cu_psk_rotation() {
+    let ctx = TestCtx::new();
+
+    // Rotate away from the default CU PSK first.
+    let bootstrap = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open bootstrap CU session");
+
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
+        .expect("rotate CU PSK");
+
+    bootstrap.close().expect("close bootstrap CU session");
+
+    let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_CU_PSK);
+
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("open CU session");
+
+    let session = ctx.session_open_finish(pending).expect("finish CU session");
+
+    let before = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey before CU PSK rotation");
+
+    let second_cu_psk = [0x6B; PSK_LEN];
+
+    ctx.psk_change(&session, &second_cu_psk)
+        .expect("rotate CU PSK a second time");
+
+    let after = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey after CU PSK rotation");
+
+    assert_eq!(
+        before.pub_key, after.pub_key,
+        "CU PSK rotation must not change the partition unwrapping key",
+    );
+}
+
+/// Preserves the same partition unwrapping key across CO -> CU -> CO sessions.
+#[test]
+fn get_unwrapping_key_stable_across_role_transitions() {
+    let ctx = TestCtx::new();
+
+    let first_co = finalized_co_session(&ctx);
+
+    let first = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: first_co.session_id,
+        })
+        .expect("GetUnwrappingKey from first CO session");
+
+    ctx.session_close(first_co.session_id)
+        .expect("close first CO session");
+
+    // Rotate CU PSK.
+    let bootstrap = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open bootstrap CU session");
+
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
+        .expect("rotate CU PSK");
+
+    bootstrap.close().expect("close bootstrap CU session");
+
+    let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_CU_PSK);
+
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("open CU session");
+
+    let cu_session = ctx.session_open_finish(pending).expect("finish CU session");
+
+    let middle = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: cu_session.session_id,
+        })
+        .expect("GetUnwrappingKey from CU session");
+
+    ctx.session_close(cu_session.session_id)
+        .expect("close CU session");
+
+    // Reopen CO.
+    let opts = SessionOpenInitOptions::new(CO_PSK_ID, SessionType::Authenticated)
+        .with_psk(&ROTATED_CO_PSK);
+
+    let pending = ctx
+        .session_open_init_with_options(opts)
+        .expect("reopen CO session");
+
+    let second_co = ctx
+        .session_open_finish(pending)
+        .expect("finish second CO session");
+
+    let last = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: second_co.session_id,
+        })
+        .expect("GetUnwrappingKey from second CO session");
+
+    assert_eq!(first.pub_key, middle.pub_key);
+    assert_eq!(first.pub_key, last.pub_key);
+}
+
+fn assert_valid_unwrapping_pub_key(pub_key: &[u8]) {
+    assert_eq!(pub_key.len(), UNWRAPPING_PUB_KEY_LEN);
+
+    let (modulus, exponent) = pub_key.split_at(RSA_2048_MODULUS_LEN);
+
+    assert!(modulus.iter().any(|&byte| byte != 0));
+    assert!(modulus[0] & 1 != 0);
+    assert!(modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0);
+
+    let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
+
+    assert_eq!(exponent, RSA_PUBLIC_EXPONENT);
+}
