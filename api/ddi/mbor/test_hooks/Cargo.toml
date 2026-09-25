@@ -1,0 +1,69 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_ddi_mbor_test_hooks"
+version = "0.1.0"
+
+# Host-side wire types and helpers for the DDI test-hook commands. These
+# drive the platform test-hook handlers that live below the PAL
+# (fw/plat/uno). Kept in a dedicated crate so test-hook support can be
+# reviewed and merged independently of the firmware that serves it.
+[dependencies]
+azihsm_ddi.workspace = true
+azihsm_ddi_mbor_codec.workspace = true
+azihsm_ddi_mbor_derive.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+open-enum.workspace = true
+pastey.workspace = true
+
+# dependencies for fuzzing
+arbitrary = { optional = true, workspace = true }
+
+# Harness for the integration tests. Mirrors the self-contained
+# per-crate harness used by `~/Martichoras/api/ddi/test_hooks`: the leaf
+# request helpers are reused from `azihsm_ddi_mbor_test_helpers`, while
+# provisioning/session orchestration is owned locally in `tests/common`.
+[dev-dependencies]
+azihsm_cred_encrypt.workspace = true
+azihsm_crypto.workspace = true
+azihsm_ddi_mbor_codec.workspace = true
+azihsm_ddi_mbor_test_helpers.workspace = true
+azihsm_ddi_mbor_types.workspace = true
+azihsm_ddi_mock.workspace = true
+azihsm_ddi_nix.workspace = true
+fs2.workspace = true
+test_with_tracing.workspace = true
+x509.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+fuzzing = ["arbitrary", "azihsm_ddi_mbor_types/fuzzing"]
+
+# MBOR codec hooks emitted by the `Ddi` derive on `#[ddi(map)]` structs.
+# The inherited workspace `azihsm_ddi_mbor_types` dependency enables both
+# hooks, so the codec constructors include their boolean arguments in normal
+# and `--no-default-features` builds. These features preserve explicit
+# forwarding for consumers and satisfy `check-cfg`.
+post_decode = [
+  "azihsm_ddi_mbor_codec/post_decode",
+  "azihsm_ddi_mbor_types/post_decode",
+]
+pre_encode = [
+  "azihsm_ddi_mbor_codec/pre_encode",
+  "azihsm_ddi_mbor_types/pre_encode",
+]
+
+# Forward backend selection to the azihsm_ddi facade so the integration
+# test binary picks up the right backend. Default (no feature) resolves
+# to the nix backend.
+emu = ["azihsm_ddi/emu"]
+mock = ["azihsm_ddi/mock"]
+table-4 = ["azihsm_ddi/table-4"]
+table-64 = ["azihsm_ddi/table-64"]
+
+[lints]
+workspace = true

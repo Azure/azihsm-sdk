@@ -5,6 +5,7 @@
 resolver = "2"
 
 members = [
+  "api/ddi/mbor/test_hooks",
   "api/lib",
   "api/native",
   "api/tests",
@@ -98,6 +99,7 @@ azihsm_ddi_mbor_codec = { path = "ddi/mbor/codec" }
 azihsm_ddi_mbor_derive = { path = "ddi/mbor/derive" }
 azihsm_ddi_mbor_sim = { path = "ddi/mbor/sim" }
 azihsm_ddi_mbor_test_helpers = { path = "ddi/mbor/test_helpers" }
+azihsm_ddi_mbor_test_hooks = { path = "api/ddi/mbor/test_hooks" }
 azihsm_ddi_mbor_types = { features = [
   "array",
   "post_decode",
