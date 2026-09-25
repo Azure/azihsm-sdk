@@ -948,3 +948,107 @@ fn clear_only_touches_owned_tables() {
         assert_eq!(v.key(id).unwrap_err(), HsmError::KeyNotFound);
     }
 }
+
+#[test]
+fn for_each_session_key_matches_only_target_session() {
+    // App key (no session), two session-9 keys, one session-7 key.  The
+    // visitor must see exactly the two session-9 entries — never the app
+    // or the other session — and receive the correct kind + blob for each.
+    let (mut v, g, io) = vault::<1>();
+    let _app = with_key(&[0xAAu8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    let s9a = with_key(&[0x11u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(9), aes_attrs())).unwrap()
+    });
+    let s9b = with_key(&[0x22u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(9), aes_attrs())).unwrap()
+    });
+    let _s7 = with_key(&[0x33u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(7), aes_attrs())).unwrap()
+    });
+
+    let mut seen: Vec<(HsmKeyId, HsmVaultKeyKind, [u8; 32])> = Vec::new();
+    v.for_each_session_key(9, |kid, kind, blob| {
+        let bytes: &[u8] = blob;
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(bytes);
+        seen.push((kid, kind, arr));
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(seen.len(), 2);
+    let ids: Vec<HsmKeyId> = seen.iter().map(|(k, _, _)| *k).collect();
+    assert!(ids.contains(&s9a) && ids.contains(&s9b));
+    for (_, kind, blob) in &seen {
+        assert_eq!(*kind, HsmVaultKeyKind::Aes256);
+        assert!(blob == &[0x11u8; 32] || blob == &[0x22u8; 32]);
+    }
+}
+
+#[test]
+fn for_each_session_key_skips_free_slots() {
+    // Deleted (free) entries must not be visited.
+    let (mut v, g, io) = vault::<1>();
+    let sess = with_key(&[0x55u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(5), aes_attrs())).unwrap()
+    });
+    block_on(v.delete(&g, &io, sess)).unwrap();
+
+    let mut count = 0usize;
+    v.for_each_session_key(5, |_, _, _| {
+        count += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn key_session_reports_session_binding() {
+    // App key → None; session-scoped key → Some(session id it was created
+    // under).
+    let (mut v, g, io) = vault::<1>();
+    let app = with_key(&[0x77u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    let sess = with_key(&[0x88u8; 32], |k| {
+        block_on(v.create(
+            &g,
+            &io,
+            0,
+            k,
+            HsmVaultKeyKind::Aes256,
+            Some(11),
+            aes_attrs(),
+        ))
+        .unwrap()
+    });
+
+    assert_eq!(v.key_session(app).unwrap(), None);
+    assert_eq!(v.key_session(sess).unwrap(), Some(11));
+}
+
+#[test]
+fn for_each_session_key_propagates_visitor_error() {
+    // A visitor error short-circuits the walk and is surfaced to the
+    // caller so teardown paths can pre-validate handles and fail before
+    // dropping the only local record of a corrupt entry.
+    let (mut v, g, io) = vault::<1>();
+    let _s1 = with_key(&[0xC1u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(3), aes_attrs())).unwrap()
+    });
+    let _s2 = with_key(&[0xC2u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(3), aes_attrs())).unwrap()
+    });
+    let mut seen = 0usize;
+    let err = v
+        .for_each_session_key(3, |_, _, _| {
+            seen += 1;
+            Err(HsmError::InternalError)
+        })
+        .unwrap_err();
+    assert_eq!(err, HsmError::InternalError);
+    assert_eq!(seen, 1, "walk short-circuits on the first visitor error");
+}
