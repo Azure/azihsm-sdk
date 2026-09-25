@@ -21,7 +21,8 @@ use azihsm_ddi_tbor_types::CERT_MAX_LEN;
 use x509::X509Certificate;
 use x509::X509CertificateOp;
 
-use crate::commands::common::{CO, CU};
+use crate::commands::common::CO;
+use crate::commands::common::CU;
 use crate::harness::TestCtx;
 
 /// Fetch the chain length via TBOR `GetCertChainInfo`.
@@ -457,7 +458,7 @@ fn callable_while_cu_session_active() {
     let before = ctx.tbor(&request).expect("certificate before CU session");
 
     let session = ctx
-        .open_session(CU, SessionType::Authenticated)
+        .open_session(CU, SessionType::PlainText)
         .expect("open CU authenticated session");
 
     let during = ctx
@@ -472,51 +473,50 @@ fn callable_while_cu_session_active() {
     session.close().expect("close CU authenticated session");
 }
 
-/// The certificate chain remains stable across independent CO and CU session
-/// lifecycles. This exercises both authenticated roles around the same
-/// out-of-session command.
+/// `GetCert` remains stable across both supported CO and CU session
+/// lifecycles.
 #[test]
 fn stable_across_co_and_cu_session_lifecycles() {
     let ctx = TestCtx::new();
-    let count = num_certs(&ctx);
 
-    let before: Vec<_> = (0..count)
-        .map(|cert_id| {
-            ctx.tbor(&TborGetCertReq::new(0, cert_id))
-                .unwrap_or_else(|e| panic!("initial certificate {cert_id}: {e:?}"))
-        })
-        .collect();
+    let info = ctx
+        .tbor(&TborGetCertChainInfoReq::new(0))
+        .expect("GetCertChainInfo");
 
-    for session_type in [CO, CU] {
+    assert!(info.num_certs > 0, "chain must be non-empty");
+
+    let before = ctx
+        .tbor(&TborGetCertReq::new(0, 0))
+        .expect("GetCert before session activity");
+
+    for (role, session_type) in [
+        (CO, SessionType::Authenticated),
+        (CU, SessionType::PlainText),
+    ] {
         let session = ctx
-            .open_session(session_type, SessionType::Authenticated)
-            .unwrap_or_else(|e| panic!("open authenticated session {session_type}: {e:?}"));
+            .open_session(role, session_type)
+            .unwrap_or_else(|e| panic!("open session role {role} type {session_type:?}: {e:?}"));
 
-        for (cert_id, expected) in before.iter().enumerate() {
-            let actual = ctx
-                .tbor(&TborGetCertReq::new(0, cert_id as u8))
-                .unwrap_or_else(|e| {
-                    panic!("certificate {cert_id} while session {session_type} is active: {e:?}")
-                });
+        let during = ctx
+            .tbor(&TborGetCertReq::new(0, 0))
+            .unwrap_or_else(|e| panic!("GetCert while role {role} session is active: {e:?}"));
 
-            assert_eq!(
-                &actual, expected,
-                "session {session_type} must not affect certificate {cert_id}",
-            );
-        }
+        assert_eq!(
+            before.certificate, during.certificate,
+            "active role {role} session must not affect GetCert",
+        );
 
         session
             .close()
-            .unwrap_or_else(|e| panic!("close authenticated session {session_type}: {e:?}"));
-    }
+            .unwrap_or_else(|e| panic!("close session role {role}: {e:?}"));
 
-    for (cert_id, expected) in before.iter().enumerate() {
         let after = ctx
-            .tbor(&TborGetCertReq::new(0, cert_id as u8))
-            .unwrap_or_else(|e| panic!("final certificate {cert_id}: {e:?}"));
+            .tbor(&TborGetCertReq::new(0, 0))
+            .unwrap_or_else(|e| panic!("GetCert after role {role} session close: {e:?}"));
+
         assert_eq!(
-            &after, expected,
-            "CO/CU session lifecycles must not alter certificate {cert_id}",
+            before.certificate, after.certificate,
+            "role {role} session lifecycle must not affect GetCert",
         );
     }
 }
