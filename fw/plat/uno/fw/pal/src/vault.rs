@@ -34,6 +34,7 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
+use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 use crate::UnoHsmPal;
@@ -86,9 +87,10 @@ impl HsmVault for UnoHsmPal {
         }
 
         // Bulk keys are mirrored in the fast-path engine and keep only their
-        // 2-byte handle in the vault.  Disable → engine-delete → free the slot
-        // bit → vault-delete, mirroring mainline which frees the backend slot
-        // before removing the vault entry (re-enable on engine-delete failure).
+        // 2-byte handle in the vault.  Disable → engine-delete → vault-delete
+        // → free the slot.  The slot is released only after the entry is gone,
+        // so a failed delete can't leave a live handle aliasing a reallocated
+        // slot; re-enable on any failure so the entry never stays disabled.
         let session = vault(io).key_session(key_id)?;
         let bulk_id = {
             let blob = self.vault_key(io, key_id)?;
@@ -109,11 +111,16 @@ impl HsmVault for UnoHsmPal {
             return Err(e);
         }
 
-        // FP key gone → free the slot, then drop the vault entry.  If the
-        // vault delete then fails, the slot state still matches the backend
-        // (both freed), so a retry can re-create cleanly.
+        // Engine key gone.  Delete the vault entry (a disabled entry is still
+        // deletable) before releasing the slot: a failed delete then leaves the
+        // slot reserved (no alias) and, after re-enabling, a live entry that
+        // `key_kind` accepts on retry rather than a disabled one it rejects.
+        if let Err(e) = vault(io).delete(self, io, key_id).await {
+            let _ = vault(io).enable(key_id);
+            return Err(e);
+        }
         fp_slot_free(fp_id.vault_id(), fp_id.key_index());
-        vault(io).delete(self, io, key_id).await
+        Ok(())
     }
 
     fn vault_key_disable(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
@@ -132,11 +139,13 @@ impl HsmVault for UnoHsmPal {
         session_id: HsmSessId,
     ) -> HsmResult<()> {
         // DeleteSessionOnly drops the session's bulk keys from the engine in
-        // one message.  Freeing the slot bits is a synchronous pass and
-        // `delete_by_session` never touches `FP_SLOTS`, so the release cannot
-        // race; a corrupt handle fails hard rather than leaking a bit.
+        // one message.  Collect the slots to release but don't free them until
+        // the vault entries are gone: a freed slot could otherwise be
+        // reallocated while a still-present entry references it (aliasing) if
+        // the delete below fails.
         let sess = u16::from(session_id);
         fp_delete_session_only(self, io, sess).await?;
+        let mut to_free = [0u8; NUM_FP_TABLES];
         vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
             if is_bulk_kind(kind) {
                 let bytes: &[u8] = blob;
@@ -144,11 +153,16 @@ impl HsmVault for UnoHsmPal {
                     return Err(HsmError::InternalError);
                 }
                 let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
-                fp_slot_free(id.vault_id(), id.key_index());
+                let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
+                if vid < to_free.len() && kidx < FP_MAX_SLOTS_PER_PART {
+                    to_free[vid] |= 1 << kidx;
+                }
             }
             Ok(())
         })?;
-        vault(io).delete_by_session(self, io, sess).await
+        vault(io).delete_by_session(self, io, sess).await?;
+        fp_slots_free_bits(&to_free);
+        Ok(())
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
@@ -291,6 +305,16 @@ fn fp_slot_free(vault_id: u8, key_index: u8) {
     });
 }
 
+/// Clear the slot bits set in `bits` (one bitmap byte per table).  Used to
+/// release a batch of slots after their vault entries have been removed.
+fn fp_slots_free_bits(bits: &[u8; NUM_FP_TABLES]) {
+    FP_SLOTS.with(|slots| {
+        for (used, clear) in slots.iter_mut().zip(bits.iter()) {
+            *used &= !*clear;
+        }
+    });
+}
+
 /// Free every FP bulk-key slot in the tables owned by `res_mask`.
 fn fp_slots_free_mask(res_mask: u128) {
     FP_SLOTS.with(|slots| {
@@ -356,32 +380,40 @@ async fn fp_bulk_create(
         key_data: [0u8; FP_BULK_KEY_LEN],
     };
     info.key_data.copy_from_slice(key_bytes);
+    // `info` is `Copy`, so the send takes a copy; scrub this caller-owned
+    // original afterward so no raw key lingers on the stack.
+    let sent = fp_send_key_update(pal, info).await;
+    info.key_data.zeroize();
     // On failure the backend may already own the key; keep the slot reserved
     // (don't free it) so a later create can't alias it — reclaimed on reset.
-    fp_send_key_update(pal, info).await?;
+    sent?;
+
     let bulk_id = AesBulk256KeyId::new()
         .with_key_index(key_index)
         .with_vault_id(vault_id)
         .into_bits();
 
-    // Record the 2-byte handle in the vault; on failure, release the engine
-    // key so its slot does not leak with no vault entry pointing at it.
-    let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
-    id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
-    let app_id = u8::from(io.pid());
-    let mut v = vault(io);
-    match v
-        .create(
-            pal,
-            io,
-            app_id,
-            id_bytes,
-            kind,
-            session_id.map(u16::from),
-            attrs,
-        )
-        .await
-    {
+    // The engine key now exists.  Any later failure (handle alloc or vault
+    // create) must roll it back so its slot doesn't leak with no vault entry
+    // pointing at it.
+    let result = async {
+        let id_bytes = pal.dma_alloc(io, core::mem::size_of::<u16>())?;
+        id_bytes.copy_from_slice(&bulk_id.to_le_bytes());
+        let app_id = u8::from(io.pid());
+        vault(io)
+            .create(
+                pal,
+                io,
+                app_id,
+                id_bytes,
+                kind,
+                session_id.map(u16::from),
+                attrs,
+            )
+            .await
+    }
+    .await;
+    match result {
         Ok(handle) => Ok(handle),
         Err(e) => {
             // Only release the slot if the backend delete confirms the key is
