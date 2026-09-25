@@ -174,6 +174,65 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
+  test_ubuntu_sock_ddi:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Build vsocksrv
+      # azihsm_ddi_sock's integration test spawns this binary directly (it
+      # has no lib target, so Cargo can't wire it up as a dev-dependency);
+      # build it explicitly so the test finds it under target/debug.
+      run: cargo build --package vsocksrv
+    - name: Run socket DDI tests against vsocksrv
+      id: test-sock-ddi
+      run: cargo xtask precheck --nextest --package azihsm_ddi_sock --test vsocksrv_integration --profile ci-sock-ddi
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-sock-ddi.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
+  test_ubuntu_api_sock:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Build vsocksrv
+      # azihsm_api_tests's vsocksrv session regression test spawns this
+      # binary directly (it has no lib target, so Cargo can't wire it up
+      # as a dev-dependency); build it explicitly so the test finds it
+      # under target/debug.
+      run: cargo build --package vsocksrv
+    - name: Run azihsm_api_tests's vsocksrv session regression test
+      id: test-api-sock
+      run: cargo xtask precheck --nextest --package azihsm_api_tests --features sock --profile ci-api-sock --filter vsocksrv_session_tests
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-api-sock.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   test_azihsm-arm64-gh-ubuntu2404-pool_emu_ddi:
 
     runs-on: azihsm-arm64-gh-ubuntu2404-pool
