@@ -440,3 +440,186 @@ fn hash_consecutive_different_length_messages_match_host() {
         }
     }
 }
+
+/// Verifies switching hash algorithms on the same session does not leak state
+/// between requests.
+#[test]
+fn hash_alternating_algorithms_match_host() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let msg = b"alternate hash algorithms on one session".to_vec();
+
+    let sequence = [
+        HASH_ALGO_SHA256,
+        HASH_ALGO_SHA512,
+        HASH_ALGO_SHA384,
+        HASH_ALGO_SHA256,
+        HASH_ALGO_SHA384,
+        HASH_ALGO_SHA512,
+    ];
+
+    for algo in sequence {
+        let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            dev,
+            host_digest(algo, &msg),
+            "algorithm switch must not retain state from a previous Hash request (algo {algo})",
+        );
+    }
+}
+
+/// Verifies leading, embedded, and trailing zero bytes are treated as message
+/// data rather than terminators or padding supplied by the host.
+#[test]
+fn hash_zero_byte_positions_match_host() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let messages = [
+        vec![0x00],
+        vec![0x00, 0x61, 0x62, 0x63],
+        vec![0x61, 0x00, 0x62, 0x00, 0x63],
+        vec![0x61, 0x62, 0x63, 0x00],
+        vec![0x00; 128],
+    ];
+
+    for msg in &messages {
+        for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+            let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+            assert_eq!(
+                dev,
+                host_digest(algo, msg),
+                "zero-containing input mismatch for algo {algo}, message length {}",
+                msg.len(),
+            );
+        }
+    }
+}
+
+/// Verifies CO and CU sessions produce the same digest for the same request.
+///
+/// The sessions are exercised sequentially because the test fixture does not
+/// assume multiple concurrently active sessions.
+#[test]
+fn hash_matches_across_co_and_cu_sessions() {
+    let ctx = TestCtx::new();
+    let msg = b"same hash request across sessions".to_vec();
+
+    // Exercise Hash through a finalized CO session first.
+    let co_session = finalized_co_session(&ctx);
+
+    let co_digests: Vec<(u8, Vec<u8>)> = [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512]
+        .into_iter()
+        .map(|algo| {
+            let digest = device_digest(&ctx, co_session.session_id, algo, msg.clone());
+
+            assert_eq!(
+                digest,
+                host_digest(algo, &msg),
+                "CO digest must match host for algo {algo}",
+            );
+
+            (algo, digest)
+        })
+        .collect();
+
+    ctx.session_close(co_session.session_id)
+        .expect("close CO session");
+
+    // Open CU only after the CO session has been released.
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    for (algo, co_digest) in co_digests {
+        let cu_digest = device_digest(&ctx, cu_session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            cu_digest,
+            host_digest(algo, &msg),
+            "CU digest must match host for algo {algo}",
+        );
+
+        assert_eq!(
+            cu_digest, co_digest,
+            "CO and CU sessions must produce the same digest for algo {algo}",
+        );
+    }
+}
+
+/// Verifies a request using an invalid session ID does not affect a separate
+/// valid session.
+#[test]
+fn hash_valid_session_usable_after_invalid_session_request() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    ctx.expect_fw_reject(
+        &TborHashReq {
+            session_id: u16::MAX,
+            algo: HASH_ALGO_SHA512,
+            msg: b"request with invalid session".to_vec(),
+        },
+        TborStatus::FileHandleSessionIdDoesNotMatch,
+    );
+
+    let msg = b"valid session still works".to_vec();
+
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            dev,
+            host_digest(algo, &msg),
+            "valid session must remain usable after an invalid-session request (algo {algo})",
+        );
+    }
+}
+
+/// Verifies closing a CO session releases it cleanly and a subsequent CU
+/// session can perform Hash operations normally.
+#[test]
+fn hash_new_session_works_after_previous_session_closed() {
+    let ctx = TestCtx::new();
+
+    let co_session = finalized_co_session(&ctx);
+    let closed_session_id = co_session.session_id;
+
+    // Verify the first session works before closing it.
+    let first_msg = b"hash before closing CO session".to_vec();
+
+    let digest = device_digest(&ctx, closed_session_id, HASH_ALGO_SHA256, first_msg.clone());
+
+    assert_eq!(
+        digest,
+        host_digest(HASH_ALGO_SHA256, &first_msg),
+        "CO Hash must work before the session is closed",
+    );
+
+    ctx.session_close(closed_session_id)
+        .expect("close CO session");
+
+    // The closed session must no longer be usable.
+    ctx.expect_fw_reject(
+        &TborHashReq {
+            session_id: closed_session_id,
+            algo: HASH_ALGO_SHA256,
+            msg: b"closed session".to_vec(),
+        },
+        TborStatus::SessionNotFound,
+    );
+
+    // A new CU session should still be able to use Hash normally.
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let msg = b"new session after previous session closed".to_vec();
+
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let dev = device_digest(&ctx, cu_session.session_id, algo, msg.clone());
+
+        assert_eq!(
+            dev,
+            host_digest(algo, &msg),
+            "new CU session must hash correctly after CO session was closed for algo {algo}",
+        );
+    }
+}
