@@ -39,6 +39,9 @@ mod rsaload;
 mod rsaimport;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsasign;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod sign;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
