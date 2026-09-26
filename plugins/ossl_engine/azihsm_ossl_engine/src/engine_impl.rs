@@ -173,14 +173,14 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     }
     // Bind RSA to the engine so RSA_new_method produces engine-bound keys that
     // hold a functional engine reference (keeping EngineData alive while a
-    // loaded key lives) and carry ex_data. The default RSA method drives the
-    // public operations; HSM private-key operations land on the RSA
-    // EVP_PKEY_METHOD in later work.
-    // SAFETY: RSA_get_default_method returns libcrypto's process-lifetime
-    // const method, which outlives the engine.
+    // loaded key lives) and carry ex_data. The method keeps the software public
+    // operations (verify/encrypt/decrypt) but routes PKCS#1 v1.5 signing for
+    // HSM-backed keys to the HSM (see crate::rsasign).
+    // SAFETY: rsa_sign_method() is process-global and never freed, so it
+    // outlives the engine.
     #[allow(unsafe_code)]
     unsafe {
-        engine.set_rsa_method(ffi::RSA_get_default_method())?;
+        engine.set_rsa_method(crate::rsasign::rsa_sign_method()?)?;
     }
     // Advertise the engine's EC EVP_PKEY_METHOD: HSM keygen for armed
     // contexts, HSM ECDH derive for HSM-backed keys; everything else
