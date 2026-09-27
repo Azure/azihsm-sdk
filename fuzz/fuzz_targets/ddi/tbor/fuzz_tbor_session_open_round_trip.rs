@@ -6,6 +6,7 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::*;
 use azihsm_ddi_interface::*;
@@ -95,7 +96,7 @@ fn seal_seed_envelope_with_iv(
 }
 
 fuzz_target!(|input: FuzzInput| {
-    common::common_fuzz_test(&|dev: &mut <DdiTest as Ddi>::Dev, _path: &str| {
+    common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let (req, ephemeral) = if input.valid_open_init || input.valid_open_finish {
             let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else {
                 return;
@@ -122,10 +123,8 @@ fuzz_target!(|input: FuzzInput| {
             (req, None)
         };
 
-        let mut cookie = None;
-
         // If session open succeeds, finish then close it afterwards.
-        let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
+        let init_result = ctx.tbor::<TborSessionOpenInitReq>(&req);
 
         // assert open init success if expected
         if input.valid_open_init || input.valid_open_finish {
@@ -143,7 +142,7 @@ fuzz_target!(|input: FuzzInput| {
                 let ephemeral = ephemeral
                     .as_ref()
                     .expect("ephemeral is Some whenever valid_open_finish is true");
-                build_valid_finish_req(&dev, &req, &resp, ephemeral, &input)
+                build_valid_finish_req(&ctx, &req, &resp, ephemeral, &input)
             } else {
                 None
             };
@@ -167,11 +166,8 @@ fuzz_target!(|input: FuzzInput| {
                 },
             };
 
-            let mut open_finish_cookie = None;
-            let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(
+            let finish_result = ctx.tbor::<TborSessionOpenFinishReq>(
                 &open_finish_req,
-                None,
-                &mut open_finish_cookie,
             );
 
             // assert open finish success only when we actually built a valid request
@@ -201,9 +197,8 @@ fuzz_target!(|input: FuzzInput| {
             let close_req = TborSessionCloseReq {
                 session_id: resp.session_id,
             };
-            let mut close_cookie = None;
             let close_result: Result<TborSessionCloseResp, _> =
-                dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+                ctx.tbor(&close_req);
 
             // if session open finish succeeded, the session should be closable
             if finish_result.is_ok() {
@@ -232,13 +227,13 @@ fuzz_target!(|input: FuzzInput| {
 /// the caller can substitute a known-invalid request that forces
 /// firmware to destroy the Pending slot (dropping `DdiEmuDev` cannot).
 fn build_valid_finish_req(
-    dev: &<DdiTest as Ddi>::Dev,
+    ctx: &TestCtx,
     req: &TborSessionOpenInitReq,
     resp: &TborSessionOpenInitResp,
     ephemeral: &VmEphemeralKey,
     input: &FuzzInput,
 ) -> Option<TborSessionOpenFinishReq> {
-    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev).ok()?;
+    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(ctx).ok()?;
     let info = build_hpke_info(req.psk_id, req.session_type, req.suite_id);
     let psk = default_psk(req.psk_id).ok()?;
     let exported = receive_exported(
@@ -294,20 +289,14 @@ fn build_valid_finish_req(
 /// Fetches the HSM's leaf certificate (last entry in slot 0's chain) and
 /// returns its public key in both parsed and raw SEC1 form; all failure
 /// modes collapse to `()` since callers only need to bail out via `?`.
-fn fetch_pk_hsm(dev: &<DdiTest as Ddi>::Dev) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
+fn fetch_pk_hsm(ctx: &TestCtx) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
     let info_req = TborGetCertChainInfoReq::new(0);
-    let mut info_cookie = None;
-    let info = dev
-        .exec_op_tbor(&info_req, None, &mut info_cookie)
-        .map_err(|_| ())?;
+    let info = ctx.tbor(&info_req).map_err(|_| ())?;
     if info.num_certs == 0 {
         return Err(());
     }
     let cert_req = TborGetCertReq::new(0, info.num_certs - 1);
-    let mut cert_cookie = None;
-    let leaf = dev
-        .exec_op_tbor(&cert_req, None, &mut cert_cookie)
-        .map_err(|_| ())?;
+    let leaf = ctx.tbor(&cert_req).map_err(|_| ())?;
     let cert = x509::X509Certificate::from_der(leaf.certificate.as_slice()).map_err(|_| ())?;
     let pk_der = cert.get_public_key_der().map_err(|_| ())?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| ())?;
