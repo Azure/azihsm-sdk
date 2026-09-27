@@ -7,6 +7,7 @@
 
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
@@ -50,8 +51,9 @@ pub const FUZZ_RESP_BUF_SIZE: usize =
     RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
 
 static mut DEVICE_DISPLAY: bool = false;
+static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
-pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
+pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
     let ddi = DdiTest::default();
     let dev_infos = ddi.dev_info_list();
     if dev_infos.is_empty() {
@@ -75,8 +77,10 @@ pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
         }
     }
 
-    let mut dev = ddi.open_dev(&path).expect("Failed to open device");
-    test(&mut dev, &path);
+    let ctx = CTX.get_or_init(|| TestCtx::new_with_path(&path));
+    ctx.erase().expect("erase should succeed");
+
+    test(&ctx, &path);
 }
 
 /// Apply a sequence of TOC builder operations to an encoder, returning

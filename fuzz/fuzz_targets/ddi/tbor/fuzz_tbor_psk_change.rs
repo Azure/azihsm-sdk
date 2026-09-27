@@ -9,7 +9,6 @@ mod common;
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::AesKey;
-use azihsm_ddi::Ddi;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::build_psk_change_aad;
 use azihsm_ddi_tbor_types::SessionType;
@@ -22,29 +21,49 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use crate::common::DdiTest;
-
+/// CO PSK id — pairs with an `Authenticated` session, mapping to the
+/// `CryptoOfficer` role branch of `target_psk_for_role`.
+const CO: u8 = 0;
+/// CU PSK id — pairs with a `PlainText` session, mapping to the
+/// `CryptoUser` role branch.
 const CU: u8 = 1;
-static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
 /// Fuzz input for the TBOR `PskChange` handler.
-///
-/// The handler bails almost immediately when the wire envelope fails
-/// to open under the session's `param_key`, so this input is
-/// structured to always emit a properly-sealed envelope of exactly
-/// `PSK_CHANGE_ENVELOPE_LEN` (100 B). That anchors coverage past
-/// `aead_open` and lets the fuzzer drive the AAD-length / AAD-equality
-/// / default-PSK / persist branches inside the handler body.
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
+    /// Session role
+    role: FuzzRole,
     /// AES-GCM nonce fed to the AEAD seal.
     iv: [u8; 12],
-    /// Envelope shape — sizes aad/payload so the sealed envelope is
-    /// always exactly 100 B on the wire.
+    /// Envelope shape
     shape: Shape,
-    /// Optional post-seal single-byte flip that drives the AEAD tag
-    /// verification failure branch.
+    /// Optional post-seal single-byte flip
     tamper: Option<Tamper>,
+}
+
+/// Which role's session to open for this iteration.
+#[derive(Arbitrary, Debug)]
+enum FuzzRole {
+    /// `psk_id = 0`, `SessionType::Authenticated`
+    Co,
+    /// `psk_id = 1`, `SessionType::PlainText`
+    Cu,
+}
+
+impl FuzzRole {
+    fn psk_id(&self) -> u8 {
+        match self {
+            FuzzRole::Co => CO,
+            FuzzRole::Cu => CU,
+        }
+    }
+
+    fn session_type(&self) -> SessionType {
+        match self {
+            FuzzRole::Co => SessionType::Authenticated,
+            FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
 }
 
 /// Sizes the sealed envelope's AAD and payload regions. The three
@@ -91,12 +110,9 @@ struct Tamper {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    common::common_fuzz_test(&|_dev: &mut <DdiTest as Ddi>::Dev, _path: &str| {
-        let ctx = CTX.get_or_init(TestCtx::new);
-        ctx.erase().expect("erase should succeed");
-
+    common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = ctx
-            .open_session(CU, SessionType::PlainText)
+            .open_session(input.role.psk_id(), input.role.session_type())
             .expect("session open should succeed");
         let handshake = session.handshake();
 
