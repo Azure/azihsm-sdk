@@ -5,6 +5,9 @@
 
 #![allow(dead_code)]
 
+use azihsm_crypto::aead_envelope;
+use azihsm_crypto::aead_envelope::AeadAlg;
+use azihsm_crypto::AesKey;
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_tbor_test_harness::TestCtx;
@@ -80,6 +83,17 @@ pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
     ctx.erase().expect("erase should succeed");
 
     test(&ctx, &path);
+}
+
+/// Two-phase AES-GCM-256 AEAD seal: size-query, allocate, then fill
+pub fn seal_aead_envelope(key: &AesKey, iv: &[u8], aad: &[u8], pt: &[u8]) -> Vec<u8> {
+    let total = aead_envelope::seal(AeadAlg::AesGcm256, key, iv, aad, pt, None)
+        .expect("aead seal size query should succeed");
+    let mut buf = vec![0u8; total];
+    let written = aead_envelope::seal(AeadAlg::AesGcm256, key, iv, aad, pt, Some(&mut buf))
+        .expect("aead seal should succeed");
+    buf.truncate(written);
+    buf
 }
 
 /// Apply a sequence of TOC builder operations to an encoder, returning

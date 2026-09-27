@@ -7,7 +7,6 @@
 mod common;
 
 use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::*;
 use azihsm_ddi_interface::*;
 use azihsm_ddi_tbor_types::*;
@@ -59,38 +58,6 @@ fn generate_deterministic_ephemeral(
     let pk = sk.public_key().map_err(|_| SessionExCryptoError::Crypto)?;
     let pk_sec1 = ec_pub_to_sec1(&pk)?;
     Ok(VmEphemeralKey { sk, pk_sec1, pk })
-}
-
-/// Same as `session_ex_crypto::seal_seed_envelope`, but takes the
-/// 12-byte AEAD-GCM IV as an input rather than generating it randomly.
-fn seal_seed_envelope_with_iv(
-    param_key: &AesKey,
-    seed: &[u8],
-    iv: &[u8; AES_GCM_IV_LEN],
-) -> SessionExCryptoResult<Vec<u8>> {
-    if seed.len() != SESSION_SEED_LEN {
-        return Err(SessionExCryptoError::InvalidInput);
-    }
-
-    let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, iv, &[], seed, None)
-        .map_err(|_| SessionExCryptoError::Crypto)?;
-    if total != SEED_ENVELOPE_LEN {
-        return Err(SessionExCryptoError::Crypto);
-    }
-    let mut envelope = vec![0u8; SEED_ENVELOPE_LEN];
-    let written = aead_envelope::seal(
-        AeadAlg::AesGcm256,
-        param_key,
-        iv,
-        &[],
-        seed,
-        Some(&mut envelope),
-    )
-    .map_err(|_| SessionExCryptoError::Crypto)?;
-    if written != SEED_ENVELOPE_LEN {
-        return Err(SessionExCryptoError::Crypto);
-    }
-    Ok(envelope)
 }
 
 fuzz_target!(|input: FuzzInput| {
@@ -267,7 +234,7 @@ fn build_valid_finish_req(
 
     let param_key = derive_param_key(&exported).ok()?;
     let mut seed_envelope_vec =
-        seal_seed_envelope_with_iv(&param_key, &input.seed, &input.seed_iv).ok()?;
+        common::seal_aead_envelope(&param_key, &input.seed_iv, &[], &input.seed);
     if input.corrupt_seed_envelope {
         // Flip a byte in the ciphertext/tag so the Phase-2 MAC (computed
         // from `exported`/`pk_*`, not the envelope) still verifies, but the

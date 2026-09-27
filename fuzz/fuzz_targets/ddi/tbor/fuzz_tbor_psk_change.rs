@@ -6,9 +6,6 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_crypto::aead_envelope;
-use azihsm_crypto::aead_envelope::AeadAlg;
-use azihsm_crypto::AesKey;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::build_psk_change_aad;
 use azihsm_ddi_tbor_types::SessionType;
@@ -138,7 +135,8 @@ fuzz_target!(|input: FuzzInput| {
             Shape::OversizedAad { aad } => (aad.to_vec(), Vec::new()),
         };
 
-        let mut envelope = seal_envelope(&handshake.param_key, &input.iv, &aad, &payload);
+        let mut envelope =
+            common::seal_aead_envelope(&handshake.param_key, &input.iv, &aad, &payload);
 
         if let Some(t) = &input.tamper {
             if !envelope.is_empty() {
@@ -156,17 +154,3 @@ fuzz_target!(|input: FuzzInput| {
         session.close().expect("session close should succeed");
     });
 });
-
-/// AEAD-seal `pt` under `key` with the fuzz-controlled `iv` and `aad`.
-/// Panics only on programmer error (crypto layer returning `Err` for a
-/// shape we've validated above); an AEAD seal cannot fail on well-sized
-/// inputs with a supported alg.
-fn seal_envelope(key: &AesKey, iv: &[u8; 12], aad: &[u8], pt: &[u8]) -> Vec<u8> {
-    let total = aead_envelope::seal(AeadAlg::AesGcm256, key, iv, aad, pt, None)
-        .expect("aead seal size query should succeed");
-    let mut buf = vec![0u8; total];
-    let written = aead_envelope::seal(AeadAlg::AesGcm256, key, iv, aad, pt, Some(&mut buf))
-        .expect("aead seal should succeed");
-    buf.truncate(written);
-    buf
-}
