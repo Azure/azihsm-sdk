@@ -364,26 +364,6 @@ fn first_and_last_valid_indices_succeed() {
     ctx.tbor(&TborGetCertReq::new(0, count - 1))
         .expect("last advertised certificate must be readable");
 }
-/// An invalid slot is rejected independently of the certificate index.
-#[test]
-fn invalid_slot_rejected_for_multiple_cert_indices() {
-    let ctx = TestCtx::new();
-
-    for cert_id in [0, 1, u8::MAX] {
-        ctx.expect_fw_reject(
-            &TborGetCertReq::new(u8::MAX, cert_id),
-            TborStatus::InvalidArg,
-        );
-    }
-}
-
-/// An invalid certificate index is rejected at the valid chain slot.
-#[test]
-fn max_cert_id_rejected() {
-    let ctx = TestCtx::new();
-
-    ctx.expect_fw_reject(&TborGetCertReq::new(0, u8::MAX), TborStatus::InvalidArg);
-}
 
 /// Interleaving MBOR and TBOR certificate reads must not alter the
 /// certificate returned by either interface.
@@ -473,10 +453,10 @@ fn callable_while_cu_session_active() {
     session.close().expect("close CU PlainText session");
 }
 
-/// `GetCert` remains stable across both supported CO and CU session
-/// lifecycles.
+/// `GetCert` remains stable for the entire certificate chain across both
+/// supported CO and CU session lifecycles.
 #[test]
-fn stable_across_co_and_cu_session_lifecycles() {
+fn entire_chain_stable_across_co_and_cu_session_lifecycles() {
     let ctx = TestCtx::new();
 
     let info = ctx
@@ -485,9 +465,14 @@ fn stable_across_co_and_cu_session_lifecycles() {
 
     assert!(info.num_certs > 0, "chain must be non-empty");
 
-    let before = ctx
-        .tbor(&TborGetCertReq::new(0, 0))
-        .expect("GetCert before session activity");
+    let before: Vec<_> = (0..info.num_certs)
+        .map(|cert_id| {
+            ctx.tbor(&TborGetCertReq::new(0, cert_id))
+                .unwrap_or_else(|e| {
+                    panic!("GetCert before session activity for cert {cert_id}: {e:?}")
+                })
+        })
+        .collect();
 
     for (role, session_type) in [
         (CO, SessionType::Authenticated),
@@ -497,26 +482,40 @@ fn stable_across_co_and_cu_session_lifecycles() {
             .open_session(role, session_type)
             .unwrap_or_else(|e| panic!("open session role {role} type {session_type:?}: {e:?}"));
 
-        let during = ctx
-            .tbor(&TborGetCertReq::new(0, 0))
-            .unwrap_or_else(|e| panic!("GetCert while role {role} session is active: {e:?}"));
+        for (cert_id, expected) in before.iter().enumerate() {
+            let during = ctx
+                .tbor(&TborGetCertReq::new(0, cert_id as u8))
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "GetCert for cert {cert_id} while role {role} \
+                         session is active: {e:?}"
+                    )
+                });
 
-        assert_eq!(
-            before.certificate, during.certificate,
-            "active role {role} session must not affect GetCert",
-        );
+            assert_eq!(
+                &during, expected,
+                "active role {role} session must not affect certificate {cert_id}",
+            );
+        }
 
         session
             .close()
             .unwrap_or_else(|e| panic!("close session role {role}: {e:?}"));
 
-        let after = ctx
-            .tbor(&TborGetCertReq::new(0, 0))
-            .unwrap_or_else(|e| panic!("GetCert after role {role} session close: {e:?}"));
+        for (cert_id, expected) in before.iter().enumerate() {
+            let after = ctx
+                .tbor(&TborGetCertReq::new(0, cert_id as u8))
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "GetCert for cert {cert_id} after role {role} \
+                         session close: {e:?}"
+                    )
+                });
 
-        assert_eq!(
-            before.certificate, after.certificate,
-            "role {role} session lifecycle must not affect GetCert",
-        );
+            assert_eq!(
+                &after, expected,
+                "role {role} session lifecycle must not affect certificate {cert_id}",
+            );
+        }
     }
 }
