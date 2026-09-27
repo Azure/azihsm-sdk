@@ -51,7 +51,6 @@ pub const FUZZ_RESP_BUF_SIZE: usize =
     RESP_HEADER_LEN + MAX_TOC_ENTRIES * TOC_ENTRY_LEN + MAX_DATA_SIZE;
 
 static mut DEVICE_DISPLAY: bool = false;
-static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
 pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
     let ddi = DdiTest::default();
@@ -77,7 +76,7 @@ pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
         }
     }
 
-    let ctx = CTX.get_or_init(|| TestCtx::new_with_path(&path));
+    let ctx = TestCtx::new_with_path(&path);
     ctx.erase().expect("erase should succeed");
 
     test(&ctx, &path);

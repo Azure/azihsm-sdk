@@ -17,8 +17,6 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use x509::X509CertificateOp;
 
-use crate::common::DdiTest;
-
 /// P-384 coordinate length in bytes.
 const P384_COORD_LEN: usize = 48;
 
