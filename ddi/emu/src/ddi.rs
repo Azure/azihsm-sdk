@@ -282,12 +282,20 @@ impl Ddi for DdiEmu {
     /// Open the emulator device.
     ///
     /// `path` must equal [`EMU_DEVICE_PATH`]; any other value yields
-    /// [`DdiError::DeviceNotFound`](azihsm_ddi_interface::DdiError::DeviceNotFound).
-    /// Returns [`DdiError::DeviceNotReady`] if [`DdiEmu::shutdown`] has
-    /// already fully released the process-global context (the
-    /// underlying `StdHsm` core is a singleton that cannot be
-    /// re-initialised).
+    /// [`DdiError::DeviceNotFound`](azihsm_ddi_interface::DdiError::DeviceNotFound)
+    /// immediately, without touching the process-global context (in
+    /// particular, without lazily creating it): an invalid path is a
+    /// caller error independent of the emulator's lifecycle state, so it
+    /// must not be masked by — or itself trigger — a context
+    /// creation/lifecycle side effect. Returns
+    /// [`DdiError::DeviceNotReady`] if [`DdiEmu::shutdown`] has already
+    /// fully released the context (the underlying `StdHsm` core is a
+    /// singleton that cannot be re-initialised).
     fn open_dev(&self, path: &str) -> DdiResult<Self::Dev> {
+        if path != EMU_DEVICE_PATH {
+            tracing::warn!(?path, expected = EMU_DEVICE_PATH, "DdiEmu: path mismatch");
+            return Err(DdiError::DeviceNotFound);
+        }
         let (hsm, handle) = with_ctx(|ctx| (ctx.hsm.clone(), ctx.rt.handle().clone()))?;
         DdiEmuDev::open(hsm, handle, path)
     }
@@ -309,7 +317,37 @@ mod tests {
     fn open_unknown_path_fails() {
         let ddi = DdiEmu::default();
         let res = ddi.open_dev("/dev/nonexistent");
-        assert!(res.is_err(), "opening unknown path must fail");
+        assert!(
+            matches!(res, Err(DdiError::DeviceNotFound)),
+            "expected DeviceNotFound, got {res:?}"
+        );
+
+        // Path validation must happen before touching the process-global
+        // context, so an invalid path must not lazily create it as a
+        // side effect.
+        assert!(
+            matches!(*CTX.lock(), CtxState::Uninitialized),
+            "an invalid path must not initialise the emulator context"
+        );
+    }
+
+    #[test]
+    fn open_unknown_path_fails_with_device_not_found_even_after_shutdown() {
+        let ddi = DdiEmu::default();
+        let dev = ddi.open_dev(EMU_DEVICE_PATH).expect("open_dev");
+        drop(dev);
+        DdiEmu::shutdown();
+
+        // An invalid path is a caller error independent of the
+        // emulator's lifecycle state: it must still report
+        // DeviceNotFound, not be masked by (or take priority over) the
+        // DeviceNotReady the now-ShutDown context would otherwise
+        // produce.
+        let res = ddi.open_dev("/dev/nonexistent");
+        assert!(
+            matches!(res, Err(DdiError::DeviceNotFound)),
+            "expected DeviceNotFound, got {res:?}"
+        );
     }
 
     #[test]
