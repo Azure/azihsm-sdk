@@ -22,9 +22,8 @@ const CO: u8 = 0;
 
 /// Non-default CO PSK used to clear the default-PSK gate before `PartInit`.
 const ROTATED_CO_PSK: [u8; PSK_LEN] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
-    0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE,
-    0xBF, 0xC0,
+    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
+    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
 static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
@@ -99,7 +98,9 @@ fuzz_target!(|input: FuzzInput| {
         .expect("bootstrap session open should succeed");
     ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
         .expect("PSK rotation should succeed");
-    bootstrap.close().expect("bootstrap session close should succeed");
+    bootstrap
+        .close()
+        .expect("bootstrap session close should succeed");
 
     // Open a CO session under the rotated PSK.
     let opts =
@@ -127,7 +128,12 @@ fuzz_target!(|input: FuzzInput| {
 
     // PartFinal: the valid chain clears both the lifecycle and OOB gates,
     // so the fuzzed prev_local_mk_backup reaches the handler logic.
-    let _ = ctx.part_final(&session, &policy, &input.prev_local_mk_backup, &chain.der_items());
+    let _ = ctx.part_final(
+        &session,
+        &policy,
+        &input.prev_local_mk_backup,
+        &chain.der_items(),
+    );
 
     ctx.session_close(session.session_id)
         .expect("session close should succeed");

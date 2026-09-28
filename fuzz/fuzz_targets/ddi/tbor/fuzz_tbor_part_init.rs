@@ -6,9 +6,9 @@
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use libfuzzer_sys::arbitrary;
@@ -45,7 +45,7 @@ fuzz_target!(|input: FuzzInput| {
     } else {
         Vec::new()
     };
-    
+
     let part_init_req = TborPartInitReq {
         session_id: session.session_id(),
         mach_seed_envelope: input.mach_seed_envelope.to_vec(),
