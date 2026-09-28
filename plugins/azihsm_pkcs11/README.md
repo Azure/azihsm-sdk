@@ -25,18 +25,43 @@ the spec requires). Implemented so far:
   objects — it only hides them until the next login.)
 - **`C_Digest*` (SHA-1/256/384/512)** — host-side digests (one-shot and
   multi-part); every other digest mechanism returns `CKR_MECHANISM_INVALID`.
-- **`C_GenerateKey` (`CKM_AES_KEY_GEN`)** — generates an AES-128/192/256 key on
-  the device and stores its **masked blob** (the AZIHSM key's only durable form)
-  as the object's key body. Generated keys are always sensitive, unextractable
-  and local — a template asking otherwise is rejected (note: OpenSC
-  `pkcs11-tool --keygen` needs its `--sensitive` flag for this reason).
-- **`C_Encrypt` / `C_Decrypt` one-shot (`CKM_AES_CBC`, `CKM_AES_CBC_PAD`)** —
-  each `C_EncryptInit`/`C_DecryptInit` unmasks the stored blob into a fresh
-  session-scoped device key that lives exactly as long as the operation. Input
-  and output may be the same buffer; the binding stages the input whenever the
-  two ranges overlap, because the native API cannot hold a read and a write
-  slice over the same bytes. Multi-part (`C_EncryptUpdate`…), AES-GCM/XTS and the other key-backed
-  mechanisms (RSA/ECDSA, wrap/unwrap, derive) are not implemented yet.
+- **`C_GenerateKey` (`CKM_AES_KEY_GEN`, `CKM_AES_XTS_KEY_GEN`)** — generates a
+  key on the device and stores its **masked blob** (the AZIHSM key's only
+  durable form) as the object's key body. The device has three disjoint AES key
+  kinds, so the template picks one, and the key records it as
+  `CKA_ALLOWED_MECHANISMS`:
+
+  | Mechanism and template | Key | `CKA_KEY_TYPE` | `CKA_VALUE_LEN` |
+  |---|---|---|---|
+  | `CKM_AES_KEY_GEN` | AES for `CKM_AES_CBC` / `_CBC_PAD` | `CKK_AES` | 16, 24, 32 |
+  | `CKM_AES_KEY_GEN` + `CKA_ALLOWED_MECHANISMS = { CKM_AES_GCM }` | AES-GCM | `CKK_AES` | 32 |
+  | `CKM_AES_XTS_KEY_GEN` | AES-XTS | `CKK_AES_XTS` | 64 |
+
+  PKCS#11 has no GCM key-generation mechanism, hence the allowed-mechanism
+  list; a list mixing families (GCM with CBC) is refused. A caller's narrower
+  list (`{ CKM_AES_CBC }`) is kept and enforced. Generated keys are always
+  sensitive, unextractable and local — a template asking otherwise is rejected
+  (note: OpenSC `pkcs11-tool --keygen` needs its `--sensitive` flag for this
+  reason).
+- **`C_Encrypt` / `C_Decrypt` one-shot (`CKM_AES_CBC`, `CKM_AES_CBC_PAD`,
+  `CKM_AES_GCM`, `CKM_AES_XTS`)** — each `C_EncryptInit`/`C_DecryptInit`
+  unmasks the stored blob into a fresh session-scoped device key that lives
+  exactly as long as the operation; a key serves only its own family. Input and
+  output may be the same buffer; the binding stages the input whenever the two
+  ranges overlap, because the native API cannot hold a read and a write slice
+  over the same bytes.
+  - GCM takes `CK_GCM_PARAMS` with a 12-byte IV and a 128-bit tag only (the
+    device supports no other sizes) and optional AAD. The tag is appended to
+    the ciphertext. A failed tag check currently reports
+    `CKR_FUNCTION_FAILED`: the SDK delivers it as a generic device-command
+    failure that the module cannot tell apart from a device fault.
+  - XTS takes the 16-byte tweak (little-endian sector number) and encrypts the
+    whole message as one data unit, which the device caps at 8 KiB: a message
+    must be a non-zero multiple of 16 bytes up to 8192. The all-0xFF tweak is
+    refused, since the device must be able to advance the tweak past the unit.
+
+  Multi-part (`C_EncryptUpdate`…) and the other key-backed mechanisms
+  (RSA/ECDSA, wrap/unwrap, derive) are not implemented yet.
 
 ## Layering
 
@@ -46,7 +71,7 @@ the spec requires). Implemented so far:
 | Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
 | Host crypto | `azihsm_pkcs11_digest.c` | self-contained SHA-1/256/384/512 (PKCS#11 digests must work in public sessions; the SDK digest needs a login) |
 | Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
-| Key operations | `azihsm_pkcs11_crypt.c`, `azihsm_pkcs11_template.c` | key-backed entry points: operation state and the masked-blob store/unmask flow (CK_RV only); the keygen template validation and defaults are a device-free unit of their own |
+| Key operations | `azihsm_pkcs11_crypt.c`, `azihsm_pkcs11_template.c` | key-backed entry points: operation state and the masked-blob store/unmask flow (CK_RV only); the keygen template validation, key-family choice and cipher mechanism policy are a device-free unit of their own |
 | HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_key.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
 | Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
 
@@ -83,12 +108,15 @@ for stderr tracing.
 `pkcs11-tool` (interactive smoke). Pure host logic has device-free unit tests
 that link the translation unit directly: `tests/digest_kat_test.c` (NIST
 vectors), the object-store harnesses, and `tests/aes_template_test.c` (the
-complete CK_RV matrix of the keygen template validation and defaults, plus the
-status maps; built with UBSan, so the misaligned caller template it feeds the
-decoder is a real check). `integration-tests/cpp/` is the functional suite (GoogleTest,
+complete CK_RV matrix of the keygen template validation and defaults, the
+key-family choice and cipher mechanism policy, CK_GCM_PARAMS decoding, the
+GCM/XTS output-length plan and the status maps; built with UBSan, so the
+misaligned templates and parameter blocks it feeds the decoders are real
+checks). `integration-tests/cpp/` is the functional suite (GoogleTest,
 same shape as the OpenSSL provider's): it `dlopen`s the built module and
-drives the real Cryptoki ABI — keygen, one-shot CBC round trips, the two-call
-sizing discipline, the operation state machine and init precedence — so it
+drives the real Cryptoki ABI — keygen including the GCM/XTS key families,
+one-shot CBC, GCM and XTS round trips, the two-call sizing discipline, the
+operation state machine and init precedence — so it
 needs the mock- or hardware-backed build (see the CMakeLists.txt header for
 the build/run recipe; `AZIHSM_PKCS11_MODULE` points it at a module,
 `AZIHSM_PKCS11_TEST_PIN` overrides the simulator PIN). `tests/pkcs11test/` is

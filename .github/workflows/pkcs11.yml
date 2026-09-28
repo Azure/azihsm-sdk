@@ -6,9 +6,9 @@
 # Runs on PRs into the feature/pkcs11 staging branch (where the module is
 # developed until it merges to main) and on pushes to that branch; manual
 # dispatch stays available. Unimplemented entry points return
-# CKR_FUNCTION_NOT_SUPPORTED; the drive covers init/login, host objects,
-# SHA-256 digest, and the AES keygen/CBC slice. Add main to the triggers when
-# the staging branch merges.
+# CKR_FUNCTION_NOT_SUPPORTED; the drive covers init/login, host objects, the
+# SHA digests, and AES keygen with one-shot CBC, GCM and XTS. Add main to the
+# triggers when the staging branch merges.
 name: pkcs11
 
 on:

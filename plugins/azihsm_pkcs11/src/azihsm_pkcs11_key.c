@@ -25,8 +25,94 @@ _Static_assert(
     "device AES-CBC IV width must equal AES_BLOCK_LEN"
 );
 
+/* Likewise for the GCM IV and tag and the XTS tweak: the entry point validates
+ * caller parameters against these widths and this file copies exactly them. */
+_Static_assert(
+    sizeof(((struct azihsm_algo_aes_gcm_params *)0)->iv) == AES_GCM_IV_LEN,
+    "device AES-GCM IV width must equal AES_GCM_IV_LEN"
+);
+_Static_assert(
+    sizeof(((struct azihsm_algo_aes_gcm_params *)0)->tag) == AES_GCM_TAG_LEN,
+    "device AES-GCM tag width must equal AES_GCM_TAG_LEN"
+);
+_Static_assert(
+    sizeof(((struct azihsm_algo_aes_xts_params *)0)->sector_num) == AES_XTS_TWEAK_LEN,
+    "device AES-XTS tweak width must equal AES_XTS_TWEAK_LEN"
+);
+
+/*
+ * Translate the module's kind to the device key kind and its key-generation
+ * algorithm. false for a value outside the enum, which the callers refuse
+ * rather than quietly treating as plain AES.
+ */
+static bool device_kind(azihsm_pkcs11_key_kind_t kind, uint32_t *out_kind, uint32_t *out_keygen)
+{
+    switch (kind)
+    {
+    case AZIHSM_PKCS11_KIND_AES:
+        *out_kind = AZIHSM_KEY_KIND_AES;
+        *out_keygen = AZIHSM_ALGO_ID_AES_KEY_GEN;
+        return true;
+    case AZIHSM_PKCS11_KIND_AES_GCM:
+        *out_kind = AZIHSM_KEY_KIND_AES_GCM;
+        *out_keygen = AZIHSM_ALGO_ID_AES_GCM_KEY_GEN;
+        return true;
+    case AZIHSM_PKCS11_KIND_AES_XTS:
+        *out_kind = AZIHSM_KEY_KIND_AES_XTS;
+        *out_keygen = AZIHSM_ALGO_ID_AES_XTS_KEY_GEN;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/*
+ * Nothing stops a caller from passing one buffer as both pData and
+ * pEncryptedData. The native API would then hold an immutable slice over the
+ * input and a mutable one over the output while both describe the same bytes,
+ * which Rust does not allow, so the input is staged in a private copy whenever
+ * the two ranges touch. *staged is NULL when they do not; release it with
+ * stage_free.
+ */
+static CK_RV stage_overlap(
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    const CK_BYTE *out,
+    CK_ULONG out_len,
+    CK_BYTE **staged
+)
+{
+    *staged = NULL;
+    if ((in_len == 0) || (out == NULL) || (out_len == 0))
+    {
+        return CKR_OK;
+    }
+    if (((uintptr_t)in < ((uintptr_t)out + out_len)) && ((uintptr_t)out < ((uintptr_t)in + in_len)))
+    {
+        CK_BYTE *copy = (CK_BYTE *)malloc(in_len);
+        if (copy == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        memcpy(copy, in, in_len);
+        *staged = copy;
+    }
+    return CKR_OK;
+}
+
+/* The staged copy held plaintext or ciphertext and does not outlive the call. */
+static void stage_free(CK_BYTE *staged, CK_ULONG len)
+{
+    if (staged != NULL)
+    {
+        azihsm_pkcs11_wipe(staged, len);
+        free(staged);
+    }
+}
+
 CK_RV azihsm_pkcs11_key_aes_generate(
     uint32_t hsm_session,
+    azihsm_pkcs11_key_kind_t kind,
     uint32_t bit_len,
     CK_BYTE **out_blob,
     CK_ULONG *out_blob_len
@@ -38,6 +124,12 @@ CK_RV azihsm_pkcs11_key_aes_generate(
     }
     *out_blob = NULL;
     *out_blob_len = 0;
+    uint32_t dev_kind = 0;
+    uint32_t keygen_algo = 0;
+    if (!device_kind(kind, &dev_kind, &keygen_algo))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
 
     /*
      * SENSITIVE / EXTRACTABLE / LOCAL are deliberately absent: the SDK rejects
@@ -45,27 +137,27 @@ CK_RV azihsm_pkcs11_key_aes_generate(
      * normaliser in azihsm_pkcs11_template.c strips them before this call. SESSION is
      * always true — device residence is per-session by design here; the masked
      * blob below is what persists. ENCRYPT and DECRYPT are always both set:
-     * the SDK refuses an AES key with only one of them (see the header note).
+     * the SDK refuses an AES, GCM or XTS key with only one of them (see the
+     * header note).
      */
     uint32_t class_secret = AZIHSM_KEY_CLASS_SECRET;
-    uint32_t kind_aes = AZIHSM_KEY_KIND_AES;
     uint8_t yes = 1;
     struct azihsm_key_prop props[] = {
         { AZIHSM_KEY_PROP_ID_CLASS, &class_secret, sizeof(class_secret) },
-        { AZIHSM_KEY_PROP_ID_KIND, &kind_aes, sizeof(kind_aes) },
+        { AZIHSM_KEY_PROP_ID_KIND, &dev_kind, sizeof(dev_kind) },
         { AZIHSM_KEY_PROP_ID_BIT_LEN, &bit_len, sizeof(bit_len) },
         { AZIHSM_KEY_PROP_ID_SESSION, &yes, sizeof(yes) },
         { AZIHSM_KEY_PROP_ID_ENCRYPT, &yes, sizeof(yes) },
         { AZIHSM_KEY_PROP_ID_DECRYPT, &yes, sizeof(yes) },
     };
     struct azihsm_key_prop_list prop_list = { props, sizeof(props) / sizeof(props[0]) };
-    struct azihsm_algo algo = { AZIHSM_ALGO_ID_AES_KEY_GEN, NULL, 0 };
+    struct azihsm_algo algo = { keygen_algo, NULL, 0 };
 
     azihsm_handle key = 0;
     azihsm_status st = azihsm_key_gen(hsm_session, &algo, &prop_list, &key);
     if (st != AZIHSM_STATUS_SUCCESS)
     {
-        AZIHSM_PKCS11_LOG("key_gen(AES-%u) failed: %d", bit_len, (int)st);
+        AZIHSM_PKCS11_LOG("key_gen(kind %u, %u bits) failed: %d", dev_kind, bit_len, (int)st);
         /* The only handle passed here is the device session: it going stale
          * means the recorded login no longer holds. */
         return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_USER_NOT_LOGGED_IN);
@@ -115,19 +207,23 @@ cleanup:
 
 CK_RV azihsm_pkcs11_key_aes_unmask(
     uint32_t hsm_session,
+    azihsm_pkcs11_key_kind_t kind,
     const CK_BYTE *blob,
     CK_ULONG blob_len,
     uint32_t *out_key
 )
 {
     /* The device buffer length is 32-bit; a blob beyond it cannot be passed. */
-    if ((blob == NULL) || (blob_len == 0) || (blob_len > (CK_ULONG)UINT32_MAX) || (out_key == NULL))
+    uint32_t dev_kind = 0;
+    uint32_t keygen_algo = 0;
+    if ((blob == NULL) || (blob_len == 0) || (blob_len > (CK_ULONG)UINT32_MAX) ||
+        (out_key == NULL) || !device_kind(kind, &dev_kind, &keygen_algo))
     {
         return CKR_ARGUMENTS_BAD;
     }
     struct azihsm_buffer masked = { (void *)blob, (uint32_t)blob_len };
     azihsm_handle key = 0;
-    azihsm_status st = azihsm_key_unmask(hsm_session, AZIHSM_KEY_KIND_AES, &masked, &key);
+    azihsm_status st = azihsm_key_unmask(hsm_session, dev_kind, &masked, &key);
     if (st != AZIHSM_STATUS_SUCCESS)
     {
         AZIHSM_PKCS11_LOG("key_unmask failed: %d", (int)st);
@@ -208,22 +304,16 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
         return CKR_BUFFER_TOO_SMALL;
     }
 
-    /* Nothing stops a caller from passing one buffer as both pData and
-     * pEncryptedData. The native API would then hold an immutable slice over
-     * the input and a mutable one over the output while both describe the same
-     * bytes, which Rust does not allow, so stage the input in a private copy
-     * whenever the two ranges touch. Only the fill call needs this: the sizing
-     * pass above writes nothing. */
+    /* Only the fill call needs overlap staging: the sizing pass above writes
+     * nothing. */
     CK_BYTE *staged = NULL;
-    if ((in_len > 0) && ((uintptr_t)in < ((uintptr_t)out + required)) &&
-        ((uintptr_t)out < ((uintptr_t)in + in_len)))
+    CK_RV rv = stage_overlap(in, in_len, out, required, &staged);
+    if (rv != CKR_OK)
     {
-        staged = (CK_BYTE *)malloc(in_len);
-        if (staged == NULL)
-        {
-            return CKR_HOST_MEMORY;
-        }
-        memcpy(staged, in, in_len);
+        return rv;
+    }
+    if (staged != NULL)
+    {
         inbuf.ptr = staged;
     }
 
@@ -232,12 +322,7 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
     outbuf.len = (uint32_t)required;
     st = encrypt ? azihsm_crypt_encrypt(&algo, key_handle, &inbuf, &outbuf)
                  : azihsm_crypt_decrypt(&algo, key_handle, &inbuf, &outbuf);
-    if (staged != NULL)
-    {
-        /* The copy held plaintext or ciphertext and does not outlive the call. */
-        azihsm_pkcs11_wipe(staged, in_len);
-        free(staged);
-    }
+    stage_free(staged, in_len);
     if (st != AZIHSM_STATUS_SUCCESS)
     {
         AZIHSM_PKCS11_LOG("crypt_%s failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);
@@ -253,6 +338,134 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
     return CKR_OK;
 }
 
+CK_RV azihsm_pkcs11_key_aes_gcm(
+    bool encrypt,
+    uint32_t key_handle,
+    const CK_BYTE *iv,
+    const CK_BYTE *aad,
+    CK_ULONG aad_len,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *tag,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    if ((iv == NULL) || (tag == NULL) || (out == NULL) || (out_len == NULL) ||
+        ((in == NULL) && (in_len > 0)) || ((aad == NULL) && (aad_len > 0)) ||
+        (in_len > (CK_ULONG)UINT32_MAX) || (aad_len > (CK_ULONG)UINT32_MAX))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    /* GCM output is exactly as long as its input (the tag travels apart), and
+     * unlike CBC the device takes any buffer at least that large. */
+    if (*out_len < in_len)
+    {
+        *out_len = in_len;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    struct azihsm_algo_aes_gcm_params params;
+    memcpy(params.iv, iv, sizeof(params.iv));
+    if (encrypt)
+    {
+        memset(params.tag, 0, sizeof(params.tag)); /* the device writes it back */
+    }
+    else
+    {
+        memcpy(params.tag, tag, sizeof(params.tag));
+    }
+    struct azihsm_buffer aadbuf = { (void *)aad, (uint32_t)aad_len };
+    params.aad = (aad_len > 0) ? &aadbuf : NULL; /* NULL reads as "no AAD" */
+    struct azihsm_algo algo = { AZIHSM_ALGO_ID_AES_GCM, &params, sizeof(params) };
+    struct azihsm_buffer inbuf = { (void *)in, (uint32_t)in_len };
+
+    CK_BYTE *staged = NULL;
+    CK_RV rv = stage_overlap(in, in_len, out, in_len, &staged);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    if (staged != NULL)
+    {
+        inbuf.ptr = staged;
+    }
+    struct azihsm_buffer outbuf = { out, (uint32_t)in_len };
+    azihsm_status st = encrypt ? azihsm_crypt_encrypt(&algo, key_handle, &inbuf, &outbuf)
+                               : azihsm_crypt_decrypt(&algo, key_handle, &inbuf, &outbuf);
+    stage_free(staged, in_len);
+    if (st != AZIHSM_STATUS_SUCCESS)
+    {
+        AZIHSM_PKCS11_LOG("gcm_%s failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);
+        /* A decrypt that fails authentication must not leave unauthenticated
+         * plaintext behind, whatever the device wrote before it refused. */
+        azihsm_pkcs11_wipe(out, in_len);
+        /* A tag mismatch arrives as the generic DDI failure (-8) on every
+         * backend today, indistinguishable from a device fault, so it maps to
+         * CKR_FUNCTION_FAILED like any other; see azihsm_pkcs11_status.c. */
+        return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_KEY_HANDLE_INVALID);
+    }
+    if (encrypt)
+    {
+        memcpy(tag, params.tag, sizeof(params.tag));
+    }
+    *out_len = outbuf.len;
+    return CKR_OK;
+}
+
+CK_RV azihsm_pkcs11_key_aes_xts(
+    bool encrypt,
+    uint32_t key_handle,
+    const CK_BYTE *tweak,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    if ((tweak == NULL) || (in == NULL) || (out == NULL) || (out_len == NULL) || (in_len == 0) ||
+        (in_len > AES_XTS_MAX_DATA_LEN) || ((in_len % AES_BLOCK_LEN) != 0))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if (*out_len < in_len)
+    {
+        *out_len = in_len;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    /* The whole message is one data unit: PKCS#11 carries no data-unit length,
+     * so any other split would be a private convention no peer reproduces. */
+    struct azihsm_algo_aes_xts_params params;
+    memcpy(params.sector_num, tweak, sizeof(params.sector_num));
+    params.data_unit_length = (uint32_t)in_len;
+    struct azihsm_algo algo = { AZIHSM_ALGO_ID_AES_XTS, &params, sizeof(params) };
+    struct azihsm_buffer inbuf = { (void *)in, (uint32_t)in_len };
+
+    CK_BYTE *staged = NULL;
+    CK_RV rv = stage_overlap(in, in_len, out, in_len, &staged);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    if (staged != NULL)
+    {
+        inbuf.ptr = staged;
+    }
+    struct azihsm_buffer outbuf = { out, (uint32_t)in_len };
+    azihsm_status st = encrypt ? azihsm_crypt_encrypt(&algo, key_handle, &inbuf, &outbuf)
+                               : azihsm_crypt_decrypt(&algo, key_handle, &inbuf, &outbuf);
+    stage_free(staged, in_len);
+    if (st != AZIHSM_STATUS_SUCCESS)
+    {
+        AZIHSM_PKCS11_LOG("xts_%s failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);
+        azihsm_pkcs11_wipe(out, in_len);
+        return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_KEY_HANDLE_INVALID);
+    }
+    *out_len = outbuf.len;
+    return CKR_OK;
+}
+
 #else /* !AZIHSM_WITH_HSM ---------------------------------------------------- */
 
 /* No device linked: key material cannot exist, so the key-backed paths report
@@ -260,12 +473,14 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
 
 CK_RV azihsm_pkcs11_key_aes_generate(
     uint32_t hsm_session,
+    azihsm_pkcs11_key_kind_t kind,
     uint32_t bit_len,
     CK_BYTE **out_blob,
     CK_ULONG *out_blob_len
 )
 {
     (void)hsm_session;
+    (void)kind;
     (void)bit_len;
     (void)out_blob;
     (void)out_blob_len;
@@ -274,12 +489,14 @@ CK_RV azihsm_pkcs11_key_aes_generate(
 
 CK_RV azihsm_pkcs11_key_aes_unmask(
     uint32_t hsm_session,
+    azihsm_pkcs11_key_kind_t kind,
     const CK_BYTE *blob,
     CK_ULONG blob_len,
     uint32_t *out_key
 )
 {
     (void)hsm_session;
+    (void)kind;
     (void)blob;
     (void)blob_len;
     (void)out_key;
@@ -306,6 +523,52 @@ CK_RV azihsm_pkcs11_key_aes_cbc(
     (void)pad;
     (void)key_handle;
     (void)iv;
+    (void)in;
+    (void)in_len;
+    (void)out;
+    (void)out_len;
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV azihsm_pkcs11_key_aes_gcm(
+    bool encrypt,
+    uint32_t key_handle,
+    const CK_BYTE *iv,
+    const CK_BYTE *aad,
+    CK_ULONG aad_len,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *tag,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    (void)encrypt;
+    (void)key_handle;
+    (void)iv;
+    (void)aad;
+    (void)aad_len;
+    (void)in;
+    (void)in_len;
+    (void)tag;
+    (void)out;
+    (void)out_len;
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV azihsm_pkcs11_key_aes_xts(
+    bool encrypt,
+    uint32_t key_handle,
+    const CK_BYTE *tweak,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    (void)encrypt;
+    (void)key_handle;
+    (void)tweak;
     (void)in;
     (void)in_len;
     (void)out;
