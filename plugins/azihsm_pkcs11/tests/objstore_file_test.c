@@ -22,9 +22,11 @@
 #include "azihsm_pkcs11_store_io.h"
 #include "azihsm_pkcs11_store_record.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -431,6 +433,126 @@ int main(void)
             CKR_OBJECT_HANDLE_INVALID,
         "get_key_body on a private object is INVALID when logged out"
     );
+
+    /* --- get_size: attribute values plus body, the same count on both backends --- */
+    CK_OBJECT_HANDLE sz_tok = 0, sz_sess = 0;
+    make_object(&s, SLOT, CK_FALSE, CK_TRUE, CK_FALSE, "sz", xval, sizeof(xval), CK_FALSE, &sz_tok);
+    make_object(
+        &s,
+        SLOT,
+        CK_FALSE,
+        CK_FALSE,
+        CK_FALSE,
+        "sz",
+        xval,
+        sizeof(xval),
+        CK_FALSE,
+        &sz_sess
+    );
+    const CK_ULONG sz_expect =
+        sizeof(CK_OBJECT_CLASS) + 2 * sizeof(CK_BBOOL) + (sizeof("sz") - 1) + sizeof(xval);
+    CK_ULONG sz_t = 0, sz_s = 0;
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, &sz_t) == CKR_OK && sz_t == sz_expect,
+        "get_size of a token object counts its attribute values"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_sess, &sz_s) == CKR_OK && sz_s == sz_expect,
+        "get_size of the same object as a session object agrees"
+    );
+    s.ops->set_key_body(s.ctx, SLOT, CK_FALSE, sz_tok, body, sizeof(body));
+    s.ops->set_key_body(s.ctx, SLOT, CK_FALSE, sz_sess, body, sizeof(body));
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, &sz_t) == CKR_OK &&
+            sz_t == sz_expect + sizeof(body) &&
+            s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_sess, &sz_s) == CKR_OK && sz_s == sz_t,
+        "get_size adds the key body on both backends"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, NULL) == CKR_ARGUMENTS_BAD &&
+            s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_sess, NULL) == CKR_ARGUMENTS_BAD,
+        "get_size with a NULL out -> ARGUMENTS_BAD"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, priv, &sz_t) == CKR_OBJECT_HANDLE_INVALID &&
+            s.ops->get_size(s.ctx, SLOT, CK_TRUE, priv, &sz_t) == CKR_OK,
+        "get_size honours the private gate"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT + 1, CK_FALSE, sz_sess, &sz_t) == CKR_OBJECT_HANDLE_INVALID,
+        "get_size honours slot isolation"
+    );
+
+    /* A slot that never held a token object has no token directory; a token
+     * handle probed there names nothing, like any unknown handle. */
+    const CK_SLOT_ID EMPTY_SLOT = SLOT + 7;
+    CK_ATTRIBUTE elq = { CKA_LABEL, lbuf, sizeof(lbuf) };
+    CK_ATTRIBUTE relabel[] = { { CKA_LABEL, (void *)"nope", 4 } };
+    CK_ULONG probe_len = sizeof(kb_buf);
+    CHECK(
+        s.ops->get_attr(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, &elq, 1) == CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: get_attr on a token handle -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->set_attr(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, relabel, 1) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: set_attr -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, &sz_t) == CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: get_size -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->get_key_body(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, kb_buf, &probe_len) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: get_key_body -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->set_key_body(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, body, sizeof(body)) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: set_key_body -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->destroy(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok) == CKR_OBJECT_HANDLE_INVALID &&
+            s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, &sz_t) == CKR_OK,
+        "empty slot: destroy -> OBJECT_HANDLE_INVALID, and the real object survives"
+    );
+    char empty_dir[512];
+    snprintf(empty_dir, sizeof(empty_dir), "%s/slot-%lu", root, (unsigned long)EMPTY_SLOT);
+    struct stat esb;
+    CHECK(
+        stat(empty_dir, &esb) != 0 && errno == ENOENT,
+        "empty slot: the probes created no token directory"
+    );
+
+    /* Session-object set_attr (the in-memory backend): several attributes at
+     * once, replacing one and adding one; an empty template changes nothing. */
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sz_sess, chg, 2) == CKR_OK,
+        "session set_attr updates label + adds id"
+    );
+    idq.ulValueLen = sizeof(lbuf);
+    CHECK(
+        read_label(&s, SLOT, CK_FALSE, sz_sess, lbuf, sizeof(lbuf), &llen) == CKR_OK && llen == 9 &&
+            memcmp(lbuf, "x-renamed", 9) == 0 &&
+            s.ops->get_attr(s.ctx, SLOT, CK_FALSE, sz_sess, &idq, 1) == CKR_OK &&
+            idq.ulValueLen == 2 && memcmp(lbuf, idbytes, 2) == 0,
+        "session set_attr: both attributes read back"
+    );
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sz_sess, NULL, 0) == CKR_OK,
+        "session set_attr with an empty template -> OK"
+    );
+    CK_ATTRIBUTE half_bad[] = { { CKA_LABEL, (void *)"never", 5 }, { CKA_ID, NULL, 4 } };
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sz_sess, half_bad, 2) ==
+                CKR_ATTRIBUTE_VALUE_INVALID &&
+            read_label(&s, SLOT, CK_FALSE, sz_sess, lbuf, sizeof(lbuf), &llen) == CKR_OK &&
+            llen == 9,
+        "session set_attr refusing a later entry leaves the earlier one unapplied"
+    );
+    s.ops->destroy(s.ctx, SLOT, CK_FALSE, sz_tok);
+    s.ops->destroy(s.ctx, SLOT, CK_FALSE, sz_sess);
 
     /* v1 refusal via set_attr: making an object that carries CKA_VALUE private. */
     CK_ATTRIBUTE mkpriv[] = { { CKA_PRIVATE, &ck_true, sizeof(CK_BBOOL) } };

@@ -45,9 +45,12 @@ typedef struct
  * slot, or a private object while not logged in, is not visible to the caller
  * and yields CKR_OBJECT_HANDLE_INVALID (rather than leaking its existence).
  *
- * Handles are unique for the lifetime of the store and are never reused after
- * a destroy: the framework reaps a closing session's objects by handle, and a
- * reused handle would let it destroy a stranger's object.
+ * Handles are unique within a slot for the lifetime of the store and are never
+ * reused after a destroy: the framework reaps a closing session's objects by
+ * slot and handle, and a reused handle would let it destroy a stranger's
+ * object. Two slots may hand out the same handle (the file backend numbers
+ * token objects per token directory); no caller looks a handle up without its
+ * slot.
  */
 struct azihsm_pkcs11_objstore_ops
 {
@@ -116,6 +119,15 @@ struct azihsm_pkcs11_objstore_ops
      CK_OBJECT_HANDLE h,
      CK_BYTE *blob,
      CK_ULONG *len);
+
+    /*
+     * The object's size for C_GetObjectSize: the bytes of its attribute values
+     * plus its key body. PKCS#11 asks only for an approximation, so framing and
+     * per-attribute overhead are left out; both backends count the same way, so
+     * an object reports the same size whichever store holds it.
+     */
+    CK_RV(*get_size)
+    (void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, CK_OBJECT_HANDLE h, CK_ULONG *size);
 
     void (*teardown)(void *ctx); /* free the whole store (C_Finalize) */
     CK_RV (*persist)(void *ctx); /* NULL on the in-memory backend */

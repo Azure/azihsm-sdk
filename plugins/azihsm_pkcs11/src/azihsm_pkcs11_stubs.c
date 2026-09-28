@@ -121,36 +121,6 @@ CK_RV C_CopyObject(
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
-{
-    if (!g_azihsm_pkcs11.initialized)
-    {
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    }
-    (void)hSession;
-    (void)hObject;
-    (void)pulSize;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
-CK_RV C_SetAttributeValue(
-    CK_SESSION_HANDLE hSession,
-    CK_OBJECT_HANDLE hObject,
-    CK_ATTRIBUTE_PTR pTemplate,
-    CK_ULONG ulCount
-)
-{
-    if (!g_azihsm_pkcs11.initialized)
-    {
-        return CKR_CRYPTOKI_NOT_INITIALIZED;
-    }
-    (void)hSession;
-    (void)hObject;
-    (void)pTemplate;
-    (void)ulCount;
-    return CKR_FUNCTION_NOT_SUPPORTED;
-}
-
 CK_RV C_EncryptUpdate(
     CK_SESSION_HANDLE hSession,
     CK_BYTE_PTR pPart,
