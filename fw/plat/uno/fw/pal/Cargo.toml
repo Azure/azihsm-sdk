@@ -66,10 +66,10 @@ semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
 # Test-only DDI commands, routed through the `HsmCustomDispatch` PAL hook
 # rather than the core opcode tables. Never enable either feature in a
 # production build.
+azihsm_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
 fips_validation_hooks = [
   "dep:azihsm_fw_core_crypto_key_masking",
   "dep:azihsm_fw_ddi_mbor",
   "dep:azihsm_fw_ddi_mbor_derive",
   "dep:azihsm_fw_ddi_mbor_types",
 ]
-azihsm_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
