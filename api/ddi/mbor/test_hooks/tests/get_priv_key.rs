@@ -79,6 +79,11 @@ fn test_aes_bulk_get_and_validate_key() {
             let resp = resp.unwrap();
 
             let get_resp = helper_get_priv_key(dev, Some(session_id), resp.data.key_id);
+            if let Err(err) = &get_resp {
+                if is_unsupported_cmd(err) {
+                    return;
+                }
+            }
             assert!(matches!(
                 get_resp,
                 Err(DdiError::DdiStatus(DdiStatus::InvalidKeyType))
