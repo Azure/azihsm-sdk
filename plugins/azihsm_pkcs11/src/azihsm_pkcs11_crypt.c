@@ -1,0 +1,461 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+/*
+ * Key-backed operations: C_GenerateKey (CKM_AES_KEY_GEN) and one-shot AES-CBC /
+ * AES-CBC-PAD encrypt/decrypt.
+ *
+ * The AZIHSM device holds keys only as session-scoped handles; the durable form
+ * is the opaque masked blob. So C_GenerateKey stores that blob as the object's
+ * key body behind the object-store seam, and each C_EncryptInit/C_DecryptInit
+ * unmasks it into a fresh device handle owned by the session's operation state
+ * (released when the operation ends, wherever it ends — see
+ * azihsm_pkcs11_session_reset_op). This file speaks CK_RV only; device calls
+ * and status translation live in azihsm_pkcs11_key.c, and the pure template
+ * logic (validation, defaults) in azihsm_pkcs11_template.c.
+ */
+
+#include "azihsm_pkcs11_internal.h"
+#include "azihsm_pkcs11_key.h"
+#include "azihsm_pkcs11_template.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+
+/* AES_BLOCK_LEN (the CBC IV/block length) comes from azihsm_pkcs11_key.h; the
+ * key lengths and template constants from azihsm_pkcs11_template.h. */
+
+/* Turns CKA_VALUE_LEN (bytes) into the device's bit-length key property. */
+#define AES_KEY_BITS_PER_BYTE 8
+
+/* Per-operation cipher state (s->op_ctx while op is P11_OP_ENCRYPT/_DECRYPT). */
+typedef struct
+{
+    CK_MECHANISM_TYPE mech;    /* CKM_AES_CBC or CKM_AES_CBC_PAD */
+    uint32_t hsm_key;          /* unmasked device key handle; owned, freed with the op */
+    CK_BYTE iv[AES_BLOCK_LEN]; /* the operation's IV seed (owned copy) */
+} cipher_op;
+
+void azihsm_pkcs11_cipher_op_free(void *op_ctx)
+{
+    cipher_op *op = (cipher_op *)op_ctx;
+    if (op == NULL)
+    {
+        return;
+    }
+    azihsm_pkcs11_key_release(op->hsm_key);
+    azihsm_pkcs11_wipe(op, sizeof(*op));
+    free(op);
+}
+
+/* ========================================================================= */
+/* C_GenerateKey (CKM_AES_KEY_GEN)                                           */
+/* ========================================================================= */
+
+CK_RV C_GenerateKey(
+    CK_SESSION_HANDLE hSession,
+    CK_MECHANISM_PTR pMechanism,
+    CK_ATTRIBUTE_PTR pTemplate,
+    CK_ULONG ulCount,
+    CK_OBJECT_HANDLE_PTR phKey
+)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    /* Precedence: bad handle, then bad arguments and mechanism, then login
+     * state — so a logged-out caller is told about a malformed request rather
+     * than about its login. */
+    CK_RV rv = CKR_OK;
+    if ((pMechanism == NULL_PTR) || (phKey == NULL_PTR) ||
+        ((pTemplate == NULL_PTR) && (ulCount > 0)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (pMechanism->mechanism != CKM_AES_KEY_GEN)
+    {
+        rv = CKR_MECHANISM_INVALID;
+    }
+    else if ((pMechanism->pParameter != NULL_PTR) || (pMechanism->ulParameterLen != 0))
+    {
+        rv = CKR_MECHANISM_PARAM_INVALID;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
+    if (!slot->user_logged_in || (slot->hsm_session == 0))
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_USER_NOT_LOGGED_IN; /* generation runs in the device session */
+    }
+
+    CK_ULONG value_len = 0;
+    CK_BBOOL token = CK_FALSE;
+    rv = azihsm_pkcs11_keygen_check_template(pTemplate, ulCount, &value_len, &token);
+    if ((rv == CKR_OK) && token && ((s->flags & CKF_RW_SESSION) == 0))
+    {
+        rv = CKR_SESSION_READ_ONLY;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+
+    CK_BYTE *blob = NULL;
+    CK_ULONG blob_len = 0;
+    CK_ATTRIBUTE *full = NULL;
+    rv = azihsm_pkcs11_key_aes_generate(
+        slot->hsm_session,
+        (uint32_t)(value_len * AES_KEY_BITS_PER_BYTE),
+        &blob,
+        &blob_len
+    );
+    if (rv != CKR_OK)
+    {
+        goto cleanup;
+    }
+
+    /* Store the caller's template plus the attributes this token decides (see
+     * azihsm_pkcs11_keygen_build_template); `fill` backs the appended values
+     * and must live until the store call has copied them. */
+    full = (CK_ATTRIBUTE *)malloc((ulCount + KEYGEN_APPENDED_ATTRS) * sizeof(CK_ATTRIBUTE));
+    if (full == NULL)
+    {
+        rv = CKR_HOST_MEMORY;
+        goto cleanup;
+    }
+    azihsm_pkcs11_keygen_fill fill;
+    CK_ULONG n = 0;
+    rv = azihsm_pkcs11_keygen_build_template(pTemplate, ulCount, &fill, full, &n);
+    if (rv != CKR_OK)
+    {
+        goto cleanup;
+    }
+
+    CK_OBJECT_HANDLE h = CK_INVALID_HANDLE;
+    rv =
+        g_azihsm_pkcs11.store.ops->create(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, full, n, &h);
+    if (rv != CKR_OK)
+    {
+        goto cleanup;
+    }
+    rv = g_azihsm_pkcs11.store.ops
+             ->set_key_body(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, h, blob, blob_len);
+    if ((rv == CKR_OK) && !token)
+    {
+        /* A session object dies with this session (the C_CloseSession rule). */
+        rv = azihsm_pkcs11_session_own_object(s, h);
+    }
+    if (rv != CKR_OK)
+    {
+        /* No half-object: a key object without its masked body, or one the
+         * session cannot track, is not handed out. */
+        (void)g_azihsm_pkcs11.store.ops->destroy(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, h);
+        goto cleanup;
+    }
+    *phKey = h;
+    AZIHSM_PKCS11_LOG(
+        "C_GenerateKey: AES-%lu obj=%lu (blob %lu bytes)",
+        (unsigned long)(value_len * AES_KEY_BITS_PER_BYTE),
+        (unsigned long)h,
+        (unsigned long)blob_len
+    );
+
+cleanup:
+    if (blob != NULL)
+    {
+        azihsm_pkcs11_wipe(blob, blob_len);
+        free(blob);
+    }
+    free(full);
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+/* ========================================================================= */
+/* One-shot AES-CBC encrypt / decrypt                                        */
+/* ========================================================================= */
+
+static CK_RV cipher_init(
+    CK_SESSION_HANDLE hSession,
+    CK_MECHANISM_PTR pMechanism,
+    CK_OBJECT_HANDLE hKey,
+    azihsm_pkcs11_op_type_t want
+)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    /* Precedence as in C_GenerateKey — handle, arguments, mechanism, then login
+     * state — with the operation-state check between arguments and mechanism,
+     * as in C_DigestInit. */
+    CK_RV rv = CKR_OK;
+    if (pMechanism == NULL_PTR)
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op != P11_OP_NONE)
+    {
+        rv = CKR_OPERATION_ACTIVE;
+    }
+    else if ((pMechanism->mechanism != CKM_AES_CBC) && (pMechanism->mechanism != CKM_AES_CBC_PAD))
+    {
+        rv = CKR_MECHANISM_INVALID;
+    }
+    else if ((pMechanism->pParameter == NULL_PTR) || (pMechanism->ulParameterLen != AES_BLOCK_LEN))
+    {
+        rv = CKR_MECHANISM_PARAM_INVALID; /* both take the raw 16-byte IV */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    azihsm_pkcs11_slot_t *slot = &g_azihsm_pkcs11.slots[s->slot];
+    if (!slot->user_logged_in || (slot->hsm_session == 0))
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_USER_NOT_LOGGED_IN; /* unmasking needs the device session */
+    }
+
+    CK_BYTE *body = NULL;
+    CK_ULONG body_len = 0;
+    cipher_op *op = NULL;
+
+    rv = g_azihsm_pkcs11.store.ops
+             ->get_key_body(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, hKey, NULL, &body_len);
+    if (rv == CKR_OBJECT_HANDLE_INVALID)
+    {
+        rv = CKR_KEY_HANDLE_INVALID; /* the handle names a key at this entry point */
+    }
+    if (rv != CKR_OK)
+    {
+        goto cleanup;
+    }
+    if (body_len == 0)
+    {
+        /* An object with no masked body (e.g. a data object) backs no key. */
+        rv = CKR_KEY_HANDLE_INVALID;
+        goto cleanup;
+    }
+
+    /* Host-side attribute gates; the unmasked key enforces its own device-side
+     * usage policy on top. An object without the attribute passes (unknowable
+     * here, knowable on use). */
+    CK_KEY_TYPE kt = 0;
+    CK_ATTRIBUTE type_attr = { CKA_KEY_TYPE, &kt, sizeof(kt) };
+    rv = g_azihsm_pkcs11.store.ops
+             ->get_attr(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, hKey, &type_attr, 1);
+    if ((rv == CKR_OK) && (kt != CKK_AES))
+    {
+        rv = CKR_KEY_TYPE_INCONSISTENT;
+        goto cleanup;
+    }
+    CK_BBOOL allowed = CK_TRUE;
+    CK_ATTRIBUTE use_attr = { (want == P11_OP_ENCRYPT) ? CKA_ENCRYPT : CKA_DECRYPT,
+                              &allowed,
+                              sizeof(allowed) };
+    rv = g_azihsm_pkcs11.store.ops
+             ->get_attr(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, hKey, &use_attr, 1);
+    if ((rv == CKR_OK) && !allowed)
+    {
+        rv = CKR_KEY_FUNCTION_NOT_PERMITTED;
+        goto cleanup;
+    }
+
+    body = (CK_BYTE *)malloc(body_len);
+    if (body == NULL)
+    {
+        rv = CKR_HOST_MEMORY;
+        goto cleanup;
+    }
+    rv = g_azihsm_pkcs11.store.ops
+             ->get_key_body(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, hKey, body, &body_len);
+    if (rv != CKR_OK)
+    {
+        goto cleanup;
+    }
+
+    op = (cipher_op *)malloc(sizeof(cipher_op));
+    if (op == NULL)
+    {
+        rv = CKR_HOST_MEMORY;
+        goto cleanup;
+    }
+    op->mech = pMechanism->mechanism;
+    op->hsm_key = 0;
+    memcpy(op->iv, pMechanism->pParameter, AES_BLOCK_LEN);
+    rv = azihsm_pkcs11_key_aes_unmask(slot->hsm_session, body, body_len, &op->hsm_key);
+    if (rv != CKR_OK)
+    {
+        goto cleanup;
+    }
+
+    s->op_ctx = op;
+    s->op = want;
+    op = NULL; /* ownership moved to the session */
+    rv = CKR_OK;
+
+cleanup:
+    if (body != NULL)
+    {
+        azihsm_pkcs11_wipe(body, body_len);
+        free(body);
+    }
+    azihsm_pkcs11_cipher_op_free(op);
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+    return cipher_init(hSession, pMechanism, hKey, P11_OP_ENCRYPT);
+}
+
+CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+    return cipher_init(hSession, pMechanism, hKey, P11_OP_DECRYPT);
+}
+
+/*
+ * Shared one-shot body. Follows the spec's operation-lifetime rules: a NULL
+ * output buffer reports the required length and keeps the operation active, a
+ * too-small buffer returns CKR_BUFFER_TOO_SMALL and keeps it active for the
+ * retry, and every other outcome — success or any failure, bad arguments
+ * included — terminates it. Hence the arguments are checked only once the
+ * operation has been found: with no operation there is nothing to terminate,
+ * and CKR_OPERATION_NOT_INITIALIZED is the answer.
+ */
+static CK_RV cipher_oneshot(
+    CK_SESSION_HANDLE hSession,
+    bool encrypt,
+    CK_BYTE_PTR in,
+    CK_ULONG in_len,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len
+)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    azihsm_pkcs11_op_type_t want = encrypt ? P11_OP_ENCRYPT : P11_OP_DECRYPT;
+    if ((s->op != want) || (s->op_ctx == NULL))
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+    cipher_op *op = (cipher_op *)s->op_ctx;
+    bool pad = (op->mech == CKM_AES_CBC_PAD);
+
+    /* Argument check, then the deterministic length policy, host-side (the
+     * device would reject these too, but with statuses that don't map to the
+     * spec's *_LEN_RANGE). The input length is also range-checked here before
+     * it is narrowed to the device buffer's 32-bit length in
+     * azihsm_pkcs11_key_aes_cbc. */
+    CK_RV rv = CKR_OK;
+    if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (in_len > (CK_ULONG)UINT32_MAX)
+    {
+        rv = encrypt ? CKR_DATA_LEN_RANGE : CKR_ENCRYPTED_DATA_LEN_RANGE;
+    }
+    else if (encrypt && !pad && ((in_len % AES_BLOCK_LEN) != 0))
+    {
+        rv = CKR_DATA_LEN_RANGE;
+    }
+    else if (!encrypt && (((in_len % AES_BLOCK_LEN) != 0) || (pad && (in_len == 0))))
+    {
+        rv = CKR_ENCRYPTED_DATA_LEN_RANGE;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    /* Recorded so the multi-part calls (once implemented) refuse to join a
+     * one-shot operation with CKR_OPERATION_ACTIVE, as the digests do. */
+    s->op_mode = P11_OP_MODE_ONESHOT;
+
+    if (out == NULL_PTR)
+    {
+        /* Sizing probe: report the required length, keep the operation. */
+        CK_ULONG need = 0;
+        rv = azihsm_pkcs11_key_aes_cbc(encrypt, pad, op->hsm_key, op->iv, in, in_len, NULL, &need);
+        if (rv == CKR_OK)
+        {
+            *out_len = need;
+            azihsm_pkcs11_unlock();
+            return CKR_OK;
+        }
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+
+    rv = azihsm_pkcs11_key_aes_cbc(encrypt, pad, op->hsm_key, op->iv, in, in_len, out, out_len);
+    if (rv == CKR_BUFFER_TOO_SMALL)
+    {
+        azihsm_pkcs11_unlock();
+        return rv; /* op stays active: the caller retries with a bigger buffer */
+    }
+    if (rv != CKR_OK)
+    {
+        *out_len = 0;
+    }
+    azihsm_pkcs11_session_reset_op(s);
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+CK_RV C_Encrypt(
+    CK_SESSION_HANDLE hSession,
+    CK_BYTE_PTR pData,
+    CK_ULONG ulDataLen,
+    CK_BYTE_PTR pEncryptedData,
+    CK_ULONG_PTR pulEncryptedDataLen
+)
+{
+    return cipher_oneshot(hSession, true, pData, ulDataLen, pEncryptedData, pulEncryptedDataLen);
+}
+
+CK_RV C_Decrypt(
+    CK_SESSION_HANDLE hSession,
+    CK_BYTE_PTR pEncryptedData,
+    CK_ULONG ulEncryptedDataLen,
+    CK_BYTE_PTR pData,
+    CK_ULONG_PTR pulDataLen
+)
+{
+    return cipher_oneshot(hSession, false, pEncryptedData, ulEncryptedDataLen, pData, pulDataLen);
+}

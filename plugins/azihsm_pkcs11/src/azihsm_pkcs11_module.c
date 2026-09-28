@@ -62,6 +62,19 @@ void azihsm_pkcs11_pad_str(CK_UTF8CHAR *dst, size_t dstlen, const char *src)
     memset(dst + n, ' ', dstlen - n); /* PKCS#11 fixed-width fields are space-padded */
 }
 
+void azihsm_pkcs11_wipe(void *p, size_t n)
+{
+    if (p == NULL)
+    {
+        return;
+    }
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    for (size_t i = 0; i < n; i++)
+    {
+        v[i] = 0;
+    }
+}
+
 azihsm_pkcs11_session_t *azihsm_pkcs11_session_lookup(CK_SESSION_HANDLE h)
 {
     if (h == CK_INVALID_HANDLE)
@@ -171,6 +184,8 @@ CK_RV C_Finalize(CK_VOID_PTR pReserved)
         if (g_azihsm_pkcs11.sessions[i].in_use)
         {
             azihsm_pkcs11_session_reset_op(&g_azihsm_pkcs11.sessions[i]);
+            /* The store is torn down below anyway; this frees the lists. */
+            azihsm_pkcs11_session_destroy_owned(&g_azihsm_pkcs11.sessions[i]);
             g_azihsm_pkcs11.sessions[i].in_use = false;
         }
     }

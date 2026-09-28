@@ -4,10 +4,12 @@ A standalone **PKCS#11 (Cryptoki) v3.1** module for the AZIHSM. It links the
 native C API (`azihsm.h`, generated from `api/native`) the same way
 `plugins/ossl_prov` does.
 
-## Status — framework + login slice
+## Status — framework + login + first key-backed slice
 
-This is the first implementation slice. **Every PKCS#11 entry point returns
-`CKR_FUNCTION_NOT_SUPPORTED` except the demo path:**
+Unimplemented PKCS#11 entry points return `CKR_FUNCTION_NOT_SUPPORTED` (after
+`C_Initialize`; before it every entry point other than `C_Initialize` and the
+function-list / interface queries reports `CKR_CRYPTOKI_NOT_INITIALIZED`, as
+the spec requires). Implemented so far:
 
 - **Library / slots / sessions** — `C_Initialize`, `C_GetInfo`, slot/token/
   mechanism enumeration (real AZIHSM partitions become slots), sessions and the
@@ -18,9 +20,23 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
   is one-shot per power cycle; a session is the repeatable per-login primitive).
 - **Host objects** — `C_CreateObject` / `C_DestroyObject` / `C_GetAttributeValue`
   / `C_FindObjects*` against an in-memory object store (see the seam below).
-- **`C_Digest` (SHA-1/256/384/512)** — host-side digests, the demonstrable
-  crypto operations. Key-backed mechanisms (AES/RSA/ECDSA, wrap/unwrap, derive)
-  are not implemented yet.
+  A session object is destroyed when the session that created it closes;
+  token objects outlive it. (`C_Logout` does not yet destroy private session
+  objects — it only hides them until the next login.)
+- **`C_Digest*` (SHA-1/256/384/512)** — host-side digests (one-shot and
+  multi-part); every other digest mechanism returns `CKR_MECHANISM_INVALID`.
+- **`C_GenerateKey` (`CKM_AES_KEY_GEN`)** — generates an AES-128/192/256 key on
+  the device and stores its **masked blob** (the AZIHSM key's only durable form)
+  as the object's key body. Generated keys are always sensitive, unextractable
+  and local — a template asking otherwise is rejected (note: OpenSC
+  `pkcs11-tool --keygen` needs its `--sensitive` flag for this reason).
+- **`C_Encrypt` / `C_Decrypt` one-shot (`CKM_AES_CBC`, `CKM_AES_CBC_PAD`)** —
+  each `C_EncryptInit`/`C_DecryptInit` unmasks the stored blob into a fresh
+  session-scoped device key that lives exactly as long as the operation. Input
+  and output may be the same buffer; the binding stages the input whenever the
+  two ranges overlap, because the native API cannot hold a read and a write
+  slice over the same bytes. Multi-part (`C_EncryptUpdate`…), AES-GCM/XTS and the other key-backed
+  mechanisms (RSA/ECDSA, wrap/unwrap, derive) are not implemented yet.
 
 ## Layering
 
@@ -30,7 +46,8 @@ This is the first implementation slice. **Every PKCS#11 entry point returns
 | Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
 | Host crypto | `azihsm_pkcs11_digest.c` | self-contained SHA-1/256/384/512 (PKCS#11 digests must work in public sessions; the SDK digest needs a login) |
 | Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
-| HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
+| Key operations | `azihsm_pkcs11_crypt.c`, `azihsm_pkcs11_template.c` | key-backed entry points: operation state and the masked-blob store/unmask flow (CK_RV only); the keygen template validation and defaults are a device-free unit of their own |
+| HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_key.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
 | Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
 
 The object store is the emulation layer PKCS#11 requires and the device does not
@@ -63,5 +80,21 @@ for stderr tracing.
 ## Testing
 
 `tests/run_validation.sh` builds the module and drives it with OpenSC
-`pkcs11-tool` (interactive smoke). The CI workflow (`.github/workflows/pkcs11.yml`) is **manual only**
-(`workflow_dispatch`) while the module is still mostly unimplemented.
+`pkcs11-tool` (interactive smoke). Pure host logic has device-free unit tests
+that link the translation unit directly: `tests/digest_kat_test.c` (NIST
+vectors), the object-store harnesses, and `tests/aes_template_test.c` (the
+complete CK_RV matrix of the keygen template validation and defaults, plus the
+status maps; built with UBSan, so the misaligned caller template it feeds the
+decoder is a real check). `integration-tests/cpp/` is the functional suite (GoogleTest,
+same shape as the OpenSSL provider's): it `dlopen`s the built module and
+drives the real Cryptoki ABI — keygen, one-shot CBC round trips, the two-call
+sizing discipline, the operation state machine and init precedence — so it
+needs the mock- or hardware-backed build (see the CMakeLists.txt header for
+the build/run recipe; `AZIHSM_PKCS11_MODULE` points it at a module,
+`AZIHSM_PKCS11_TEST_PIN` overrides the simulator PIN). `tests/pkcs11test/` is
+the conformance gate: it builds Google's PKCS#11 conformance program at a
+pinned revision and requires every test on its include-list to pass, which is
+how spec behaviour is kept from regressing as pieces land (the list grows with
+them — see the README there). The CI workflow
+(`.github/workflows/pkcs11.yml`) runs all of these on pushes/PRs to the
+staging branch.

@@ -62,6 +62,20 @@ typedef enum
     P11_OP_VERIFY,
 } azihsm_pkcs11_op_type_t;
 
+/*
+ * How the active operation is being driven. PKCS#11 forbids mixing the
+ * one-shot call (C_Digest, C_Encrypt, ...) with the multi-part calls
+ * (C_DigestUpdate / C_DigestFinal, ...) within one operation: the first data
+ * call fixes the mode, and a call from the other family then fails with
+ * CKR_OPERATION_ACTIVE and terminates the operation.
+ */
+typedef enum
+{
+    P11_OP_MODE_UNSET = 0, /* no data call yet: either family may start */
+    P11_OP_MODE_ONESHOT,   /* a one-shot sizing probe / retry is pending */
+    P11_OP_MODE_MULTIPART, /* an *Update or *Final call has been made */
+} azihsm_pkcs11_op_mode_t;
+
 typedef struct
 {
     bool in_use;
@@ -72,8 +86,21 @@ typedef struct
     CK_NOTIFY notify;
 
     azihsm_pkcs11_op_type_t op;
-    void *op_ctx;      /* digest state while op == P11_OP_DIGEST */
-    void *find_cursor; /* object-store cursor while op == P11_OP_FIND */
+    azihsm_pkcs11_op_mode_t op_mode; /* reset together with op */
+    void *op_ctx;                    /* digest state (P11_OP_DIGEST) or cipher operation state
+                                      * (P11_OP_ENCRYPT / P11_OP_DECRYPT, owned by
+                                      * azihsm_pkcs11_crypt.c) */
+    void *find_cursor;               /* object-store cursor while op == P11_OP_FIND */
+
+    /*
+     * Session objects (CKA_TOKEN = FALSE) this session created. C_CloseSession
+     * destroys them with the session, and the object store knows nothing about
+     * sessions, so the framework keeps the list: grown on demand, drained and
+     * freed when the session closes.
+     */
+    CK_OBJECT_HANDLE *owned;
+    CK_ULONG owned_count;
+    CK_ULONG owned_cap;
 } azihsm_pkcs11_session_t;
 
 /* ------------------------------------------------------------------------- */
@@ -140,12 +167,37 @@ void azihsm_pkcs11_unlock(void);
 /* Resolve a session handle to its table entry; NULL if invalid or closed. */
 azihsm_pkcs11_session_t *azihsm_pkcs11_session_lookup(CK_SESSION_HANDLE h);
 
-/* Abandon the session's active operation, releasing its digest state or find
- * cursor. */
+/* Abandon the session's active operation, releasing its digest state, cipher
+ * state (including the unmasked device key), or find cursor. */
 CK_RV azihsm_pkcs11_session_reset_op(azihsm_pkcs11_session_t *s);
+
+/* Record `h` as a session object created by `s`. CKR_HOST_MEMORY if the list
+ * cannot grow (CKR_ARGUMENTS_BAD for a NULL session) — the caller then destroys
+ * the object rather than leak it. */
+CK_RV azihsm_pkcs11_session_own_object(azihsm_pkcs11_session_t *s, CK_OBJECT_HANDLE h);
+
+/* Forget `h` on whichever session of `slot` owns it (it has been destroyed
+ * explicitly; any session of the token may do that). No-op if none does. */
+void azihsm_pkcs11_session_disown_object(CK_SLOT_ID slot, CK_OBJECT_HANDLE h);
+
+/* Destroy every session object `s` still owns and release the list. Called on
+ * every path that ends the session (close, close-all, finalize). */
+void azihsm_pkcs11_session_destroy_owned(azihsm_pkcs11_session_t *s);
+
+/* Free a cipher operation context (releases its unmasked device key first).
+ * NULL-safe no-op. Defined in azihsm_pkcs11_crypt.c, which owns the type. */
+void azihsm_pkcs11_cipher_op_free(void *op_ctx);
 
 /* Fill a fixed-width, space-padded CK_UTF8CHAR string field. */
 void azihsm_pkcs11_pad_str(CK_UTF8CHAR *dst, size_t dstlen, const char *src);
+
+/*
+ * Zero `n` bytes at `p` through a volatile pointer so the store is not elided
+ * as a dead write when the memory is freed or leaves scope right after — the
+ * same reason azihsm_pkcs11_config.c wipes credentials this way (this module
+ * links no libcrypto, so OPENSSL_cleanse is unavailable). NULL-safe.
+ */
+void azihsm_pkcs11_wipe(void *p, size_t n);
 
 /* The two shared function-list tables (defined in azihsm_pkcs11_dispatch.c). */
 extern CK_FUNCTION_LIST azihsm_pkcs11_function_list;         /* v2.40 view */
