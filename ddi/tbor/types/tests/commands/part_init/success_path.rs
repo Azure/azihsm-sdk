@@ -27,6 +27,9 @@ use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LABEL;
+use azihsm_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LEN;
+use azihsm_ddi_tbor_test_harness::build_part_init_mach_seed_aad;
 use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -730,4 +733,19 @@ fn part_init_modified_inputs_return_fully_valid_artifacts() {
     // Verify the report signature and confirm that its embedded public key
     // matches the PTA public key carried in the CSR.
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
+}
+
+#[test]
+fn mach_seed_aad_layout() {
+    let aad = build_part_init_mach_seed_aad(0x1234);
+    assert_eq!(
+        &aad[..PART_INIT_MACH_SEED_AAD_LABEL.len()],
+        PART_INIT_MACH_SEED_AAD_LABEL
+    );
+    assert_eq!(
+        &aad[PART_INIT_MACH_SEED_AAD_LABEL.len()..PART_INIT_MACH_SEED_AAD_LABEL.len() + 2],
+        &[0x34, 0x12],
+    );
+    assert_eq!(aad.len(), PART_INIT_MACH_SEED_AAD_LEN);
+    assert_eq!(PART_INIT_MACH_SEED_AAD_LEN, 32);
 }
