@@ -37,6 +37,7 @@ use azihsm_ddi_tbor_types::KEY_CLASS_AES;
 use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
+use crate::commands::common::with_generated_ecc_key;
 use crate::commands::common::CO;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
@@ -50,6 +51,9 @@ use crate::harness::SessionOpenInitOptions;
 use crate::harness::TestCtx;
 use crate::harness::ROTATED_CO_PSK;
 use crate::harness::ROTATED_CU_PSK;
+
+/// All supported ECC curves used by command tests.
+pub(crate) const ECC_CURVES: [u8; 3] = [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521];
 
 /// `KeyScope::Unspecified` discriminant.
 #[cfg(feature = "emu")]
@@ -70,11 +74,6 @@ fn coord_sizes(pub_len: usize) -> (usize, usize) {
         136 => (68, 66),
         _ => panic!("unexpected public-key length {pub_len}"),
     }
-}
-
-/// Generate an ECC key on-device for `curve`, returning `(masked_key, wire_pub_key)`.
-fn generate(ctx: &TestCtx, session_id: u16, curve: u8) -> (Vec<u8>, Vec<u8>) {
-    generate_in_scope(ctx, session_id, SCOPE_SESSION, curve)
 }
 
 /// Generate an ECC key on-device for `curve` under `scope`.
@@ -109,8 +108,11 @@ fn rev(src: &[u8], len: usize) -> Vec<u8> {
 
 /// Verify a wire-LE ECDSA signature on the host with `azihsm_crypto`.
 ///
+
 /// * `pub_le` — `x_le ‖ y_le`, each `wire_coord_len` bytes.
+
 /// * `sig_le` — `r_le ‖ s_le`, each `wire_coord_len` bytes.
+
 /// * `digest_le` — the wire-LE digest that was handed to `EccSign`.
 fn verify_wire_ecdsa(pub_le: &[u8], sig_le: &[u8], digest_le: &[u8]) -> bool {
     let (wire_coord, raw_coord) = coord_sizes(pub_le.len());
@@ -141,293 +143,286 @@ fn verify_wire_ecdsa(pub_le: &[u8], sig_le: &[u8], digest_le: &[u8]) -> bool {
 /// Signs and verifies a curve-appropriate digest on every supported ECC curve.
 #[test]
 fn ecc_sign_roundtrip_all_curves() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
     for (curve, digest_len) in [
         (ECC_CURVE_P256, 32usize),
         (ECC_CURVE_P384, 48usize),
         (ECC_CURVE_P521, 64usize),
     ] {
-        let (masked_key, pub_key) = generate(&ctx, session.session_id, curve);
-
-        let digest: Vec<u8> = (0..digest_len)
-            .map(|i| (i as u8).wrapping_mul(7).wrapping_add(0x11))
-            .collect();
-
-        let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-        assert_eq!(
-            signature.len(),
-            pub_key.len(),
-            "wire signature length equals wire public-key length for curve {curve}",
-        );
-        assert!(
-            verify_wire_ecdsa(&pub_key, &signature, &digest),
-            "ECDSA signature must verify against the generated public key (curve {curve})",
-        );
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest: Vec<u8> = (0..digest_len)
+                .map(|i| (i as u8).wrapping_mul(7).wrapping_add(0x11))
+                .collect();
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            assert_eq!(
+                signature.len(),
+                pub_key.len(),
+                "wire signature length equals wire public-key length for curve {curve}",
+            );
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "ECDSA signature must verify against the generated public key (curve {curve})",
+            );
+        });
     }
 }
 
 /// Verifies every supported ECC curve and SHA-2 digest-length pairing.
 #[test]
 fn ecc_sign_all_supported_curve_digest_pairs() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
     for (curve, digest_lens) in [
         (ECC_CURVE_P256, &[32usize][..]),
         (ECC_CURVE_P384, &[32usize, 48][..]),
         (ECC_CURVE_P521, &[32usize, 48, 64][..]),
     ] {
-        let (masked_key, pub_key) = generate(&ctx, session.session_id, curve);
-
-        for &digest_len in digest_lens {
-            let digest: Vec<u8> = (0..digest_len)
-                .map(|i| (i as u8).wrapping_mul(13).wrapping_add(0x29))
-                .collect();
-            let signature = sign(&ctx, session.session_id, masked_key.clone(), &digest);
-            assert!(
-                verify_wire_ecdsa(&pub_key, &signature, &digest),
-                "signature must verify for curve {curve} with a {digest_len}-byte digest",
-            );
-        }
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            for &digest_len in digest_lens {
+                let digest: Vec<u8> = (0..digest_len)
+                    .map(|i| (i as u8).wrapping_mul(13).wrapping_add(0x29))
+                    .collect();
+                let signature = sign(ctx, session_id, masked_key.clone(), &digest);
+                assert!(
+                    verify_wire_ecdsa(&pub_key, &signature, &digest),
+                    "signature must verify for curve {curve} with a {digest_len}-byte digest",
+                );
+            }
+        });
     }
 }
 
 /// Confirms a signature authenticates only the digest that was actually signed.
 #[test]
 fn ecc_sign_signature_rejects_different_digest() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    let digest = vec![0x31; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest = vec![0x31; 32];
+            let signature = sign(ctx, session_id, masked_key, &digest);
 
-    let different_digest = vec![0x32; 32];
-    assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
-    assert!(
-        !verify_wire_ecdsa(&pub_key, &signature, &different_digest),
-        "signature must not verify against a different digest",
-    );
+            let different_digest = vec![0x32; 32];
+            assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+            assert!(
+                !verify_wire_ecdsa(&pub_key, &signature, &different_digest),
+                "signature must not verify against a different digest",
+            );
+        });
+    }
 }
 
 /// Confirms distinct digest request values produce signatures bound to each digest.
 #[test]
 fn ecc_sign_distinct_digests_are_independently_verified() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest_a = vec![0x11; 32];
+            let digest_b = vec![0x22; 32];
 
-    let digest_a = vec![0x11; 32];
-    let digest_b = vec![0x22; 32];
+            let signature_a = sign(ctx, session_id, masked_key.clone(), &digest_a);
 
-    let signature_a = sign(&ctx, session.session_id, masked_key.clone(), &digest_a);
+            let signature_b = sign(ctx, session_id, masked_key, &digest_b);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature_a, &digest_a),
+                "first signature must verify against its original digest",
+            );
 
-    let signature_b = sign(&ctx, session.session_id, masked_key, &digest_b);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature_b, &digest_b),
+                "second signature must verify against its original digest",
+            );
 
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature_a, &digest_a),
-        "first signature must verify against its original digest",
-    );
+            assert!(
+                !verify_wire_ecdsa(&pub_key, &signature_a, &digest_b),
+                "first signature must not verify against the second digest",
+            );
 
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature_b, &digest_b),
-        "second signature must verify against its original digest",
-    );
-
-    assert!(
-        !verify_wire_ecdsa(&pub_key, &signature_a, &digest_b),
-        "first signature must not verify against the second digest",
-    );
-
-    assert!(
-        !verify_wire_ecdsa(&pub_key, &signature_b, &digest_a),
-        "second signature must not verify against the first digest",
-    );
+            assert!(
+                !verify_wire_ecdsa(&pub_key, &signature_b, &digest_a),
+                "second signature must not verify against the first digest",
+            );
+        });
+    }
 }
 
 /// Signs and verifies a digest containing zero-valued bytes.
 #[test]
 fn ecc_sign_digest_with_zero_bytes_roundtrip() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    let mut digest = vec![0u8; 32];
-    digest[1] = 0xA5;
-    digest[15] = 0x5A;
-    digest[30] = 0xC3;
-
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature, &digest),
-        "digest containing zero bytes must survive the TBOR request unchanged",
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let mut digest = vec![0u8; 32];
+            digest[1] = 0xA5;
+            digest[15] = 0x5A;
+            digest[30] = 0xC3;
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "digest containing zero bytes must survive the TBOR request unchanged",
+            );
+        });
+    }
 }
 
 /// Verifies P-521 signatures zero-fill the two wire-padding bytes per component.
 #[test]
 fn ecc_sign_p521_signature_padding_is_zero() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P521);
-    let digest = vec![0x43; 64];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-    assert_eq!(signature.len(), 136);
-    assert_eq!(&signature[66..68], &[0, 0], "r padding must be zero");
-    assert_eq!(&signature[134..136], &[0, 0], "s padding must be zero");
-    assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+    with_generated_ecc_key(ECC_CURVE_P521, |ctx, session_id, masked_key, pub_key| {
+        let digest = vec![0x43; 64];
+        let signature = sign(ctx, session_id, masked_key, &digest);
+        assert_eq!(signature.len(), 136);
+        assert_eq!(&signature[66..68], &[0, 0], "r padding must be zero");
+        assert_eq!(&signature[134..136], &[0, 0], "s padding must be zero");
+        assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+    });
 }
 
 /// Signs and verifies with a key masked under the partition-local scope.
 #[cfg(feature = "emu")]
 #[test]
 fn ecc_sign_local_scoped_key_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-    let (masked_key, pub_key) =
-        generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, ECC_CURVE_P256);
-    let digest = vec![0x5A; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-    assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+    for curve in ECC_CURVES {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+        let (masked_key, pub_key) = generate_in_scope(&ctx, session.session_id, SCOPE_LOCAL, curve);
+        let digest = vec![0x5A; 32];
+        let signature = sign(&ctx, session.session_id, masked_key, &digest);
+        assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+    }
 }
 
 /// Confirms a Crypto-User (`PlainText`) session is authorized to sign.
 #[test]
 fn ecc_sign_allowed_on_crypto_user_session() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
-
-    let (masked_key, pub_key) =
-        generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, ECC_CURVE_P256);
-    let digest = vec![0x6B; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-    assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+    for curve in ECC_CURVES {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+        let (masked_key, pub_key) =
+            generate_in_scope(&ctx, session.session_id, SCOPE_SESSION, curve);
+        let digest = vec![0x6B; 32];
+        let signature = sign(&ctx, session.session_id, masked_key, &digest);
+        assert!(verify_wire_ecdsa(&pub_key, &signature, &digest));
+    }
 }
 
 /// Signs and verifies with an ECC private key imported through `UnwrapKey`.
 #[cfg(feature = "emu")]
 #[test]
 fn ecc_sign_with_unwrapped_key_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-
-    let host_key = EccPrivateKey::from_curve(EccCurve::P256).expect("generate host ECC key");
-    let der = host_key.to_vec().expect("PKCS#8 DER export");
-    let imported = unwrap(&ctx, session.session_id, KEY_CLASS_ECC, &der);
-    assert!(
-        !imported.pub_key.is_empty(),
-        "an imported ECC key returns a re-derived public key",
-    );
-
-    let digest: Vec<u8> = (0..32)
-        .map(|i| (i as u8).wrapping_mul(5).wrapping_add(3))
-        .collect();
-    let signature = sign(&ctx, session.session_id, imported.masked_key, &digest);
-
-    assert!(
-        verify_wire_ecdsa(&imported.pub_key, &signature, &digest),
-        "signature from the unwrapped ECC key must verify",
-    );
+    for (curve, host_curve) in [
+        (ECC_CURVE_P256, EccCurve::P256),
+        (ECC_CURVE_P384, EccCurve::P384),
+        (ECC_CURVE_P521, EccCurve::P521),
+    ] {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
+        let host_key = EccPrivateKey::from_curve(host_curve).expect("generate host ECC key");
+        let der = host_key.to_vec().expect("PKCS#8 DER export");
+        let imported = unwrap(&ctx, session.session_id, KEY_CLASS_ECC, &der);
+        assert!(
+            !imported.pub_key.is_empty(),
+            "an imported ECC key returns a re-derived public key",
+        );
+        let digest: Vec<u8> = (0..32)
+            .map(|i| (i as u8).wrapping_mul(5).wrapping_add(3))
+            .collect();
+        let signature = sign(&ctx, session.session_id, imported.masked_key, &digest);
+        assert!(
+            verify_wire_ecdsa(&imported.pub_key, &signature, &digest),
+            "signature from the unwrapped ECC key must verify for curve {curve}",
+        );
+    }
 }
 
 /// Rejects an empty digest because it does not identify a supported SHA-2 algorithm.
 #[test]
 fn ecc_sign_empty_digest_rejected() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    ctx.expect_fw_reject(
-        &TborEccSignReq {
-            session_id: session.session_id,
-            masked_key,
-            digest: Vec::new(),
-        },
-        TborStatus::InvalidArg,
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, _pub_key| {
+            ctx.expect_fw_reject(
+                &TborEccSignReq {
+                    session_id,
+                    masked_key,
+                    digest: Vec::new(),
+                },
+                TborStatus::InvalidArg,
+            );
+        });
+    }
 }
 
 /// Rejects digest lengths that do not identify a supported SHA-2 algorithm.
 #[test]
 fn ecc_sign_non_sha2_digest_lengths_rejected() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    // Use P-521 so all valid SHA-2 digest lengths fit the curve field.
-    // Any rejection here is therefore caused by the unsupported digest
-    // length rather than by the selected curve.
-    for digest_len in [1usize, 31, 33, 47, 49, 63] {
-        let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P521);
-
-        ctx.expect_fw_reject(
-            &TborEccSignReq {
-                session_id: session.session_id,
-                masked_key,
-                digest: vec![0xAB; digest_len],
-            },
-            TborStatus::InvalidArg,
-        );
+    for curve in ECC_CURVES {
+        for digest_len in [1usize, 31, 33, 47, 49, 63] {
+            with_generated_ecc_key(curve, |ctx, session_id, masked_key, _pub_key| {
+                ctx.expect_fw_reject(
+                    &TborEccSignReq {
+                        session_id,
+                        masked_key,
+                        digest: vec![0xAB; digest_len],
+                    },
+                    TborStatus::InvalidArg,
+                );
+            });
+        }
     }
 }
 
 /// Rejects the unsupported SHA-1 digest length.
 #[test]
 fn ecc_sign_unsupported_digest_len_rejected() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    ctx.expect_fw_reject(
-        &TborEccSignReq {
-            session_id: session.session_id,
-            masked_key,
-            digest: vec![0xAB; 20],
-        },
-        TborStatus::InvalidArg,
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, _pub_key| {
+            ctx.expect_fw_reject(
+                &TborEccSignReq {
+                    session_id,
+                    masked_key,
+                    digest: vec![0xAB; 20],
+                },
+                TborStatus::InvalidArg,
+            );
+        });
+    }
 }
 
 /// Rejects a valid SHA-2 digest that exceeds the selected curve's field width.
 #[test]
 fn ecc_sign_digest_longer_than_curve_field_rejected() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    ctx.expect_fw_reject(
-        &TborEccSignReq {
-            session_id: session.session_id,
-            masked_key,
-            digest: vec![0xAB; 64],
-        },
-        TborStatus::InvalidArg,
-    );
+    for (curve, digest_len) in [
+        (ECC_CURVE_P256, 48usize),
+        (ECC_CURVE_P256, 64usize),
+        (ECC_CURVE_P384, 64usize),
+    ] {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, _pub_key| {
+            ctx.expect_fw_reject(
+                &TborEccSignReq {
+                    session_id,
+                    masked_key,
+                    digest: vec![0xAB; digest_len],
+                },
+                TborStatus::InvalidArg,
+            );
+        });
+    }
 }
 
 /// Rejects a masked private key whose authenticated ciphertext was modified.
 #[test]
 fn ecc_sign_tampered_masked_key_rejected() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (mut masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    let last = masked_key
-        .len()
-        .checked_sub(1)
-        .expect("masked ECC key must not be empty");
-    masked_key[last] ^= 0x01;
-    ctx.expect_fw_reject(
-        &TborEccSignReq {
-            session_id: session.session_id,
-            masked_key,
-            digest: vec![0x7C; 32],
-        },
-        TborStatus::AesGcmDecryptTagDoesNotMatch,
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, mut masked_key, _pub_key| {
+            let last = masked_key
+                .len()
+                .checked_sub(1)
+                .expect("masked ECC key must not be empty");
+            masked_key[last] ^= 0x01;
+            ctx.expect_fw_reject(
+                &TborEccSignReq {
+                    session_id,
+                    masked_key,
+                    digest: vec![0x7C; 32],
+                },
+                TborStatus::AesGcmDecryptTagDoesNotMatch,
+            );
+        });
+    }
 }
 
 /// Rejects a valid masked key whose key class is AES rather than ECC private.
@@ -448,188 +443,192 @@ fn ecc_sign_wrong_key_class_rejected_emu() {
     );
 }
 
-/// Rejects signing when the request is bound to an unknown session identifier.
 #[test]
-fn ecc_sign_unknown_session_rejected() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, _) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-    assert_ne!(session.session_id, u16::MAX, "test requires an unused id");
+fn ecc_sign_mismatched_session_id_rejected() {
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, _pub_key| {
+            let mismatched_session_id = u16::MAX;
 
-    ctx.expect_fw_reject(
-        &TborEccSignReq {
-            session_id: u16::MAX,
-            masked_key,
-            digest: vec![0x8D; 32],
-        },
-        TborStatus::FileHandleSessionIdDoesNotMatch,
-    );
+            assert_ne!(
+                session_id, mismatched_session_id,
+                "test requires a mismatched session id",
+            );
+
+            ctx.expect_fw_reject(
+                &TborEccSignReq {
+                    session_id: mismatched_session_id,
+                    masked_key,
+                    digest: vec![0x8D; 32],
+                },
+                TborStatus::FileHandleSessionIdDoesNotMatch,
+            );
+        });
+    }
 }
 
 /// Rejects `KeyScope::Unspecified` for a caller-generated ECC key.
 #[cfg(feature = "emu")]
 #[test]
 fn ecc_generate_key_unspecified_scope_rejected_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    for curve in ECC_CURVES {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
 
-    ctx.expect_fw_reject(
-        &TborEccGenerateKeyReq {
-            session_id: session.session_id,
-            scope: SCOPE_UNSPECIFIED,
-            curve: ECC_CURVE_P256,
-            key_usage: KEY_USAGE_SIGN,
-            key_label: Vec::new(),
-        },
-        TborStatus::UnsupportedKeyScope,
-    );
+        ctx.expect_fw_reject(
+            &TborEccGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_UNSPECIFIED,
+                curve,
+                key_usage: KEY_USAGE_SIGN,
+                key_label: Vec::new(),
+            },
+            TborStatus::UnsupportedKeyScope,
+        );
+    }
 }
 
 /// Rejects the firmware-internal scope for a caller-generated ECC key.
 #[cfg(feature = "emu")]
 #[test]
 fn ecc_generate_key_internal_scope_rejected_emu() {
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
+    for curve in ECC_CURVES {
+        let ctx = TestCtx::new();
+        let session = finalized_co_session(&ctx);
 
-    ctx.expect_fw_reject(
-        &TborEccGenerateKeyReq {
-            session_id: session.session_id,
-            scope: SCOPE_INTERNAL,
-            curve: ECC_CURVE_P256,
-            key_usage: KEY_USAGE_SIGN,
-            key_label: Vec::new(),
-        },
-        TborStatus::UnsupportedKeyScope,
-    );
+        ctx.expect_fw_reject(
+            &TborEccGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_INTERNAL,
+                curve,
+                key_usage: KEY_USAGE_SIGN,
+                key_label: Vec::new(),
+            },
+            TborStatus::UnsupportedKeyScope,
+        );
+    }
 }
 
 /// Confirms a signature does not verify against a different public key.
 #[test]
 fn ecc_sign_signature_rejects_different_public_key() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    let (_other_masked_key, other_pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    let digest = vec![0x42; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature, &digest),
-        "signature must verify against the originating public key",
-    );
-
-    assert!(
-        !verify_wire_ecdsa(&other_pub_key, &signature, &digest),
-        "signature must not verify against a different public key",
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let other = ctx
+                .tbor(&TborEccGenerateKeyReq {
+                    session_id,
+                    scope: SCOPE_SESSION,
+                    curve,
+                    key_usage: KEY_USAGE_SIGN,
+                    key_label: Vec::new(),
+                })
+                .expect("EccGenerateKey");
+            let digest = vec![0x42; 32];
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "signature must verify against the originating public key",
+            );
+            assert!(
+                !verify_wire_ecdsa(&other.pub_key, &signature, &digest),
+                "signature must not verify against a different public key",
+            );
+        });
+    }
 }
 
 /// Rejects a session-scoped ECC private key from a replacement session.
 #[test]
 fn ecc_sign_session_scoped_key_rejected_in_different_session() {
-    let ctx = TestCtx::new();
-
-    let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-
-    let (masked_key, _) = generate(&ctx, session_a.session_id, ECC_CURVE_P256);
-
-    ctx.session_close(session_a.session_id)
-        .expect("close originating CO session");
-
-    let opts =
-        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
-
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("open replacement CO session");
-
-    let session_b = ctx
-        .session_open_finish(pending)
-        .expect("finish replacement CO session");
-
-    ctx.expect_fw_reject(
-        &TborEccSignReq {
-            session_id: session_b.session_id,
-            masked_key,
-            digest: vec![0x91; 32],
-        },
-        TborStatus::AesGcmDecryptTagDoesNotMatch,
-    );
+    for curve in ECC_CURVES {
+        let ctx = TestCtx::new();
+        let session_a = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let (masked_key, _) = generate_in_scope(&ctx, session_a.session_id, SCOPE_SESSION, curve);
+        ctx.session_close(session_a.session_id)
+            .expect("close originating CO session");
+        let opts =
+            SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+        let pending = ctx
+            .session_open_init_with_options(opts)
+            .expect("open replacement CO session");
+        let session_b = ctx
+            .session_open_finish(pending)
+            .expect("finish replacement CO session");
+        ctx.expect_fw_reject(
+            &TborEccSignReq {
+                session_id: session_b.session_id,
+                masked_key,
+                digest: vec![0x91; 32],
+            },
+            TborStatus::AesGcmDecryptTagDoesNotMatch,
+        );
+    }
 }
 
 /// Confirms changing one bit of the digest invalidates the signature.
 #[test]
 fn ecc_sign_signature_rejects_single_bit_digest_change() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest = vec![0xA5; 32];
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            let mut modified_digest = digest.clone();
+            modified_digest[17] ^= 0x01;
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "signature must verify against the original digest",
+            );
 
-    let digest = vec![0xA5; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-    let mut modified_digest = digest.clone();
-    modified_digest[17] ^= 0x01;
-
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature, &digest),
-        "signature must verify against the original digest",
-    );
-
-    assert!(
-        !verify_wire_ecdsa(&pub_key, &signature, &modified_digest),
-        "changing one digest bit must invalidate the signature",
-    );
+            assert!(
+                !verify_wire_ecdsa(&pub_key, &signature, &modified_digest),
+                "changing one digest bit must invalidate the signature",
+            );
+        });
+    }
 }
+
 /// Signs and verifies an all-zero SHA-256 digest.
 #[test]
 fn ecc_sign_all_zero_digest_roundtrip() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    let digest = vec![0u8; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature, &digest),
-        "an all-zero 32-byte digest must be signed and verified correctly",
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest = vec![0u8; 32];
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "an all-zero 32-byte digest must be signed and verified correctly",
+            );
+        });
+    }
 }
+
 /// Signs and verifies a SHA-256 digest containing all 0xFF bytes.
 #[test]
 fn ecc_sign_all_ones_digest_roundtrip() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    let digest = vec![0xFF; 32];
-    let signature = sign(&ctx, session.session_id, masked_key, &digest);
-
-    assert!(
-        verify_wire_ecdsa(&pub_key, &signature, &digest),
-        "an all-0xFF digest must be signed and verified correctly",
-    );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest = vec![0xFF; 32];
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "an all-0xFF digest must be signed and verified correctly",
+            );
+        });
+    }
 }
 
 /// Confirms the same masked ECC key can sign multiple digests.
 #[test]
 fn ecc_sign_masked_key_can_be_reused() {
-    let ctx = TestCtx::new();
-    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let (masked_key, pub_key) = generate(&ctx, session.session_id, ECC_CURVE_P256);
-
-    for value in [0x11u8, 0x22, 0x33] {
-        let digest = vec![value; 32];
-
-        let signature = sign(&ctx, session.session_id, masked_key.clone(), &digest);
-
-        assert!(
-            verify_wire_ecdsa(&pub_key, &signature, &digest),
-            "reused masked key must sign digest value {value:#04x}",
-        );
+    for curve in ECC_CURVES {
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            for value in [0x11u8, 0x22, 0x33] {
+                let digest = vec![value; 32];
+                let signature = sign(ctx, session_id, masked_key.clone(), &digest);
+                assert!(
+                    verify_wire_ecdsa(&pub_key, &signature, &digest),
+                    "reused masked key must sign digest value {value:#04x}",
+                );
+            }
+        });
     }
 }
