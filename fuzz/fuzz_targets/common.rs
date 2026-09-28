@@ -5,12 +5,11 @@
 
 #![allow(dead_code)]
 
+use azihsm_crypto::AesKey;
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
-use azihsm_crypto::AesKey;
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
 use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
@@ -19,6 +18,7 @@ use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
 use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_codec::TocEntry;
 use azihsm_ddi_tbor_codec::header::Header;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 

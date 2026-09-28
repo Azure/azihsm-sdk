@@ -6,9 +6,9 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_crypto::*;
 use azihsm_ddi_interface::*;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
 use libfuzzer_sys::arbitrary;
@@ -131,9 +131,7 @@ fuzz_target!(|input: FuzzInput| {
                 },
             };
 
-            let finish_result = ctx.tbor::<TborSessionOpenFinishReq>(
-                &open_finish_req,
-            );
+            let finish_result = ctx.tbor::<TborSessionOpenFinishReq>(&open_finish_req);
 
             // assert open finish success only when we actually built a valid request
             if input.valid_open_finish {
@@ -162,8 +160,7 @@ fuzz_target!(|input: FuzzInput| {
             let close_req = TborSessionCloseReq {
                 session_id: resp.session_id,
             };
-            let close_result: Result<TborSessionCloseResp, _> =
-                ctx.tbor(&close_req);
+            let close_result: Result<TborSessionCloseResp, _> = ctx.tbor(&close_req);
 
             // if session open finish succeeded, the session should be closable
             if finish_result.is_ok() {

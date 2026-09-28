@@ -7,13 +7,13 @@
 mod common;
 
 use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_types::build_psk_change_aad;
-use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborPskChangeReq;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
+use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::TborPskChangeReq;
+use azihsm_ddi_tbor_types::build_psk_change_aad;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -139,10 +139,11 @@ fuzz_target!(|input: FuzzInput| {
             common::seal_aead_envelope(&handshake.param_key, &input.iv, &aad, &payload);
 
         if let Some(t) = &input.tamper
-            && !envelope.is_empty() {
-                let idx = (t.offset as usize) % envelope.len();
-                envelope[idx] ^= t.mask | 1;
-            }
+            && !envelope.is_empty()
+        {
+            let idx = (t.offset as usize) % envelope.len();
+            envelope[idx] ^= t.mask | 1;
+        }
 
         let psk_change_req = TborPskChangeReq {
             session_id: session.session_id(),
