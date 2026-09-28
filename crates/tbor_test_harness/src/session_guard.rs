@@ -8,7 +8,7 @@
 //! and closes the session when dropped — including when the test is
 //! unwinding from a failed assertion. The emulator's session table
 //! is process-global and the per-test serialisation provided by
-//! [`open_dev`](crate::open_dev)'s `TEST_LOCK` only orders
+//! [`open_dev`](crate::fixture::open_dev)'s `TEST_LOCK` only orders
 //! execution; it does not clean up leaked slots. The guard
 //! therefore makes panic-safe cleanup the default for every
 //! happy-path session test.

@@ -515,3 +515,65 @@ pub trait HsmEcc {
         secret: &mut DmaBuf,
     ) -> HsmResult<()>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::HsmEccCurve;
+
+    /// Every supported curve. Kept in sync with [`index_in_all`] by
+    /// [`all_lists_every_curve`].
+    const ALL: [HsmEccCurve; 3] = [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521];
+
+    /// Position of `curve` in [`ALL`].
+    ///
+    /// This match has no wildcard arm, so adding a variant to
+    /// [`HsmEccCurve`] stops this module compiling until the variant is
+    /// given an arm here -- and [`all_lists_every_curve`] then fails
+    /// unless it is also appended to [`ALL`] at that index. Without this,
+    /// `ALL` was just a hand-written list that a new variant could bypass
+    /// silently, skipping every check below.
+    fn index_in_all(curve: HsmEccCurve) -> usize {
+        match curve {
+            HsmEccCurve::P256 => 0,
+            HsmEccCurve::P384 => 1,
+            HsmEccCurve::P521 => 2,
+        }
+    }
+
+    /// `ALL` must list every curve, in `index_in_all` order.
+    #[test]
+    fn all_lists_every_curve() {
+        for (i, curve) in ALL.iter().enumerate() {
+            assert_eq!(
+                index_in_all(*curve),
+                i,
+                "ALL is out of sync with index_in_all: {curve:?} is listed at \
+                 index {i} but indexed as {}",
+                index_in_all(*curve)
+            );
+        }
+    }
+
+    /// `wire_priv_key_len` must stay pairwise distinct across the
+    /// supported curves.
+    ///
+    /// Callers are allowed to recover the curve from a raw scalar's
+    /// length -- `HsmEcc::ecc_priv_pub_key` does exactly that, and
+    /// `ecc_pub_from_priv` delegates to it. That inference is only sound
+    /// while no two curves share a wire length. If a new variant ever
+    /// collides, this fails instead of the firmware quietly computing on
+    /// the wrong curve.
+    #[test]
+    fn wire_priv_key_len_is_unambiguous() {
+        for (i, a) in ALL.iter().enumerate() {
+            for b in ALL.iter().skip(i + 1) {
+                assert_ne!(
+                    a.wire_priv_key_len(),
+                    b.wire_priv_key_len(),
+                    "{a:?} and {b:?} share a wire scalar length, so recovering \
+                     the curve from a scalar length is no longer sound"
+                );
+            }
+        }
+    }
+}

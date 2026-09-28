@@ -41,8 +41,8 @@ pub struct TborAesEncryptDecryptReq {
     pub session_id: u16,
 
     /// The masked AES key (from `AesGenerateKey` / `UnwrapKey`), an
-    /// AEAD-GCM-256 envelope of 148..=164 B.
-    #[tbor(min_len = 148, max_len = 164)]
+    /// AEAD-GCM-256 envelope of 244..=260 B.
+    #[tbor(min_len = 244, max_len = 260)]
     pub masked_key: Vec<u8>,
 
     /// The direction as the 1-byte `AesOp` discriminant (see

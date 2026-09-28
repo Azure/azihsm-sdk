@@ -54,12 +54,12 @@ variable-length data section.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
-| 8  | `pok_local_backup` | `buffer` (fixed 180 B) | Local partition-owner-key backup to restore (a masked BKS3 wrapped under the device-local key) = `MASKED_SD_LEN` (180 B). |
-| 12 | `sd_mk_backup` | `buffer` (fixed 164 B) | Security-domain masking-key backup envelope = `LOCAL_MK_BACKUP_LEN` (164 B). |
+| 8  | `pok_local_backup` | `buffer` (fixed 276 B) | Local partition-owner-key backup to restore (a masked BKS3 wrapped under the device-local key) = `MASKED_SD_LEN` (276 B). |
+| 12 | `sd_mk_backup` | `buffer` (fixed 260 B) | Security-domain masking-key backup envelope = `LOCAL_MK_BACKUP_LEN` (260 B). |
 
 ### Data section
 
-Carries the 180-byte `pok_local_backup` blob and the 164-byte
+Carries the 276-byte `pok_local_backup` blob and the 260-byte
 `sd_mk_backup` envelope.
 
 ## Response
@@ -71,19 +71,19 @@ section.
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8  | `pok_local_backup` | `buffer` (fixed 180 B) | Refreshed local partition-owner-key backup, sized as a masked BKS3 = `MASKED_SD_LEN` (180 B). |
-| 12 | `sd_mk_backup` | `buffer` (fixed 164 B) | Refreshed security-domain masking-key backup envelope = `LOCAL_MK_BACKUP_LEN` (164 B). |
+| 8  | `pok_local_backup` | `buffer` (fixed 276 B) | Refreshed local partition-owner-key backup, sized as a masked BKS3 = `MASKED_SD_LEN` (276 B). |
+| 12 | `sd_mk_backup` | `buffer` (fixed 260 B) | Refreshed security-domain masking-key backup envelope = `LOCAL_MK_BACKUP_LEN` (260 B). |
 
 ### Data section
 
-Carries the 180-byte `pok_local_backup` blob and the 164-byte
+Carries the 276-byte `pok_local_backup` blob and the 260-byte
 `sd_mk_backup` envelope.
 
 ## Errors
 
 | Error | Cause |
 |---|---|
-| `TborInvalidFixedLength` | `pok_local_backup` is not exactly 180 B, or `sd_mk_backup` is not exactly 164 B (rejected at decode before the handler runs) |
+| `TborInvalidFixedLength` | `pok_local_backup` is not exactly 276 B, or `sd_mk_backup` is not exactly 260 B (rejected at decode before the handler runs) |
 | `InvalidArg` | Partition is not `Initialized` (not finalized) |
 | `SdAlreadyInitialized` | A security domain is already initialized on this partition incarnation (one-shot gate) |
 | `SdBackupSvnRollback` | A backup's bound SVN is newer than the current firmware SVN (anti-rollback) |

@@ -15,6 +15,7 @@
 //!   carries no public key.  (Using the recovered key via `Hmac` to
 //!   compute a MAC is exercised by the HMAC command's own emu tests,
 //!   which build on this command.)
+//! * ECC P-256 — PKCS#8 decode and public-key re-derivation.
 //! * RSA-4096 (CRT and non-CRT) — the largest supported key and the
 //!   tightest on the per-IO DMA budget; exercises the transient-vault
 //!   unwrap path that keeps it within 8 KB.
@@ -96,7 +97,7 @@ fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
 
 /// Canonical valid `KeyUsage` for a wrapped-key `class`, used by the test
 /// `unwrap` helper so callers need not spell out permissions.
-fn usage_for_class(class: u8) -> u8 {
+fn usage_for_class(class: u8) -> u64 {
     match class {
         KEY_CLASS_AES => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
         KEY_CLASS_RSA | KEY_CLASS_RSA_CRT => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
@@ -120,7 +121,7 @@ pub(crate) fn unwrap_with_usage(
     ctx: &TestCtx,
     session_id: u16,
     class: u8,
-    usage: u8,
+    usage: u64,
     key: &[u8],
 ) -> TborUnwrapKeyResp {
     let hsm_pub = ctx
@@ -135,15 +136,15 @@ pub(crate) fn unwrap_with_usage(
         key_usage: usage,
         oaep_hash_algo: OAEP_SHA256,
         wrapped_blob: wrapped,
+        key_label: b"imported-key".to_vec(),
     })
     .expect("UnwrapKey")
 }
 
-/// Import a host-generated RSA-4096 key via `UnwrapKey` and assert the
-/// recovered blob is well-formed.  RSA-4096 is the largest supported key
-/// and the tightest on the per-IO DMA budget — this exercises the
-/// transient-vault unwrap path that keeps it within 8 KB (both the CRT and
-/// non-CRT vault forms).
+/// Import a host-generated RSA-4096 key via `UnwrapKey` and check its
+/// masked blob and public-key size. RSA-4096 is the largest supported key
+/// and the tightest on the per-IO DMA budget, exercising the transient-vault
+/// unwrap path for both CRT and non-CRT vault forms.
 fn rsa_4k_unwrap_roundtrip(crt: bool) {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
@@ -263,6 +264,7 @@ fn unwrap_key_rejects_invalid_usage_for_class_emu() {
         key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
         oaep_hash_algo: OAEP_SHA256,
         wrapped_blob: wrapped,
+        key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
 }

@@ -22,7 +22,7 @@ pub struct DdiGetApiRevResp {
 }
 ```
 
-Currently returns `min = max = { major: 1, minor: 0 }`.
+Currently returns `min = { major: 1, minor: 0 }`, `max = { major: 1, minor: 1 }`.
 
 ## Encoding Pattern
 

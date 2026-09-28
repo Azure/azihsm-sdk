@@ -470,6 +470,23 @@ fn run_verify_empty_hash_test(session: &HsmSession, curve: HsmEccCurve, algo: Hs
 // test cases sections
 // ============================================================
 
+/// ECC generate → sign → verify through a V2 (TBOR) session for every
+/// supported curve, exercising the public API's TBOR dispatch and the
+/// wire-format little-endian digest/signature conversions.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_ecc_sign_verify_tbor_all_curves() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+
+    run_sign_verify_test(&session, HsmEccCurve::P256, HsmHashAlgo::Sha256);
+    run_sign_verify_test(&session, HsmEccCurve::P384, HsmHashAlgo::Sha384);
+    run_sign_verify_test(&session, HsmEccCurve::P521, HsmHashAlgo::Sha512);
+}
+
 /// Tests large input handling for P256
 #[session_test]
 fn test_ecc_large_input_p256(session: HsmSession) {

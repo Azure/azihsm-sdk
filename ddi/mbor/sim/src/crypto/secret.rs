@@ -90,6 +90,13 @@ pub struct SecretKey {
     size: SecretSize,
 }
 
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key.zeroize();
+    }
+}
+
 impl KeySerialization<SecretKey> for SecretKey {
     fn serialize(&self) -> Result<Vec<u8>, ManticoreError> {
         Ok(self.key.clone())

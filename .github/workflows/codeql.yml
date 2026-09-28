@@ -12,7 +12,7 @@ on:
     - cron: '0 8 * * *'  # Daily at midnight PST (8 AM UTC)
 env:
   CARGO_TERM_COLOR: always
-  CACHE_KEY_ID: 3d29b17e91a184bef820d26f09f8cf519d8daced
+  CACHE_KEY_ID: dd2c2bcffcf0cd62b538fdeaa31c7b89c4d42815
   # Use the runner's system OpenSSL (ubuntu-24.04 ships OpenSSL 3.0.x), the
   # same pattern as provider-matrix.yml. openssl-sys / the provider build
   # resolve headers and libs from these system paths.
@@ -57,7 +57,7 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ env.CACHE_KEY_ID }}
+        key: ${{ runner.environment }}-${{ runner.os }}-${{ runner.arch }}-cargo-${{ env.CACHE_KEY_ID }}
 
     - name: Setup
       if: steps.cargo-cache.outputs.cache-hit != 'true'

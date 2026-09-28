@@ -191,6 +191,7 @@ fn test_unwrap_ecc_key_for_curve(
     crypto_curve: crypto::EccCurve,
     hsm_curve: HsmEccCurve,
     hash_algo: HsmHashAlgo,
+    is_session: bool,
 ) {
     use crypto::*;
 
@@ -209,6 +210,7 @@ fn test_unwrap_ecc_key_for_curve(
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(hsm_curve)
         .can_sign(true)
+        .is_session(is_session)
         .build()
         .expect("Failed to build private key props");
     let pub_key_props = HsmKeyPropsBuilder::default()
@@ -216,6 +218,7 @@ fn test_unwrap_ecc_key_for_curve(
         .key_kind(HsmKeyKind::Ecc)
         .ecc_curve(hsm_curve)
         .can_verify(true)
+        .is_session(is_session)
         .build()
         .expect("Failed to build public key props");
 
@@ -249,9 +252,10 @@ fn test_unwrap_ecc_key_for_curve(
         !priv_key.is_local(),
         "Unwrapped private key should not be local"
     );
-    assert!(
-        !priv_key.is_session(),
-        "Unwrapped private key should not be a session key"
+    assert_eq!(
+        priv_key.is_session(),
+        is_session,
+        "Unwrapped private key scope mismatch"
     );
     assert!(
         priv_key.is_sensitive(),
@@ -303,9 +307,10 @@ fn test_unwrap_ecc_key_for_curve(
         !pub_key.is_local(),
         "Unwrapped public key should not be local"
     );
-    assert!(
-        !pub_key.is_session(),
-        "Unwrapped public key should not be a session key"
+    assert_eq!(
+        pub_key.is_session(),
+        is_session,
+        "Unwrapped public key scope mismatch"
     );
     assert!(
         !pub_key.is_sensitive(),
@@ -874,6 +879,7 @@ fn test_unwrap_ecc_p256_key(session: HsmSession) {
         crypto::EccCurve::P256,
         HsmEccCurve::P256,
         HsmHashAlgo::Sha1,
+        false,
     );
 }
 
@@ -885,6 +891,7 @@ fn test_unwrap_ecc_p384_key(session: HsmSession) {
         crypto::EccCurve::P384,
         HsmEccCurve::P384,
         HsmHashAlgo::Sha256,
+        false,
     );
 }
 
@@ -896,7 +903,40 @@ fn test_unwrap_ecc_p521_key(session: HsmSession) {
         crypto::EccCurve::P521,
         HsmEccCurve::P521,
         HsmHashAlgo::Sha512,
+        false,
     );
+}
+
+/// Verifies RSA-AES ECC key-pair unwrap through a V2 (TBOR) session for
+/// every supported curve.
+#[cfg(not(feature = "mock"))]
+#[test]
+fn test_unwrap_ecc_key_tbor_all_curves() {
+    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
+    let session = crate::utils::partition_ex_helpers::new_co_session();
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate the default CO PSK before using crypto commands");
+
+    for (crypto_curve, hsm_curve, hash_algo) in [
+        (
+            crypto::EccCurve::P256,
+            HsmEccCurve::P256,
+            HsmHashAlgo::Sha256,
+        ),
+        (
+            crypto::EccCurve::P384,
+            HsmEccCurve::P384,
+            HsmHashAlgo::Sha384,
+        ),
+        (
+            crypto::EccCurve::P521,
+            HsmEccCurve::P521,
+            HsmHashAlgo::Sha512,
+        ),
+    ] {
+        test_unwrap_ecc_key_for_curve(session.clone(), crypto_curve, hsm_curve, hash_algo, true);
+    }
 }
 
 /// Test ECC P256 key pair unmasking.

@@ -57,17 +57,17 @@ pub use crate::policy::PART_POLICY_LEN;
 ///
 /// The envelope is fully deterministic: an AES-256-GCM `MaskedKey`
 /// envelope around the 32-byte `local_mk` plaintext —
-/// `header(8) + iv(12) + MaskedKeyMetadata aad(96) + ct(32) + tag(16)`
-/// = 164 B. `prev_local_mk_backup` is **optional** (an empty field means
+/// `header(8) + iv(12) + MaskedKeyMetadata aad(192) + ct(32) + tag(16)`
+/// = 260 B. `prev_local_mk_backup` is **optional** (an empty field means
 /// absent; otherwise exactly this length); `local_mk_backup` is always
 /// exactly this length.
-pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const LOCAL_MK_BACKUP_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
-// Pin the computed envelope length to the `#[tbor(... = 164)]` literals
+// Pin the computed envelope length to the `#[tbor(... = 260)]` literals
 // on the `prev_local_mk_backup` / `local_mk_backup` fields (the derive
 // requires integer literals). If the envelope layout changes, update
 // both the breakdown above and the field attributes.
-const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 260);
 
 // Pin the `cert_descriptors` `#[tbor(min_len/max_len)]` literals to their
 // descriptor-size constants (the derive requires integer literals): a
@@ -126,13 +126,13 @@ pub struct TborPartFinalReq<'a> {
 
     /// Optional previously-generated `local_mk` backup envelope to
     /// restore.  An **empty** field means absent; when present it is
-    /// exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
+    /// exactly [`LOCAL_MK_BACKUP_LEN`] (260 B).
     ///
     /// Marked `#[tbor(mutable)]` so the handler can AEAD-unmask the
     /// envelope **in place** in the request buffer via
     /// [`decode_mut`](TborPartFinalReq::decode_mut), avoiding a scratch
     /// staging copy.
-    #[tbor(buffer, max_len = 164, mutable)]
+    #[tbor(buffer, max_len = 260, mutable)]
     pub prev_local_mk_backup: &'a [u8],
 }
 
@@ -142,8 +142,8 @@ pub struct TborPartFinalReq<'a> {
 #[tbor(response)]
 pub struct TborPartFinalResp<'a> {
     /// Current `local_mk` backup envelope (`CurrPartLocalMKBackup`).
-    /// Always exactly [`LOCAL_MK_BACKUP_LEN`] (164 B).
-    #[tbor(buffer, len = 164)]
+    /// Always exactly [`LOCAL_MK_BACKUP_LEN`] (260 B).
+    #[tbor(buffer, len = 260)]
     pub local_mk_backup: &'a [u8],
 }
 

@@ -231,6 +231,28 @@ impl Default for StdHsmPal {
     }
 }
 
+/// Platform hook for commands the core does not implement.
+///
+/// The std/emulator PAL adds none, so both entry points reject
+/// everything and every opcode is answered exactly as it was before the
+/// hook existed. Stated explicitly rather than inherited from a default,
+/// so that adding a protocol to the trait forces this platform to
+/// consider it.
+impl HsmCustomDispatch for StdHsmPal {
+    async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
+    }
+
+    async fn tbor_dispatch(
+        &self,
+        _io: &impl HsmIo,
+        _opcode: u8,
+        _req: &DmaBuf,
+    ) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
+    }
+}
+
 /// [`HsmPal`] lifecycle implementation for the standard platform.
 ///
 /// - **`init`** — Logs initialization; no hardware to configure.

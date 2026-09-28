@@ -25,25 +25,24 @@
 //! * Policy without `allow_peer_cloning` → `SdPeerCloningNotAllowed`.
 //! * Restore before finalize → `InvalidArg`.
 
-#![cfg(feature = "emu")]
-
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::TborSdRestorePeerBackupReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MASKED_SD_LEN;
+use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
 use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use zerocopy::TryFromBytes;
 
-use crate::commands::part_init::bootstrap_rotated_co;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
-use crate::commands::part_init::ROTATED_CO_PSK;
 use crate::commands::sd_create_peer_backup::create_peer_req;
 use crate::commands::sd_create_peer_backup::finalize_peer_partition;
 use crate::commands::sd_create_remote_backup::backup_request;
@@ -128,7 +127,7 @@ fn restore_peer_req(session_id: u16, backup: &PeerBackup) -> TborSdRestorePeerBa
 }
 
 #[test]
-fn sd_restore_peer_backup_roundtrip_emu() {
+fn sd_restore_peer_backup_roundtrip() {
     let seed = mach_seed();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -158,13 +157,13 @@ fn sd_restore_peer_backup_roundtrip_emu() {
         .tbor_oob(&req, &backup.evidence.oob())
         .expect("SdRestorePeerBackup roundtrip");
 
-    // Local backup (BKS3 masked under PartLocalMK), 180 B, non-zero.
+    // Local backup (BKS3 masked under PartLocalMK), 276 B, non-zero.
     assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
         resp.pok_local_backup.iter().any(|&b| b != 0),
         "pok_local_backup must not be all-zero",
     );
-    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 164 B.
+    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 260 B.
     assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(
         resp.sd_mk_backup.iter().any(|&b| b != 0),
@@ -173,7 +172,7 @@ fn sd_restore_peer_backup_roundtrip_emu() {
 }
 
 #[test]
-fn sd_restore_peer_backup_is_one_shot_emu() {
+fn sd_restore_peer_backup_is_one_shot() {
     let ctx = TestCtx::new();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -222,7 +221,7 @@ fn sd_restore_peer_backup_is_one_shot_emu() {
 }
 
 #[test]
-fn sd_restore_peer_backup_rejects_without_peer_cloning_emu() {
+fn sd_restore_peer_backup_rejects_without_peer_cloning() {
     let ctx = TestCtx::new();
     let sata = CaKey::generate();
     let pota = CaKey::generate();
@@ -253,14 +252,14 @@ fn sd_restore_peer_backup_rejects_without_peer_cloning_emu() {
 }
 
 #[test]
-fn sd_restore_peer_backup_rejects_before_finalize_emu() {
+fn sd_restore_peer_backup_rejects_before_finalize() {
     // A partition that has not been finalized is rejected at the lifecycle
     // gate before any evidence or crypto work.
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
     let req = TborSdRestorePeerBackupReq {
         session_id: session.session_id,
-        masked_sealing_key: [0u8; 180],
+        masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
         policy: PartPolicy::zeroed(),
         src_mfgr_cert_chain: Vec::new(),
         src_owner_cert_chain: Vec::new(),

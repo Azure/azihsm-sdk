@@ -6,7 +6,7 @@
 //!
 //! Firmware-internal format used for session BMK wrapping and any
 //! future masked-key flow that doesn't need to be host-readable.
-//! Uses a fixed 96 B [`MaskedKeyMetadata`] record as AAD; carries
+//! Uses a fixed 192 B [`MaskedKeyMetadata`] record as AAD; carries
 //! vault primitives ([`HsmVaultKeyKind`](azihsm_fw_hsm_pal_traits::HsmVaultKeyKind),
 //! [`HsmVaultKeyAttrs`](azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs))
 //! directly so call sites never translate between schema-local and

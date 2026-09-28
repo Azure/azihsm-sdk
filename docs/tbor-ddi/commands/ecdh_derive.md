@@ -37,7 +37,7 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 |---|---|---|---|
 | 4 | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
 | — | `scope` | `u8` (inline) | [`KeyScope`] whose masking key wraps the derived secret. |
-| 8 | `masked_key` | `buffer` (164..=200 B) | The masked local ECC private key; unmasked in place.  Its kind recovers the curve. |
+| 8 | `masked_key` | `buffer` (260..=296 B) | The masked local ECC private key; unmasked in place.  Its kind recovers the curve. |
 | — | `peer_pub_key` | `buffer` (64 / 96 / 136 B) | The peer's wire public key `x_le ‖ y_le` (little-endian, P-521 padded), exactly the curve's wire public-key length. |
 
 ### Data section
@@ -50,12 +50,12 @@ Carries the masked local key followed by the peer public key.
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `masked_secret` | `buffer` (164 / 180 / 198 B) | The derived ECDH shared secret, masked (AEAD-GCM-256) under the scope's masking key. |
+| 8 | `masked_secret` | `buffer` (260 / 276 / 294 B) | The derived ECDH shared secret, masked (AEAD-GCM-256) under the scope's masking key. |
 
 ### Data section
 
 Carries the masked shared secret.  The masked length is
-`132 + secret_len`, where `secret_len` is the curve's raw coordinate size
+`228 + secret_len`, where `secret_len` is the curve's raw coordinate size
 (32 / 48 / 66 B for P-256 / P-384 / P-521).
 
 ## Errors

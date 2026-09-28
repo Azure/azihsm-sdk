@@ -39,6 +39,12 @@ mod sign;
 mod keygen;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod derive;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod hkdf;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod asn1;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]

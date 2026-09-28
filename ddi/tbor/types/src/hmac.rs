@@ -41,8 +41,8 @@ pub struct TborHmacReq {
     pub session_id: u16,
 
     /// The masked HMAC key (from `HmacGenerateKey` / unwrap), an
-    /// AEAD-GCM-256 envelope of 164..=260 B.
-    #[tbor(min_len = 164, max_len = 260)]
+    /// AEAD-GCM-256 envelope of 260..=356 B.
+    #[tbor(min_len = 260, max_len = 356)]
     pub masked_key: Vec<u8>,
 
     /// The message to MAC, up to [`HMAC_MSG_MAX_LEN`] (1024) bytes.

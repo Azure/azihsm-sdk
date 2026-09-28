@@ -13,6 +13,7 @@
 
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborApiRevReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -68,7 +69,7 @@ fn api_rev_independent_of_session_state() {
 
     // CO Pending: init only, do not finish yet.
     let pending = ctx
-        .session_open_init(0, SessionType::Authenticated)
+        .session_open_init(CO_PSK_ID, SessionType::Authenticated)
         .expect("SessionOpenInit (CO/Authenticated) for pending-state probe");
     let during_pending = ctx
         .tbor(&TborApiRevReq::new())
