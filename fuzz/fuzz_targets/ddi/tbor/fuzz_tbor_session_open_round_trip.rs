@@ -15,6 +15,7 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use x509::X509CertificateOp;
+use common::FuzzRole;
 
 /// P-384 coordinate length in bytes.
 const P384_COORD_LEN: usize = 48;
@@ -34,7 +35,7 @@ struct FuzzInput {
     // When building a valid request, pick the CO/`Authenticated` psk_id +
     // session_type combo instead of CU/`PlainText`, so the mac_tx/mac_rx
     // key-derivation branch in `derive_remaining_keys` gets exercised.
-    valid_use_authenticated: bool,
+    valid_role: FuzzRole,
 
     // input for SessionOpenFinish
     valid_open_finish: bool,
@@ -66,14 +67,9 @@ fuzz_target!(|input: FuzzInput| {
             let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else {
                 return;
             };
-            let (psk_id, session_type) = if input.valid_use_authenticated {
-                (0, SessionType::Authenticated.to_u8())
-            } else {
-                (1, SessionType::PlainText.to_u8())
-            };
             let req = TborSessionOpenInitReq {
-                psk_id,
-                session_type,
+                psk_id: input.valid_role.psk_id(),
+                session_type: input.valid_role.session_type().to_u8(),
                 suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
                 pk_init: ephemeral.pk_sec1,
             };
