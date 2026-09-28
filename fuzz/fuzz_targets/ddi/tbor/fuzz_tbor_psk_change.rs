@@ -138,12 +138,11 @@ fuzz_target!(|input: FuzzInput| {
         let mut envelope =
             common::seal_aead_envelope(&handshake.param_key, &input.iv, &aad, &payload);
 
-        if let Some(t) = &input.tamper {
-            if !envelope.is_empty() {
+        if let Some(t) = &input.tamper
+            && !envelope.is_empty() {
                 let idx = (t.offset as usize) % envelope.len();
                 envelope[idx] ^= t.mask | 1;
             }
-        }
 
         let psk_change_req = TborPskChangeReq {
             session_id: session.session_id(),

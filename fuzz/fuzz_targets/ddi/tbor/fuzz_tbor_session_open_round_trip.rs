@@ -107,7 +107,7 @@ fuzz_target!(|input: FuzzInput| {
                 let ephemeral = ephemeral
                     .as_ref()
                     .expect("ephemeral is Some whenever valid_open_finish is true");
-                build_valid_finish_req(&ctx, &req, &resp, ephemeral, &input)
+                build_valid_finish_req(ctx, &req, &resp, ephemeral, &input)
             } else {
                 None
             };
