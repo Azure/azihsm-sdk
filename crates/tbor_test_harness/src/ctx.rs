@@ -48,6 +48,7 @@ use crate::assertions::assert_fw_rejects;
 use crate::assertions::assert_tbor_decode_error;
 use crate::fixture::open_dev;
 use crate::fixture::open_dev_secondary;
+use crate::fixture::open_dev_with_path;
 use crate::fixture::TestDev;
 use crate::session::part_final as part_final_helper;
 use crate::session::part_init as part_init_helper;
@@ -98,6 +99,23 @@ impl TestCtx {
     pub fn new_with_path(path: &str) -> Self {
         Self {
             dev: open_dev_secondary(path),
+        }
+    }
+
+    /// Primary counterpart to [`Self::new_with_path`]: opens the
+    /// backend on the caller-supplied `path` **and** acquires
+    /// `TEST_LOCK` + factory-resets the device via
+    /// [`open_dev_with_path`].
+    ///
+    /// Use this when the device is selected out-of-band (e.g. a
+    /// libfuzzer harness reading `FUZZ_DEVICE`) but no other primary
+    /// `TestCtx` is alive to hold the lock. Do **not** call this
+    /// while another primary `TestCtx` exists on the same thread —
+    /// the second `TEST_LOCK` acquisition would deadlock; use
+    /// [`Self::new_with_path`] instead.
+    pub fn new_primary_with_path(path: &str) -> Self {
+        Self {
+            dev: open_dev_with_path(path),
         }
     }
 

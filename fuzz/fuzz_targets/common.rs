@@ -9,6 +9,7 @@ use azihsm_crypto::*;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
+use azihsm_ddi_tbor_codec::Encoder;
 use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_test_harness::TestCtx;
@@ -72,8 +73,7 @@ pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
         }
     }
 
-    let ctx = TestCtx::new_with_path(&path);
-    ctx.erase().expect("erase should succeed");
+    let ctx = TestCtx::new_primary_with_path(&path);
 
     test(&ctx, &path);
 }

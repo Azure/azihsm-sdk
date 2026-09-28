@@ -174,6 +174,32 @@ pub fn open_dev() -> TestDev {
     }
 }
 
+/// Primary counterpart to [`open_dev`] that opens the caller-
+/// supplied backend `path` instead of the first device advertised by
+/// `AzihsmDdi::dev_info_list()`. Still acquires `TEST_LOCK` and
+/// factory-resets the device before returning, giving the caller the
+/// same isolation guarantees as [`open_dev`].
+///
+/// Use this when the device is selected out-of-band (e.g. via an
+/// environment variable in the libfuzzer harness) but no other
+/// primary [`TestDev`] is alive on this thread to hold the lock.
+/// Do **not** call this while another primary handle exists — the
+/// second `TEST_LOCK` acquisition would deadlock; use
+/// [`open_dev_secondary`] instead.
+pub fn open_dev_with_path(path: &str) -> TestDev {
+    let guard = TEST_LOCK.lock();
+    let dev = AzihsmDdi::default()
+        .open_dev(path)
+        .expect("open test backend device on caller-supplied path");
+    dev.erase()
+        .expect("open_dev_with_path: factory-reset backend before test");
+    TestDev {
+        dev,
+        _guard: Some(guard),
+        path: path.to_string(),
+    }
+}
+
 /// Open a secondary [`TestDev`] on the same backend path as the
 /// primary [`TestDev`] already alive in this test.
 ///
