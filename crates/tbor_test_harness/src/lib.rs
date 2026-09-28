@@ -65,3 +65,4 @@ pub use session::encrypt_mach_seed_envelope;
 pub use session::encrypt_psk_envelope;
 pub use session::SessionHandshake;
 pub use session::SessionOpenInitOptions;
+pub use session_guard::SessionGuard;
