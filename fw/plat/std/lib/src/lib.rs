@@ -581,7 +581,9 @@ impl StdHsm {
         if let Some(thread) = self.begin_shutdown() {
             let _ = thread.join();
         }
-        drop(self.tokio_rt.take());
+        if let Some(rt) = self.tokio_rt.take() {
+            rt.shutdown_background();
+        }
     }
 
     /// Shut down the HSM, awaiting until all in-flight work has drained.
@@ -613,9 +615,9 @@ impl StdHsm {
             // if this future is dropped while the join is pending, `job`
             // keeps running to completion in the background exactly as
             // with `Drop`, so a cancelled shutdown still joins the thread
-            // and only then drops the runtime, instead of `self`'s
+            // and only then shuts down the runtime, instead of `self`'s
             // `Drop` impl (which sees `embassy_thread` already taken)
-            // dropping `tokio_rt` immediately and aborting work the
+            // shutting down `tokio_rt` immediately and aborting work the
             // still-running drain may need.
             //
             // `job` runs on a plain OS thread via `spawn_or_run`, not
@@ -623,21 +625,28 @@ impl StdHsm {
             // *polling* thread to already be inside a Tokio runtime
             // (this method is documented and tested to work from any
             // executor) and, when this HSM owns its runtime, would have
-            // this closure drop that very runtime from inside one of its
-            // own blocking-pool threads, which self-deadlocks (Tokio
-            // disallows dropping a runtime from any Tokio-entered
-            // context). A oneshot is polled here, not blocked on, so
-            // this stays executor-agnostic.
+            // this closure interact with that very runtime from inside
+            // one of its own blocking-pool threads. `job` uses
+            // `Runtime::shutdown_background` (see [`join_shutdown`]) —
+            // not plain `drop` — precisely so it stays safe even in
+            // `spawn_or_run`'s synchronous fallback, where it can end up
+            // running inline on a worker of this very runtime. A oneshot
+            // is polled here, not blocked on, so this stays
+            // executor-agnostic.
             let tokio_rt = self.tokio_rt.take();
             let (done_tx, done_rx) = tokio::sync::oneshot::channel();
             spawn_or_run(move || {
                 let _ = thread.join();
-                drop(tokio_rt);
+                if let Some(rt) = tokio_rt {
+                    rt.shutdown_background();
+                }
                 let _ = done_tx.send(());
             });
             let _ = done_rx.await;
         }
-        drop(self.tokio_rt.take());
+        if let Some(rt) = self.tokio_rt.take() {
+            rt.shutdown_background();
+        }
     }
 
     /// Stops accepting new work and takes ownership of the Embassy thread.
@@ -666,8 +675,9 @@ impl StdHsm {
 /// [`StdHsm::shutdown`]/[`StdHsm::shutdown_async`], which return only after the
 /// Embassy executor has stopped, so their runtime outlives the drain.
 ///
-/// If a tokio runtime is owned (`tokio_rt` is `Some`), it is dropped
-/// after the Embassy thread exits, shutting down the worker pool.
+/// If a tokio runtime is owned (`tokio_rt` is `Some`), it is shut down via
+/// [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background)
+/// after the Embassy thread exits (see [`join_shutdown`]).
 impl Drop for StdHsm {
     fn drop(&mut self) {
         // Stop accepting new work; `poll_io`/`ipc_task` exit their loops
@@ -680,10 +690,28 @@ impl Drop for StdHsm {
     }
 }
 
+/// Joins the Embassy background `thread`, then disposes of any
+/// self-owned `tokio_rt`, on a plain OS thread via [`spawn_or_run`].
+///
+/// Uses [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background)
+/// rather than plain `drop`: the latter blocks the calling thread until
+/// every worker thread exits, which — like blocking a worker on
+/// `thread.join()` — is exactly what running this off the polling/caller
+/// thread is meant to avoid, and would additionally panic outright if
+/// ever run on one of that very runtime's own threads (Tokio disallows
+/// dropping a runtime from any Tokio-entered context). `shutdown_background`
+/// has neither problem: it never blocks and is documented as safe to call
+/// from within another runtime, which also covers `spawn_or_run`'s rare
+/// synchronous fallback (used if OS thread creation fails), where this
+/// closure can end up running inline on whatever thread called it —
+/// including, for `StdHsm::shutdown_async`, a worker of the very runtime
+/// being shut down here.
 fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtime>) {
     spawn_or_run(move || {
         let _ = thread.join();
-        drop(tokio_rt);
+        if let Some(rt) = tokio_rt {
+            rt.shutdown_background();
+        }
     });
 }
 
@@ -708,12 +736,19 @@ fn join_shutdown(thread: JoinHandle<()>, tokio_rt: Option<tokio::runtime::Runtim
 /// must stay executor-agnostic, so it cannot rely on
 /// `tokio::task::spawn_blocking`'s ambient "current runtime" requirement,
 /// nor on a specific runtime's blocking pool, which would self-deadlock
-/// if that runtime is the very one being dropped by `job`). The
-/// synchronous fallback here is consequently the only way to guarantee
-/// `job` always runs; if OS thread creation fails while `shutdown_async`
-/// is polled from a saturated worker of the runtime it's draining, that
-/// fallback can block that worker until the drain completes — an
-/// accepted, extremely rare trade-off versus losing `job` or panicking.
+/// if that runtime is the very one being disposed of by `job`). Callers
+/// that own a tokio runtime must dispose of it inside `job` via
+/// [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background),
+/// not plain `drop`: unlike `drop`, it never blocks and is safe to call
+/// from within any Tokio context, so it stays safe even in this
+/// function's synchronous fallback below, where `job` can end up running
+/// inline on a worker of that very runtime. The synchronous fallback
+/// here is consequently the only way to guarantee `job` always runs; if
+/// OS thread creation fails while `shutdown_async` is polled from a
+/// saturated worker of the runtime it's draining, that fallback can
+/// still block that worker on `job`'s (potentially slow) Embassy
+/// `thread.join()` — an accepted, extremely rare trade-off versus losing
+/// `job` or panicking.
 fn spawn_or_run(job: impl FnOnce() + Send + 'static) {
     type Job = Box<dyn FnOnce() + Send>;
 
@@ -816,5 +851,29 @@ mod tests {
         done_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("shutdown thread did not complete");
+    }
+
+    /// Regression test for a bug where `spawn_or_run`'s synchronous
+    /// fallback (used when `std::thread::Builder::spawn` fails) could
+    /// panic: it runs `job` inline on whatever thread called
+    /// `spawn_or_run`, which for `shutdown_async`/`join_shutdown` may be a
+    /// worker thread of the very Tokio runtime `job` is responsible for
+    /// disposing of. Tokio panics if a runtime is dropped from within a
+    /// context it has itself entered, so `job` must dispose of `tokio_rt`
+    /// via [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background)
+    /// instead of plain `drop`. This simulates that exact "runs inline on
+    /// one of its own worker threads" scenario directly, without needing
+    /// to force real OS thread-creation failure.
+    #[test]
+    fn shutting_down_a_tokio_runtime_from_within_its_own_context_does_not_panic() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .expect("failed to create tokio runtime");
+        let handle = rt.handle().clone();
+
+        handle.block_on(async move {
+            rt.shutdown_background();
+        });
     }
 }
