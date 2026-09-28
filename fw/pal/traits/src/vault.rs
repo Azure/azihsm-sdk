@@ -496,6 +496,11 @@ pub trait HsmVault {
 
     /// Deletes a single key by ID.
     ///
+    /// Accepts a **soft-deleted** ([`vault_key_disable`](Self::vault_key_disable)d)
+    /// key as well as a live one: finalizing a disabled entry is the undo
+    /// log's commit path, so implementations must not classify the key
+    /// through a live-only lookup.
+    ///
     /// Idempotent in the sense that a deleted slot becomes available
     /// for the next [`vault_key_create`](Self::vault_key_create), but
     /// the deletion of an already-deleted ID is reported as
@@ -511,7 +516,7 @@ pub trait HsmVault {
     ///
     /// - `Ok(())` on success.
     /// - `Err(HsmError::InvalidArg)` if `key_id` does not refer to a
-    ///   live key in the caller's partition.
+    ///   present (live or soft-deleted) key in the caller's partition.
     /// - `Err(HsmError::NotPermitted)` if the key's `destroyable` bit
     ///   is unset (e.g. internal device keys).
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()>;

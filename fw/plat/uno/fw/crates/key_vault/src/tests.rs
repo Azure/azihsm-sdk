@@ -1052,3 +1052,74 @@ fn for_each_session_key_propagates_visitor_error() {
     assert_eq!(err, HsmError::InternalError);
     assert_eq!(seen, 1, "walk short-circuits on the first visitor error");
 }
+
+#[test]
+fn key_entry_and_location_present_see_disabled_entries() {
+    // The undo-log commit deletes a soft-deleted (disabled) key, so the
+    // delete path's lookups must still resolve it while the live-entry
+    // lookups keep hiding it.
+    let (mut v, g, io) = vault::<1>();
+    let id = with_key(&[0x5Au8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(7), aes_attrs())).unwrap()
+    });
+    let live_loc = v.key_location(id).unwrap();
+
+    v.disable(id).unwrap();
+
+    // Live-entry lookups hide it.
+    assert_eq!(v.key_kind(id).unwrap_err(), HsmError::KeyNotFound);
+    assert_eq!(v.key_location(id).unwrap_err(), HsmError::KeyNotFound);
+
+    // Disabled-aware lookups still resolve it, unchanged.
+    let entry = v.key_entry(id).unwrap();
+    assert_eq!(entry.kind(), HsmVaultKeyKind::Aes256);
+    assert!(entry.session());
+    assert_eq!(entry.session_or_tag(), 7);
+    assert_eq!(v.key_location_present(id).unwrap(), live_loc);
+}
+
+#[test]
+fn key_entry_rejects_free_slot() {
+    // Only a genuinely free slot is rejected: a deleted key is gone for
+    // the disabled-aware lookups too.
+    let (mut v, g, io) = vault::<1>();
+    let id = with_key(&[0x6Bu8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
+    });
+    block_on(v.delete(&g, &io, id)).unwrap();
+
+    assert_eq!(v.key_entry(id).unwrap_err(), HsmError::KeyNotFound);
+    assert_eq!(
+        v.key_location_present(id).unwrap_err(),
+        HsmError::KeyNotFound
+    );
+}
+
+#[test]
+fn for_each_session_key_visits_disabled_entries() {
+    // The walk must cover exactly what `delete_by_session` evicts — live
+    // and disabled — so a soft-deleted key's external mirror (e.g. a
+    // bulk-crypto engine slot) is released rather than leaked.
+    let (mut v, g, io) = vault::<1>();
+    let live = with_key(&[0xD1u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(9), aes_attrs())).unwrap()
+    });
+    let soft_deleted = with_key(&[0xD2u8; 32], |k| {
+        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, Some(9), aes_attrs())).unwrap()
+    });
+    v.disable(soft_deleted).unwrap();
+
+    let mut seen = [false; 2];
+    v.for_each_session_key(9, |key_id, _, _| {
+        if key_id == live {
+            seen[0] = true;
+        }
+        if key_id == soft_deleted {
+            seen[1] = true;
+        }
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(seen, [true, true], "walk must include the disabled entry");
+}
