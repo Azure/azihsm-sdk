@@ -49,10 +49,11 @@ use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
 use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MAX_LEN;
 use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MIN_LEN;
+use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
-use crate::commands::hmac_generate_key::SCOPE_EPHEMERAL;
-use crate::commands::hmac_generate_key::SCOPE_LOCAL;
-use crate::commands::hmac_generate_key::SCOPE_SESSION;
+use crate::commands::common::SCOPE_EPHEMERAL;
+use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::harness::bootstrap_rotated_co;
@@ -280,6 +281,7 @@ fn hmac_variable_key_lengths_all_scopes() {
                         scope,
                         hash_algo: hash,
                         key_length,
+                        key_label: Vec::new(),
                     })
                     .expect("generate variable-length HMAC key")
                     .masked_key;
@@ -592,4 +594,162 @@ fn hmac_alternating_hashes_do_not_leak_state() {
     assert_eq!(mac(&ctx, session.session_id, &key256, msg), tag256);
     assert_eq!(mac(&ctx, session.session_id, &key384, msg), tag384);
     assert_eq!(mac(&ctx, session.session_id, &key512, msg), tag512);
+}
+
+#[test]
+fn hmac_generate_key_accepts_non_empty_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let resp = ctx
+        .tbor(&TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_EPHEMERAL,
+            hash_algo: HMAC_HASH_SHA256,
+            key_length: 32,
+            key_label: b"hmac-test-key".to_vec(),
+        })
+        .expect("generate HMAC key with non-empty label");
+
+    let tag = mac(
+        &ctx,
+        session.session_id,
+        &resp.masked_key,
+        b"labeled HMAC key",
+    );
+
+    assert_eq!(tag.len(), 32);
+    assert!(tag.iter().any(|&b| b != 0));
+}
+
+#[test]
+fn hmac_generate_key_with_label_all_hashes() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+        let resp = ctx
+            .tbor(&TborHmacGenerateKeyReq {
+                session_id: session.session_id,
+                scope: SCOPE_EPHEMERAL,
+                hash_algo: hash,
+                key_length: tag_len_for_hash(hash) as u8,
+                key_label: b"hmac-labeled-key".to_vec(),
+            })
+            .expect("generate labeled HMAC key");
+
+        let tag = mac(
+            &ctx,
+            session.session_id,
+            &resp.masked_key,
+            b"labeled key test",
+        );
+
+        assert_eq!(tag.len(), tag_len_for_hash(hash), "hash {hash}",);
+
+        assert_eq!(
+            tag,
+            mac(
+                &ctx,
+                session.session_id,
+                &resp.masked_key,
+                b"labeled key test",
+            ),
+            "labeled key must remain usable for hash {hash}",
+        );
+    }
+}
+
+#[test]
+fn hmac_generate_key_accepts_binary_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let resp = ctx
+        .tbor(&TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_EPHEMERAL,
+            hash_algo: HMAC_HASH_SHA256,
+            key_length: 32,
+            key_label: vec![0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff],
+        })
+        .expect("generate HMAC key with binary label");
+
+    let tag = mac(&ctx, session.session_id, &resp.masked_key, b"binary label");
+
+    assert_eq!(tag.len(), 32);
+}
+
+#[test]
+fn hmac_generate_key_accepts_max_length_key_label() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let resp = ctx
+        .tbor(&TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_EPHEMERAL,
+            hash_algo: HMAC_HASH_SHA256,
+            key_length: 32,
+            key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
+        })
+        .expect("generate HMAC key with max-length label");
+
+    let tag = mac(
+        &ctx,
+        session.session_id,
+        &resp.masked_key,
+        b"max label test",
+    );
+
+    assert_eq!(tag.len(), 32);
+}
+
+#[test]
+fn hmac_labeled_session_key_rejected_after_session_reopen() {
+    let ctx = TestCtx::new();
+    let first = finalized_co_session(&ctx);
+
+    let resp = ctx
+        .tbor(&TborHmacGenerateKeyReq {
+            session_id: first.session_id,
+            scope: SCOPE_SESSION,
+            hash_algo: HMAC_HASH_SHA256,
+            key_length: 32,
+            key_label: b"session-labeled-key".to_vec(),
+        })
+        .expect("generate labeled session HMAC key");
+
+    let masked = resp.masked_key;
+
+    assert_eq!(
+        mac(&ctx, first.session_id, &masked, b"before reopen").len(),
+        32,
+    );
+
+    ctx.session_close(first.session_id)
+        .expect("close first session");
+
+    let pending = ctx
+        .session_open_init_with_options(
+            SessionOpenInitOptions::new(CO_PSK_ID, SessionType::Authenticated)
+                .with_psk(&ROTATED_CO_PSK),
+        )
+        .expect("open second session");
+
+    let second = ctx
+        .session_open_finish(pending)
+        .expect("finish second session");
+
+    ctx.expect_fw_reject(
+        &TborHmacReq {
+            session_id: second.session_id,
+            masked_key: masked,
+            msg: b"after reopen".to_vec(),
+        },
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
+    );
+
+    ctx.session_close(second.session_id)
+        .expect("close second session");
 }
