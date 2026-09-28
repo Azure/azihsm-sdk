@@ -6,13 +6,13 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_ddi_tbor_codec::DecodeError;
 use azihsm_ddi_tbor_codec::ResponseEncoder;
 use azihsm_ddi_tbor_codec::ResponseView;
-use azihsm_ddi_tbor_codec::DecodeError;
-use common::run_encoder;
-use common::validate_toc_entry;
 use common::EncoderTOCBuilders;
 use common::FUZZ_RESP_BUF_SIZE;
+use common::run_encoder;
+use common::validate_toc_entry;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
