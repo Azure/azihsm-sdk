@@ -577,7 +577,7 @@ fn test_raw_key_import_fixed_hmac_rejects_derive() {
 }
 
 #[test]
-fn test_raw_key_import_fixed_hmac_readback_preserves_type_and_bytes() {
+fn test_raw_key_import_fixed_hmac_readback_normalizes_type_and_preserves_bytes() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -600,7 +600,7 @@ fn test_raw_key_import_fixed_hmac_readback_preserves_type_and_bytes() {
 }
 
 #[test]
-fn test_raw_key_import_fixed_hmac_masked_key_round_trip() {
+fn test_raw_key_import_fixed_hmac_masked_key_round_trip_normalizes_type() {
     ddi_dev_test(
         common_setup,
         common_cleanup,
@@ -640,8 +640,40 @@ fn test_raw_key_import_fixed_hmac_masked_key_round_trip() {
                 azihsm_ddi_mbor_test_hooks::helper_get_priv_key(dev, Some(session_id), key_id)
                     .unwrap()
                     .data;
-            assert_eq!(stored.key_kind, DdiKeyType::HmacSha256);
+            assert_eq!(stored.key_kind, DdiKeyType::VarHmac256);
             assert_eq!(stored.key_data.as_slice(), key);
+        },
+    );
+}
+
+#[test]
+fn test_raw_key_import_fixed_hmac_rejects_noncanonical_lengths() {
+    ddi_dev_test(
+        common_setup,
+        common_cleanup,
+        |dev, _ddi, _path, session_id| {
+            if !require_physical_device(dev) || !require_raw_key_import(dev, session_id) {
+                return;
+            }
+
+            let properties =
+                helper_key_properties(DdiKeyUsage::SignVerify, DdiKeyAvailability::App);
+            for (key_type, invalid_len) in [
+                (DdiKeyType::HmacSha256, 31),
+                (DdiKeyType::HmacSha256, 33),
+                (DdiKeyType::HmacSha384, 47),
+                (DdiKeyType::HmacSha384, 49),
+                (DdiKeyType::HmacSha512, 63),
+                (DdiKeyType::HmacSha512, 65),
+            ] {
+                let key = vec![0x5au8; invalid_len];
+                let resp =
+                    helper_raw_key_import(dev, Some(session_id), &key, key_type, None, properties);
+                assert!(
+                    matches!(resp, Err(DdiError::DdiStatus(DdiStatus::InvalidArg))),
+                    "{key_type:?} must reject {invalid_len}-byte input: {resp:?}",
+                );
+            }
         },
     );
 }

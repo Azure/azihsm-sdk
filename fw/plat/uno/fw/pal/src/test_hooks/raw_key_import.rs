@@ -12,8 +12,10 @@
 //!
 //! Scope (parity with the legacy firmware `import_raw_key` and its
 //! tests): ECDH shared secrets (`Secret256/384/521`), fixed-length HMAC
-//! keys (`HmacSha256/384/512`), and variable-length HMAC keys
+//! request aliases (`HmacSha256/384/512`), and variable-length HMAC keys
 //! (`VarHmac256/384/512`) import as partition-scoped application keys.
+//! Both HMAC request families use Uno's variable-length HMAC vault kinds;
+//! the fixed aliases retain exact 32/48/64-byte validation.
 //! `Rsa2kPrivate` imports (usage = `Unwrap` only) as the partition
 //! unwrapping key via a dedicated internal-vault path. AES, ECC, and
 //! other RSA kinds are
@@ -155,6 +157,8 @@ async fn dispatch_request<'p>(
     if request.key_kind == DdiKeyType::Rsa2kPrivate {
         return raw_import_unwrapping_key(pal, io, hdr, sess_id, request).await;
     }
+
+    validate_fixed_hmac_length(request.key_kind, request.raw.len())?;
 
     // Restrict the accepted kinds and derive the vault attributes for the
     // imported (non-`local`) key.  Rejects AES / ECC / other RSA kinds
@@ -425,23 +429,40 @@ fn raw_import_attrs(
 
 /// Map an on-wire `DdiKeyType` to the vault kind a raw import creates.
 ///
-/// Mirrors the core `from_ddi::vault_kind_from_ddi`; fixed and variable
-/// HMAC wire types map to distinct vault kinds so read-back and masked-key
-/// re-import preserve the original key type. Kinds that raw import does
-/// not accept return [`HsmError::InvalidKeyType`].
+/// Mirrors the core `from_ddi::vault_kind_from_ddi`. Fixed HMAC request
+/// aliases and variable HMAC wire types both use Uno's variable-length
+/// HMAC vault kinds. Kinds that raw import does not accept return
+/// [`HsmError::InvalidKeyType`].
 fn vault_kind_from_ddi(key_type: DdiKeyType) -> HsmResult<HsmVaultKeyKind> {
     match key_type {
         DdiKeyType::Secret256 => Ok(HsmVaultKeyKind::Secret256),
         DdiKeyType::Secret384 => Ok(HsmVaultKeyKind::Secret384),
         DdiKeyType::Secret521 => Ok(HsmVaultKeyKind::Secret521),
-        DdiKeyType::HmacSha256 => Ok(HsmVaultKeyKind::_HmacSha256),
-        DdiKeyType::HmacSha384 => Ok(HsmVaultKeyKind::_HmacSha384),
-        DdiKeyType::HmacSha512 => Ok(HsmVaultKeyKind::_HmacSha512),
+        DdiKeyType::HmacSha256 => Ok(HsmVaultKeyKind::VarLenHmacSha256),
+        DdiKeyType::HmacSha384 => Ok(HsmVaultKeyKind::VarLenHmacSha384),
+        DdiKeyType::HmacSha512 => Ok(HsmVaultKeyKind::VarLenHmacSha512),
         DdiKeyType::VarHmac256 => Ok(HsmVaultKeyKind::VarLenHmacSha256),
         DdiKeyType::VarHmac384 => Ok(HsmVaultKeyKind::VarLenHmacSha384),
         DdiKeyType::VarHmac512 => Ok(HsmVaultKeyKind::VarLenHmacSha512),
         _ => Err(HsmError::InvalidKeyType),
     }
+}
+
+/// Enforce the fixed-length HMAC request aliases before they are normalized
+/// to variable-length vault kinds.
+fn validate_fixed_hmac_length(key_type: DdiKeyType, key_len: usize) -> HsmResult<()> {
+    let expected = match key_type {
+        DdiKeyType::HmacSha256 => Some(32),
+        DdiKeyType::HmacSha384 => Some(48),
+        DdiKeyType::HmacSha512 => Some(64),
+        _ => None,
+    };
+
+    if expected.is_some_and(|expected| key_len != expected) {
+        return Err(HsmError::InvalidArg);
+    }
+
+    Ok(())
 }
 
 /// Build vault attrs for a raw-imported ECDH shared secret.
@@ -476,9 +497,9 @@ fn for_ecdh_secret(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttr
     Ok(attrs)
 }
 
-/// Build vault attrs for a raw-imported fixed-length HMAC key.
+/// Build vault attrs for a raw-imported fixed-length HMAC request alias.
 ///
-/// Fixed-length HMAC keys support only MAC sign / verify usage.
+/// Fixed-length HMAC aliases support only MAC sign / verify usage.
 /// Derivation is reserved for variable-length HMAC keys.
 fn for_fixed_hmac(metadata: &DdiTargetKeyMetadata) -> HsmResult<HsmVaultKeyAttrs> {
     validate_pairs(metadata)?;

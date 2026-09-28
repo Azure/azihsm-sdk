@@ -129,8 +129,9 @@ pub(super) fn dispatch<'p>(
 ///
 /// This intentionally duplicates the HSM core's mapping because the
 /// test hook lives below the PAL boundary and cannot depend upward on
-/// the core. The mappings must remain aligned so key kinds round-trip
-/// through import, read-back, masking, and re-import.
+/// the core. The mappings must remain aligned with the core's normalized
+/// HMAC storage policy, so fixed `HmacSha*` request aliases read back as
+/// `VarHmac*`.
 pub(super) fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
     match kind {
         HsmVaultKeyKind::Rsa2kPrivate => Ok(DdiKeyType::Rsa2kPrivate),
@@ -151,9 +152,6 @@ pub(super) fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
         HsmVaultKeyKind::Secret256 => Ok(DdiKeyType::Secret256),
         HsmVaultKeyKind::Secret384 => Ok(DdiKeyType::Secret384),
         HsmVaultKeyKind::Secret521 => Ok(DdiKeyType::Secret521),
-        HsmVaultKeyKind::_HmacSha256 => Ok(DdiKeyType::HmacSha256),
-        HsmVaultKeyKind::_HmacSha384 => Ok(DdiKeyType::HmacSha384),
-        HsmVaultKeyKind::_HmacSha512 => Ok(DdiKeyType::HmacSha512),
         HsmVaultKeyKind::VarLenHmacSha256 => Ok(DdiKeyType::VarHmac256),
         HsmVaultKeyKind::VarLenHmacSha384 => Ok(DdiKeyType::VarHmac384),
         HsmVaultKeyKind::VarLenHmacSha512 => Ok(DdiKeyType::VarHmac512),

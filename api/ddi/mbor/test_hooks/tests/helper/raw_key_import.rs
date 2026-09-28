@@ -54,9 +54,18 @@ pub(super) fn import_and_verify(
     let stored = helper_get_priv_key(dev, Some(session_id), resp.key_id)
         .unwrap()
         .data;
-    assert_eq!(stored.key_kind, key_type);
+    assert_eq!(stored.key_kind, normalized_key_type(key_type));
     assert_eq!(stored.key_data.as_slice(), raw_key);
     true
+}
+
+fn normalized_key_type(key_type: DdiKeyType) -> DdiKeyType {
+    match key_type {
+        DdiKeyType::HmacSha256 => DdiKeyType::VarHmac256,
+        DdiKeyType::HmacSha384 => DdiKeyType::VarHmac384,
+        DdiKeyType::HmacSha512 => DdiKeyType::VarHmac512,
+        _ => key_type,
+    }
 }
 
 pub(super) fn rsa2k_private_key() -> [u8; 516] {

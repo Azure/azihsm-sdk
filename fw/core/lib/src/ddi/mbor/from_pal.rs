@@ -68,6 +68,10 @@ pub(crate) fn rsa_key(kind: HsmVaultKeyKind) -> HsmResult<HsmRsaKey> {
 /// or key-importing handler can mask are accepted; public, internal,
 /// and session-schedule kinds return [`HsmError::InvalidKeyType`].
 ///
+/// Uno stores HMAC keys with the variable-length vault kinds, which are
+/// emitted as `VarHmac*` even when the original request used a fixed
+/// `HmacSha*` alias.
+///
 /// The unwrapping key is an RSA private key in the vault but is
 /// tagged `RsaUnwrap` in its masked metadata by the
 /// [`get_unwrapping_key`](super::get_unwrapping_key) handler, which
@@ -92,9 +96,6 @@ pub(crate) fn vault_kind_ddi(kind: HsmVaultKeyKind) -> HsmResult<DdiKeyType> {
         HsmVaultKeyKind::Secret256 => Ok(DdiKeyType::Secret256),
         HsmVaultKeyKind::Secret384 => Ok(DdiKeyType::Secret384),
         HsmVaultKeyKind::Secret521 => Ok(DdiKeyType::Secret521),
-        HsmVaultKeyKind::_HmacSha256 => Ok(DdiKeyType::HmacSha256),
-        HsmVaultKeyKind::_HmacSha384 => Ok(DdiKeyType::HmacSha384),
-        HsmVaultKeyKind::_HmacSha512 => Ok(DdiKeyType::HmacSha512),
         HsmVaultKeyKind::VarLenHmacSha256 => Ok(DdiKeyType::VarHmac256),
         HsmVaultKeyKind::VarLenHmacSha384 => Ok(DdiKeyType::VarHmac384),
         HsmVaultKeyKind::VarLenHmacSha512 => Ok(DdiKeyType::VarHmac512),
