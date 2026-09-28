@@ -12,7 +12,7 @@ use azihsm_fw_hsm_pal_traits::PartPropId;
 
 use super::common::ReqHdr;
 use super::test_action::encode_success;
-use super::test_action::expect_no_payload;
+use super::test_action::expect_empty_payload;
 use crate::pal::UnoHsmPal;
 
 /// Validate and execute `TestAction::ClearUserCredentials`.
@@ -20,11 +20,11 @@ pub(super) fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     hdr: &ReqHdr,
-    decoder: &MborDecoder,
+    decoder: &mut MborDecoder,
     request_field_count: u8,
     request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
-    expect_no_payload(decoder, request_field_count, request_len)?;
+    expect_empty_payload(decoder, request_field_count, request_len)?;
     execute(pal, io, hdr)
 }
 

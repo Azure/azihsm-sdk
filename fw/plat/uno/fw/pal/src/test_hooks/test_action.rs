@@ -3,11 +3,11 @@
 
 //! `TestAction` (`DdiOp` 2004) action router.
 //!
-//! The request data has the stable `{1: action, 2: payload?}` shape.
+//! The request data has the stable `{1: action, 2: payload}` shape.
 //! This module decodes the action ID and routes the remaining data to the
 //! action-specific module that owns its validation and behavior.
 //! DDI MBOR uses canonical ascending field-ID order, matching the generated
-//! `#[ddi(map)]` codecs, so field `1` precedes optional field `2`.
+//! `#[ddi(map)]` codecs, so field `1` precedes field `2`.
 
 use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;
@@ -105,7 +105,7 @@ pub(super) fn dispatch<'p>(
 
 fn decode_action_selector(decoder: &mut MborDecoder) -> HsmResult<TestActionSelector> {
     let request_map = MborMap::mbor_decode(decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if request_map.0 == 0 {
+    if request_map.0 != 2 {
         return Err(HsmError::DdiDecodeFailed);
     }
 
@@ -135,6 +135,40 @@ pub(super) fn decode_payload<'a, T>(
 where
     T: MborDecode<'a>,
 {
+    let payload = decode_payload_bytes(decoder, request_field_count, request_len)?;
+
+    let payload_len = payload.len();
+    let mut payload_decoder = MborDecoder::new(payload);
+    let request = T::mbor_decode(&mut payload_decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
+    if payload_decoder.position() != payload_len {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    Ok(request)
+}
+
+/// Validate the request shape for a parameterless action.
+///
+/// Parameterless actions contain `{1: action, 2: bytes()}` and must carry an
+/// empty payload with no trailing outer bytes.
+pub(super) fn expect_empty_payload(
+    decoder: &mut MborDecoder<'_>,
+    request_field_count: u8,
+    request_len: usize,
+) -> HsmResult<()> {
+    let payload = decode_payload_bytes(decoder, request_field_count, request_len)?;
+    if !payload.is_empty() {
+        return Err(HsmError::DdiDecodeFailed);
+    }
+
+    Ok(())
+}
+
+fn decode_payload_bytes<'a>(
+    decoder: &mut MborDecoder<'a>,
+    request_field_count: u8,
+    request_len: usize,
+) -> HsmResult<&'a mut DmaBuf> {
     if request_field_count != 2 {
         return Err(HsmError::DdiDecodeFailed);
     }
@@ -151,30 +185,7 @@ where
         return Err(HsmError::DdiDecodeFailed);
     }
 
-    let payload_len = payload.len();
-    let mut payload_decoder = MborDecoder::new(payload);
-    let request = T::mbor_decode(&mut payload_decoder).map_err(|_| HsmError::DdiDecodeFailed)?;
-    if payload_decoder.position() != payload_len {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    Ok(request)
-}
-
-/// Validate the request shape for a parameterless action.
-///
-/// Parameterless actions contain only `{1: action}` and must not carry a
-/// payload or any trailing outer bytes.
-pub(super) fn expect_no_payload(
-    decoder: &MborDecoder<'_>,
-    request_field_count: u8,
-    request_len: usize,
-) -> HsmResult<()> {
-    if request_field_count != 1 || decoder.position() != request_len {
-        return Err(HsmError::DdiDecodeFailed);
-    }
-
-    Ok(())
+    Ok(payload)
 }
 
 /// Encode a successful action response with no action-specific result.

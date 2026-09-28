@@ -394,9 +394,9 @@ pub const TEST_ACTION_PAYLOAD_MAX: usize = 64;
 ///
 /// Carries the MBOR encoding of an action's own request-info struct as a
 /// byte string, so the `TestAction` request map stays fixed at
-/// `{1: action, 2: payload?}` regardless of the action. Payload construction
+/// `{1: action, 2: payload}` regardless of the action. Payload construction
 /// is owned by the conversion from [`TestActionRequest`] to
-/// [`DdiTestActionReq`].
+/// [`DdiTestActionReq`]. Parameterless actions use an empty byte string.
 pub type DdiTestActionPayload = MborByteArray<TEST_ACTION_PAYLOAD_MAX>;
 
 /// Every parameterized action uses a dedicated `#[ddi(map)]` request-info
@@ -462,11 +462,10 @@ pub enum TestActionRequest {
 
 /// DDI Test Action request.
 ///
-/// Uses the opaque-payload shape `{1: action, 2: payload?}`: every action's
+/// Uses the opaque-payload shape `{1: action, 2: payload}`: every action's
 /// parameters travel in the single [`DdiTestActionPayload`] byte string, so
-/// adding an action never changes this opcode's wire schema. `payload` is
-/// `None` for actions that take no parameters (for example
-/// `ClearUserCredentials`).
+/// adding an action never changes this opcode's wire schema. Actions that take
+/// no parameters (for example `ClearUserCredentials`) use an empty payload.
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi)]
 #[ddi(map)]
@@ -483,7 +482,7 @@ pub struct DdiTestActionReq {
     /// type name; an alias would be treated as an ordinary field and fail to
     /// compile.
     #[ddi(id = 2)]
-    pub payload: Option<MborByteArray<TEST_ACTION_PAYLOAD_MAX>>,
+    pub payload: MborByteArray<TEST_ACTION_PAYLOAD_MAX>,
 }
 
 impl TryFrom<TestActionRequest> for DdiTestActionReq {
@@ -580,6 +579,12 @@ impl TryFrom<TestActionRequest> for DdiTestActionReq {
             ),
         };
 
+        let payload = match payload {
+            Some(payload) => payload,
+            None => DdiTestActionPayload::from_slice(&[])
+                .map_err(|_| MborEncodeError::BufferOverflow)?,
+        };
+
         Ok(Self { action, payload })
     }
 }
@@ -655,21 +660,23 @@ mod tests {
 
         for request in requests {
             let wire = DdiTestActionReq::try_from(request).expect("payload must encode");
-            let payload = wire
-                .payload
-                .expect("parameterized action must have a payload");
             // The workspace types dependency enables `post_decode`, so the
             // host decoder constructor includes this flag.
-            let mut decoder = MborDecoder::new(payload.as_slice(), false);
+            let mut decoder = MborDecoder::new(wire.payload.as_slice(), false);
             MborMap::mbor_decode(&mut decoder).expect("payload must start with an MBOR map");
         }
     }
 
     #[test]
-    fn optional_parameter_omits_payload_when_absent() {
-        let wire = DdiTestActionReq::try_from(TestActionRequest::ForcePkaInstance(None))
-            .expect("request must encode");
+    fn parameterless_actions_use_empty_payloads() {
+        let requests = [
+            TestActionRequest::ClearUserCredentials,
+            TestActionRequest::ForcePkaInstance(None),
+        ];
 
-        assert!(wire.payload.is_none());
+        for request in requests {
+            let wire = DdiTestActionReq::try_from(request).expect("request must encode");
+            assert!(wire.payload.is_empty());
+        }
     }
 }

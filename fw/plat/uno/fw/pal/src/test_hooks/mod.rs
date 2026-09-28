@@ -40,10 +40,10 @@
 //! # Wire compatibility
 //!
 //! `TestAction` (`DdiOp` 2004) uses an **opaque-payload** request:
-//! `{1: action, 2: payload?}`, where `payload` is a byte string holding
+//! `{1: action, 2: payload}`, where `payload` is a byte string holding
 //! the MBOR encoding of the chosen action's own request-info map. The
 //! opcode's wire schema is therefore fixed no matter which action is sent,
-//! so adding an action never changes it. This intentionally **diverges
+//! and parameterless actions use an empty byte string. This intentionally **diverges
 //! from `mcr-hsm`**, which still carries each action's parameters as typed
 //! map entries: the two firmwares are no longer wire-compatible for
 //! `TestAction`. This firmware is driven by the refactor's own
