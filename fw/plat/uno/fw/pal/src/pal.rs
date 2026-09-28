@@ -732,12 +732,12 @@ impl UnoHsmPal {
 /// `crate::test_hooks`; without both, and for TBOR in all cases, uno
 /// claims nothing.
 impl HsmCustomDispatch for UnoHsmPal {
-    #[cfg(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks"))]
+    #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
     async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
         crate::test_hooks::mbor_dispatch(self, io, req).await
     }
 
-    #[cfg(not(any(feature = "mcr_test_hooks", feature = "fips_validation_hooks")))]
+    #[cfg(not(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks")))]
     async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
         Err(HsmError::UnsupportedCmd)
     }

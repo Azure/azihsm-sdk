@@ -15,7 +15,7 @@
 //!
 //! Nothing above the PAL knows any of this exists: the opcode is in no
 //! core table and the wire types are in no core crate. `TestAction` is
-//! gated by `mcr_test_hooks`; `GetPrivKey` and `RawKeyImport` are gated by
+//! gated by `azihsm_test_hooks`; `GetPrivKey` and `RawKeyImport` are gated by
 //! `fips_validation_hooks`. With neither feature this module is compiled
 //! out and uno rejects every custom opcode.
 //!
@@ -50,16 +50,16 @@
 //! `azihsm_ddi_mbor_test_hooks` host crate, which encodes the matching opaque
 //! request; the response stays `{1: result?}`.
 
-#[cfg(feature = "mcr_test_hooks")]
+#[cfg(feature = "azihsm_test_hooks")]
 mod clear_user_credentials;
 mod common;
 #[cfg(feature = "fips_validation_hooks")]
 mod get_priv_key;
 #[cfg(feature = "fips_validation_hooks")]
 mod raw_key_import;
-#[cfg(feature = "mcr_test_hooks")]
+#[cfg(feature = "azihsm_test_hooks")]
 mod test_action;
-#[cfg(feature = "mcr_test_hooks")]
+#[cfg(feature = "azihsm_test_hooks")]
 mod trigger_crash;
 
 use azihsm_fw_ddi_mbor::MborDecode;
@@ -75,7 +75,7 @@ use crate::pal::UnoHsmPal;
 
 /// `DdiOp::TestAction` — matches `mcr-hsm`'s discriminant so the same
 /// host tooling drives both firmwares.
-#[cfg(feature = "mcr_test_hooks")]
+#[cfg(feature = "azihsm_test_hooks")]
 const DDI_OP_TEST_ACTION: u32 = 2004;
 /// `DdiOp::GetPrivKey`.
 #[cfg(feature = "fips_validation_hooks")]
@@ -86,7 +86,7 @@ const DDI_OP_RAW_KEY_IMPORT: u32 = 2008;
 
 fn handles_opcode(opcode: u32) -> bool {
     match opcode {
-        #[cfg(feature = "mcr_test_hooks")]
+        #[cfg(feature = "azihsm_test_hooks")]
         DDI_OP_TEST_ACTION => true,
         #[cfg(feature = "fips_validation_hooks")]
         DDI_OP_GET_PRIV_KEY | DDI_OP_RAW_KEY_IMPORT => true,
@@ -153,7 +153,7 @@ pub(crate) async fn mbor_dispatch<'p>(
         // The decoder is now positioned at the request data map; the selected
         // handler owns it from here.
         match hdr.op {
-            #[cfg(feature = "mcr_test_hooks")]
+            #[cfg(feature = "azihsm_test_hooks")]
             DDI_OP_TEST_ACTION => test_action::dispatch(pal, io, &hdr, &mut decoder, request_len),
             #[cfg(feature = "fips_validation_hooks")]
             DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, request_len),

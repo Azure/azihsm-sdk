@@ -17,7 +17,7 @@
 //!
 //! Behaviour on this firmware:
 //! - Requires a **physical** device — virtual/mock devices are skipped.
-//! - Requires firmware built with `mcr_test_hooks`; otherwise `TriggerCrash`
+//! - Requires firmware built with `azihsm_test_hooks`; otherwise `TriggerCrash`
 //!   returns [`DdiStatus::UnsupportedCmd`] and the case is skipped.
 //! - CP1 firmware currently only implements crashing the **HSM** core; a
 //!   request naming another core returns `UnsupportedCmd`, so those cases
@@ -293,7 +293,7 @@ fn test_trigger_hang_in_fp0() {
 /// the device recovers.
 ///
 /// Physical-device only; virtual devices and firmware without
-/// `mcr_test_hooks` (or without support for the requested core) are skipped.
+/// `azihsm_test_hooks` (or without support for the requested core) are skipped.
 fn trigger_crash(
     device_path: String,
     cpu_id: DdiTestActionSocCpuId,
@@ -322,7 +322,7 @@ fn trigger_crash(
     );
 
     // A clean `UnsupportedCmd` means no crash happened: either the firmware
-    // lacks `mcr_test_hooks` or it does not implement crashing this core.
+    // lacks `azihsm_test_hooks` or it does not implement crashing this core.
     // Skip rather than assert a recovery that never had a crash to recover
     // from.
     if let Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd)) = &resp {

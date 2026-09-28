@@ -7,7 +7,7 @@
 //! open session and asserts the platform handler reports success. The
 //! action needs no request-specific payload.
 //!
-//! Requires a device whose firmware is built with `mcr_test_hooks`.
+//! Requires a device whose firmware is built with `azihsm_test_hooks`.
 
 #![allow(clippy::unwrap_used)]
 
@@ -51,7 +51,7 @@ fn test_part_prov_only_once() {
                 helper_test_action_cmd(dev, session_id, TestActionRequest::ClearUserCredentials);
 
             if matches!(&resp, Err(DdiError::DdiStatus(DdiStatus::UnsupportedCmd))) {
-                println!("Firmware is not built with mcr_test_hooks.");
+                println!("Firmware is not built with azihsm_test_hooks.");
                 return;
             }
 

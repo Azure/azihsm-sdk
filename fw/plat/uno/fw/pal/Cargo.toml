@@ -72,4 +72,4 @@ fips_validation_hooks = [
   "dep:azihsm_fw_ddi_mbor_derive",
   "dep:azihsm_fw_ddi_mbor_types",
 ]
-mcr_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
+azihsm_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
