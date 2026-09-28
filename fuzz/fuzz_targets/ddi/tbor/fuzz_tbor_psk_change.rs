@@ -7,13 +7,7 @@
 mod common;
 
 use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
-use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
-use azihsm_ddi_tbor_types::PSK_CHANGE_AAD_LEN;
-use azihsm_ddi_tbor_types::PSK_LEN;
-use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborPskChangeReq;
-use azihsm_ddi_tbor_types::build_psk_change_aad;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
