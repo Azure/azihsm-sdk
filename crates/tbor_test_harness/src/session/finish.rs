@@ -41,8 +41,8 @@ use super::init::PendingHandshake;
 ///
 /// `exported` is retained so tests that need to re-derive
 /// authenticated-session MAC keys (or any other label-derived
-/// material) can do so via the [`derive_mac_tx_key`] /
-/// [`derive_mac_rx_key`] accessors.
+/// material) can do so via the [`Self::derive_mac_tx_key`] /
+/// [`Self::derive_mac_rx_key`] accessors.
 pub struct SessionHandshake {
     /// Active session identifier.
     pub session_id: u16,
