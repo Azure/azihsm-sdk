@@ -3,7 +3,7 @@
 
 language = "C"
 
-header = "/*\r * Copyright (c) Microsoft Corporation.\r * Licensed under the MIT License\r */"
+header = "// Copyright (c) Microsoft Corporation.\n// Licensed under the MIT License."
 
 cpp_compat = true
 

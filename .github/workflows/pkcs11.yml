@@ -1,0 +1,150 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# PKCS#11 module integration check.
+#
+# Runs on PRs into the feature/pkcs11 staging branch (where the module is
+# developed until it merges to main) and on pushes to that branch; manual
+# dispatch stays available. Unimplemented entry points return
+# CKR_FUNCTION_NOT_SUPPORTED; the drive covers init/login, host objects,
+# SHA-256 digest, and the AES keygen/CBC slice. Add main to the triggers when
+# the staging branch merges.
+name: pkcs11
+
+on:
+  push:
+    branches: [ feature/pkcs11 ]
+  pull_request:
+    branches: [ feature/pkcs11 ]
+  workflow_dispatch:
+
+env:
+  CACHE_KEY_ID: dd2c2bcffcf0cd62b538fdeaa31c7b89c4d42815
+
+jobs:
+  build-and-drive:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Shared setup: apt packages + Cargo cache. The Rust toolchain comes from
+      # rust-toolchain.toml (rustup installs it on the first cargo call) — the
+      # same way every other workflow gets it.
+      - uses: ./.github/actions/ubuntu-setup
+
+      - name: Install CMake, OpenSSL headers, and OpenSC pkcs11-tool
+        run: sudo apt-get install -y cmake libssl-dev opensc
+
+      - name: Build PKCS#11 module against the mock DDI
+        run: cargo build -p azihsm_pkcs11 --features mock
+
+      - name: Drive with pkcs11-tool (show-info, slots, login, digests)
+        run: |
+          set -euo pipefail
+          MOD="$PWD/target/debug/azihsm_pkcs11.so"
+          pkcs11-tool --module "$MOD" --show-info
+          pkcs11-tool --module "$MOD" --list-slots
+          pkcs11-tool --module "$MOD" --login --pin 1234 --list-objects
+          printf abc > msg
+          for pair in SHA-1:sha1sum SHA256:sha256sum SHA384:sha384sum SHA512:sha512sum; do
+            mech="${pair%%:*}"; sum="${pair##*:}"
+            pkcs11-tool --module "$MOD" --hash --mechanism "$mech" \
+              --input-file msg --output-file dig
+            got="$(xxd -p -c130 dig)"
+            exp="$("$sum" < msg | cut -d' ' -f1)"
+            echo "$mech module=$got coreutils=$exp"
+            test "$got" = "$exp"
+          done
+
+      - name: AES keygen via pkcs11-tool
+        run: |
+          set -euo pipefail
+          MOD="$PWD/target/debug/azihsm_pkcs11.so"
+          # --sensitive is required: the module refuses non-sensitive HSM keys.
+          pkcs11-tool --module "$MOD" --login --pin 1234 --keygen \
+            --key-type aes:32 --label ci-aes --sensitive
+
+      # GoogleTest suite driving the module ABI (keygen, one-shot CBC, the
+      # operation state machine) against the mock-backed build; one process
+      # per test case via gtest_discover_tests.
+      - name: Functional tests (GoogleTest suite)
+        run: |
+          set -euo pipefail
+          MOD="$PWD/target/debug/azihsm_pkcs11.so"
+          cmake -S plugins/azihsm_pkcs11/integration-tests/cpp \
+            -B "$RUNNER_TEMP/pkcs11-cpp-tests" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/pkcs11-cpp-tests" --parallel
+          AZIHSM_PKCS11_MODULE="$MOD" ctest --test-dir "$RUNNER_TEMP/pkcs11-cpp-tests" \
+            --output-on-failure --no-tests=error
+
+      # Conformance gate: Google pkcs11test (external oracle) over the
+      # include-list of tests this module is expected to pass. The script
+      # clones and builds the tool at its pinned revision; see
+      # plugins/azihsm_pkcs11/tests/pkcs11test/README.md.
+      - name: Conformance gate (pkcs11test)
+        run: |
+          set -euo pipefail
+          plugins/azihsm_pkcs11/tests/pkcs11test/run.sh \
+            "$PWD/target/debug/azihsm_pkcs11.so" "$RUNNER_TEMP/pkcs11test"
+
+  # Object-store unit tests: standalone C harnesses that link the backend
+  # sources directly (no device, no libcrypto), so they need only a compiler.
+  objstore-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and run the object-store unit tests
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          out="$RUNNER_TEMP/objstore-tests"
+          mkdir -p "$out"
+          inc="-I include/pkcs11-v3.1 -I src"
+          warn="-Wall -Wextra -Werror"
+          store_src="src/azihsm_pkcs11_objstore_file.c src/azihsm_pkcs11_objstore_mem.c src/azihsm_pkcs11_store_io.c src/azihsm_pkcs11_store_record.c"
+          gcc $warn $inc tests/store_io_test.c src/azihsm_pkcs11_store_io.c -o "$out/store_io_test"
+          gcc $warn $inc tests/record_test.c src/azihsm_pkcs11_store_record.c -o "$out/record_test"
+          gcc $warn $inc tests/objstore_file_test.c $store_src -o "$out/objstore_file_test" -lpthread
+          gcc $warn $inc tests/objstore_stress_test.c $store_src -o "$out/objstore_stress_test" -lpthread
+          "$out/store_io_test"
+          "$out/record_test"
+          "$out/objstore_file_test"
+          "$out/objstore_stress_test"
+
+  # AES keygen-template and status-map unit test: a standalone C harness that
+  # links the two device-free translation units directly (no device, no
+  # libcrypto), so it needs only a compiler. Built with UBSan: the template
+  # decoder reads caller-supplied pointers that carry no alignment guarantee,
+  # and the harness feeds it a deliberately misaligned template.
+  template-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and run the template / status-map unit test
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          gcc -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            -I include/pkcs11-v3.1 -I src \
+            tests/aes_template_test.c \
+            src/azihsm_pkcs11_template.c src/azihsm_pkcs11_status.c \
+            -o "$RUNNER_TEMP/aes_template_test"
+          "$RUNNER_TEMP/aes_template_test"
+
+  # Digest known-answer tests: a standalone C harness that links the digest
+  # source directly (no device, no libcrypto), so it needs only a compiler.
+  digest-unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and run the digest KAT
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          gcc -Wall -Wextra -Werror -I include/pkcs11-v3.1 -I src \
+            tests/digest_kat_test.c src/azihsm_pkcs11_digest.c \
+            -o "$RUNNER_TEMP/digest_kat_test"
+          "$RUNNER_TEMP/digest_kat_test"
