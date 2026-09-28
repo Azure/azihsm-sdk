@@ -146,11 +146,17 @@ fn decode_request(
     let wire_request: DdiTestActionCrashReqInfo =
         decode_payload(decoder, request_field_count, request_len)?;
 
-    // Only local HSM and remote Admin crash injection are implemented here.
-    // FP crash routing is separate from the existing bulk-key IPC channel.
+    // All five SoC cores are reachable: the HSM crashes itself, Admin over
+    // the HSM→Admin channel, and the three fast-path cores over the HSM→FP
+    // channel. Anything else is a malformed core id, which the reference
+    // rejects as an invalid argument rather than an unsupported command.
     match wire_request.cpu_id {
-        DdiTestActionSocCpuId::Hsm | DdiTestActionSocCpuId::Admin => {}
-        _ => return Err(HsmError::UnsupportedCmd),
+        DdiTestActionSocCpuId::Hsm
+        | DdiTestActionSocCpuId::Admin
+        | DdiTestActionSocCpuId::Fp0
+        | DdiTestActionSocCpuId::Fp1
+        | DdiTestActionSocCpuId::Fp2 => {}
+        _ => return Err(HsmError::InvalidArg),
     }
 
     match wire_request.crash_type {
@@ -168,7 +174,42 @@ fn decode_request(
 /// Route a validated request to the core that should crash.
 async fn execute(pal: &UnoHsmPal, request: CrashRequest) -> HsmResult<Infallible> {
     match request.cpu_id {
-        DdiTestActionSocCpuId::Admin => execute_remote(pal, request.crash_type).await,
+        DdiTestActionSocCpuId::Admin => {
+            execute_remote(
+                pal,
+                IpcChannel::AdminRequest,
+                SocCpuId::Admin,
+                request.crash_type,
+            )
+            .await
+        }
+        DdiTestActionSocCpuId::Fp0 => {
+            execute_remote(
+                pal,
+                IpcChannel::FpMessage,
+                SocCpuId::Fp0,
+                request.crash_type,
+            )
+            .await
+        }
+        DdiTestActionSocCpuId::Fp1 => {
+            execute_remote(
+                pal,
+                IpcChannel::FpMessage,
+                SocCpuId::Fp1,
+                request.crash_type,
+            )
+            .await
+        }
+        DdiTestActionSocCpuId::Fp2 => {
+            execute_remote(
+                pal,
+                IpcChannel::FpMessage,
+                SocCpuId::Fp2,
+                request.crash_type,
+            )
+            .await
+        }
         _ => execute_local(request),
     }
 }
@@ -187,20 +228,26 @@ fn ipc_crash_type(crash_type: DdiTestActionCrashType) -> CrashType {
     }
 }
 
-/// Tag used to match the Admin core's reply to the crash request.
+/// Tag carried on the crash request. The reply is discarded, so this only
+/// has to be a value the responder echoes back unchanged.
 const CRASH_REQUEST_TAG: u8 = 0;
 
-/// Ask the Admin core to crash itself, then stop.
+/// Ask a remote core to crash itself, then stop.
+///
+/// `channel` selects the transport and `target` the core that should go down:
+/// `AdminRequest` carries Admin crashes over the GSRAM HSM↔Admin rings, and
+/// `FpMessage` carries fast-path crashes over the PSRAM HSM↔FP rings. Both
+/// mirror the reference `send_crashdump_request`, which picks
+/// `hsm_to_admin_ipc_channel` or `fp_ipc_channel` off the same `cpu_id`.
 ///
 /// The request is sent without waiting for a reply, mirroring the reference
 /// firmware: its HSM core moves the command to `State::Final` and returns
 /// `HsmErr::Pending` as soon as the IPC send succeeds, and has no FSM state
-/// that consumes a crash acknowledgement. The Admin core does still reply
-/// before crashing, but nothing on the requesting side depends on that, so
-/// an Admin-side change that stops replying cannot silently disable this
-/// path.
+/// that consumes a crash acknowledgement. The remote core does still reply
+/// before crashing, but nothing on the requesting side depends on that, so a
+/// remote change that stops replying cannot silently disable this path.
 ///
-/// The command must never produce a completion: the Admin core is going down
+/// The command must never produce a completion: the remote core is going down
 /// and the SP will reset the whole CP, so answering the host would race that
 /// reset and could hand back a success. `HsmErr::Pending` is how the
 /// reference parks the command; here the equivalent is a future that never
@@ -209,20 +256,17 @@ const CRASH_REQUEST_TAG: u8 = 0;
 /// crash-recovery test asserts.
 async fn execute_remote(
     pal: &UnoHsmPal,
+    channel: IpcChannel,
+    target: SocCpuId,
     crash_type: DdiTestActionCrashType,
 ) -> HsmResult<Infallible> {
-    let msg = encode_trigger_crash(
-        CRASH_REQUEST_TAG,
-        SocCpuId::Admin,
-        ipc_crash_type(crash_type),
-    );
+    let msg = encode_trigger_crash(CRASH_REQUEST_TAG, target, ipc_crash_type(crash_type));
 
     // `reply` is this pair's fire-and-forget transmit: copy into the TX ring,
     // advance PI, ring the doorbell. Unlike `send` it allocates no slot and
-    // leaves `in_flight` clear, so Admin's acknowledgement arrives with no
-    // waiter and is discarded. `AdminRequest` carries no other traffic, so
-    // the unread reply cannot be mistaken for another command's response.
-    pal.ipc.reply(IpcChannel::AdminRequest as u8, &msg);
+    // leaves `in_flight` clear, so the remote acknowledgement arrives with no
+    // waiter and is discarded.
+    pal.ipc.reply(channel as u8, &msg);
 
     core::future::pending().await
 }
