@@ -2,15 +2,19 @@
 // Licensed under the MIT License.
 
 mod aes;
+#[cfg(not(feature = "session-ex-tests"))]
 mod ecc;
+#[cfg(not(feature = "session-ex-tests"))]
 mod hash;
+#[cfg(not(feature = "session-ex-tests"))]
 mod hmac;
+#[cfg(not(feature = "session-ex-tests"))]
 mod kdf;
+#[cfg(not(feature = "session-ex-tests"))]
 mod rsa;
 // Sealing key generation is only valid on a V2 (security-domain) session,
-// which a real backend (emu or hardware) provides; gate the module out only
-// for the mock backend.
-#[cfg(not(feature = "mock"))]
+// so include it only in the session-ex test build.
+#[cfg(feature = "session-ex-tests")]
 mod sealing;
 
 use super::*;

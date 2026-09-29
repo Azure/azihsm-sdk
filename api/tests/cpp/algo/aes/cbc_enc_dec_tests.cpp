@@ -770,10 +770,8 @@ TEST_F(azihsm_aes_cbc, single_shot_invalid_algo_param_len_is_rejected)
 
 TEST_F(azihsm_aes_cbc, single_shot_null_iv_is_rejected)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-        auto key = generate_aes_key(session.get(), 128);
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto key = generate_aes_key(session, 128);
 
         azihsm_algo crypt_algo{};
         crypt_algo.id = AZIHSM_ALGO_ID_AES_CBC;
