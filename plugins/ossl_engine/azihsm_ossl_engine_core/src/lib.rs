@@ -27,5 +27,7 @@ pub mod hkdf_method;
 mod method_table;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod pkey_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod rsa_pkey_method;
 
 pub use azihsm_ossl_engine_sys as ffi;

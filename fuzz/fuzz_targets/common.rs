@@ -5,16 +5,19 @@
 
 #![allow(dead_code)]
 
-use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::*;
+use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_tbor_codec::Encoder;
-use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_codec::*;
+use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
+use azihsm_ddi_tbor_types::SessionType;
 
 pub type DdiTest = AzihsmDdi;
 
@@ -33,6 +36,31 @@ pub enum EncoderTOCBuilders {
     SealedKey(Vec<u8>),
     None,
     Padding(u16),
+}
+
+/// Which role's session to open for this iteration.
+#[derive(Arbitrary, Debug)]
+pub enum FuzzRole {
+    /// `psk_id = 0`, `SessionType::Authenticated`
+    Co,
+    /// `psk_id = 1`, `SessionType::PlainText`
+    Cu,
+}
+
+impl FuzzRole {
+    pub fn psk_id(&self) -> u8 {
+        match self {
+            FuzzRole::Co => CO,
+            FuzzRole::Cu => CU,
+        }
+    }
+
+    pub fn session_type(&self) -> SessionType {
+        match self {
+            FuzzRole::Co => SessionType::Authenticated,
+            FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
 }
 
 /// Buffer size used by request encoder fuzz targets.

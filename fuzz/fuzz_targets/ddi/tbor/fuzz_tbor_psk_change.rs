@@ -11,13 +11,7 @@ use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-/// CO PSK id — pairs with an `Authenticated` session, mapping to the
-/// `CryptoOfficer` role branch of `target_psk_for_role`.
-const CO: u8 = 0;
-/// CU PSK id — pairs with a `PlainText` session, mapping to the
-/// `CryptoUser` role branch.
-const CU: u8 = 1;
+use common::FuzzRole;
 
 /// Fuzz input for the TBOR `PskChange` handler.
 #[derive(Arbitrary, Debug)]
@@ -30,31 +24,6 @@ struct FuzzInput {
     shape: Shape,
     /// Optional post-seal single-byte flip
     tamper: Option<Tamper>,
-}
-
-/// Which role's session to open for this iteration.
-#[derive(Arbitrary, Debug)]
-enum FuzzRole {
-    /// `psk_id = 0`, `SessionType::Authenticated`
-    Co,
-    /// `psk_id = 1`, `SessionType::PlainText`
-    Cu,
-}
-
-impl FuzzRole {
-    fn psk_id(&self) -> u8 {
-        match self {
-            FuzzRole::Co => CO,
-            FuzzRole::Cu => CU,
-        }
-    }
-
-    fn session_type(&self) -> SessionType {
-        match self {
-            FuzzRole::Co => SessionType::Authenticated,
-            FuzzRole::Cu => SessionType::PlainText,
-        }
-    }
 }
 
 /// Sizes the sealed envelope's AAD and payload regions. The three

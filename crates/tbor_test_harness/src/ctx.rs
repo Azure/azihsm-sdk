@@ -232,7 +232,7 @@ impl TestCtx {
     // -------------------------------------------------------------------
     // TBOR command pass-throughs
     //
-    // Thin wrappers around the free helpers in `harness::session` so
+    // Thin wrappers around the free helpers in `crate::session` so
     // tests can write `ctx.psk_change(&session, &psk)` instead of
     // reaching through a raw device handle. The free helpers remain
     // in place for documentation purposes (their signatures describe
@@ -292,7 +292,8 @@ impl TestCtx {
 
     /// Issue `SessionClose(session_id)`. Used by negative-path
     /// tests (double-close, unknown id) and by callers that hold a
-    /// raw [`SessionHandshake`] outside of a [`SessionGuard`].
+    /// raw [`SessionHandshake`] outside of a
+    /// [`SessionGuard`](crate::SessionGuard).
     pub fn session_close(&self, session_id: u16) -> DdiResult<()> {
         session_close_helper(&self.dev, session_id)
     }

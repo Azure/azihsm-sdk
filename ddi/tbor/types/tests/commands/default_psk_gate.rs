@@ -32,7 +32,7 @@
 //!   session.
 //!
 //! Each test receives a factory-reset device from
-//! [`TestCtx::new`](crate::harness::TestCtx::new), so partition PSKs
+//! [`TestCtx::new`](azihsm_ddi_tbor_test_harness::TestCtx::new), so partition PSKs
 //! begin at their canonical defaults.
 
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;

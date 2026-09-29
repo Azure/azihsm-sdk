@@ -107,7 +107,7 @@ impl TestCtx {
     /// return a [`SessionGuard`] that will close it on `Drop`.
     ///
     /// Fallible: propagates any FW or transport error from the
-    /// underlying [`Self::open_session_raw`]. Happy-path callers
+    /// underlying `open_session_raw`. Happy-path callers
     /// typically `.expect(...)` the returned `Result`; negative-path
     /// tests inspect the `Err` directly.
     pub fn open_session(
