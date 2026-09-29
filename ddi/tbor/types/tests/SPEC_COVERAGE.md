@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts (last updated 2026-09-16):
-* emu: 112 tests
+* emu: 117 tests
 * mock: 6 tests
 
 ## Legend
@@ -177,34 +177,31 @@ role's partition PSK still matches the compiled-in default.
 |---|---|---|---|
 
 
-## `GetCertificate` (opcode out-of-session)
-
-Firmware integration coverage for the TBOR `GetCertificate` command. These tests exercise
-certificate retrieval from slot 0, cross-check TBOR against the MBOR certificate path,
-validate invalid slot/index status handling, and verify that the out-of-session command is
-independent of CO/CU session state.
+## `HmacGenerateKey` (opcode in-session, gated)
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Every certificate index advertised by `GetCertChainInfo` returns non-empty, valid DER/X.509 within `CERT_MAX_LEN` | ✅ 🔁 | `get_cert::all_indices_round_trip` | Iterates over the full advertised chain and verifies DER SEQUENCE encoding and X.509 parsing. |
-| TBOR certificate bytes match the MBOR certificate path at every index | ✅ 🔁 | `get_cert::matches_mbor_path` | Both interfaces read the same underlying certificate store. |
-| Repeated reads of every advertised certificate are stable | ✅ 🔁 | `get_cert::repeated_reads_are_stable` | Reads each certificate twice and compares the full response. |
-| Distinct certificate indices do not alias the same certificate bytes | ✅ 🔁 | `get_cert::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain. |
-| First index beyond the advertised chain and `u8::MAX` are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_indices_rejected` | Covers the immediate boundary and maximum representable certificate id. |
-| Non-zero / unsupported certificate slots are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_slots_rejected` | Covers slots `1`, `2`, `127`, `254`, and `u8::MAX`. |
-| Invalid requests do not alter a valid certificate | ✅ | `get_cert::rejected_requests_do_not_affect_valid_certificate` | Valid certificate is identical before and after invalid slot/index requests. |
-| Out-of-session `GetCertificate` remains callable while a CO Authenticated session is active | ✅ | `get_cert::callable_while_session_active` | Uses shared `common::CO`; active in-session state must not gate the command. |
-| `GetCertChainInfo::num_certs` exactly matches the readable `GetCertificate` boundary | ✅ | `get_cert::chain_info_count_matches_get_certificate_boundary` | Every advertised index succeeds and index `num_certs` is rejected with `InvalidArg`. |
-| Interleaved reads of other certificate indices do not alter certificate 0 | ✅ | `get_cert::interleaved_reads_are_stable` | Exercises non-isolated read ordering. |
-| Certificate reads are stable before, during, and after a CO Authenticated-session lifecycle | ✅ | `get_cert::stable_across_session_lifecycle` | Verifies session open/close does not affect this out-of-session command. |
-| A rejected request does not affect any certificate in the valid chain | ✅ 🔁 | `get_cert::rejected_request_does_not_affect_entire_chain` | Snapshots the entire chain before an invalid request and compares afterward. |
-| Reading certificates does not change `GetCertChainInfo` metadata | ✅ | `get_cert::certificate_reads_do_not_change_chain_info` | Compares chain-info response before and after reading every certificate. |
-| Certificates can be fetched in reverse order | ✅ 🔁 | `get_cert::certificates_can_be_read_in_reverse_order` | Confirms reads do not depend on sequential traversal. |
-| First and last advertised certificate indices are readable | ✅ | `get_cert::first_and_last_valid_indices_succeed` | Explicit lower/upper valid-boundary coverage. |
-| Interleaving MBOR and TBOR reads preserves byte-identical certificate results | ✅ 🔁 | `get_cert::mbor_tbor_interleaved_reads_remain_identical` | TBOR-before, MBOR, and TBOR-after remain consistent for every certificate. |
-| Invalid slot and invalid certificate-index failures preserve the entire valid chain | ✅ | `get_cert::all_reject_classes_preserve_entire_chain` | Covers both rejection classes against a full-chain snapshot. |
-| Out-of-session `GetCertificate` remains callable while a CU PlainText session is active | ✅ | `get_cert::callable_while_cu_session_active` | Uses shared `common::CU`; CU uses the supported `SessionType::PlainText` pairing. |
-| `GetCertificate` remains stable across both supported CO Authenticated and CU PlainText session lifecycles | ✅ | `get_cert::entire_chain_stable_across_co_and_cu_session_lifecycles` | Verifies every advertised certificate before, during, and after each supported role/session pairing. |
+| Happy path for SHA-256 / SHA-384 / SHA-512 | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_hashes` | Generates a key for every supported HMAC hash and verifies it can be used by `Hmac` |
+| Generated keys are fresh across repeated generations | ✅ | `hmac_generate_key::hmac_generate_key_roundtrip_all_hashes` | A second generation produces a distinct masked key and a distinct tag for the same message |
+| Variable key lengths within each algorithm's supported range | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_variable_lengths` | SHA-256: 32–64 B; SHA-384: 48–128 B; SHA-512: 64–128 B |
+| Exact minimum / maximum key lengths are accepted | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_exact_length_boundaries` | Exercises both boundaries for every supported hash |
+| Non-boundary key lengths are accepted | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_non_digest_key_lengths` | Exercises values immediately inside each supported range |
+| Key length below minimum / above maximum → `InvalidKeyLength` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_out_of_range_length` | Includes zero, adjacent out-of-range values, and `u8::MAX` |
+| Session / Ephemeral / Local scopes succeed after finalization | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_scopes` | Exercises all currently usable masking-key scopes |
+| Session scope succeeds before `PartFinal` | ✅ | `hmac_generate_key::hmac_generate_key_session_scope_before_finalize` | Session masking key is available once the session is Active |
+| Ephemeral scope before `PartFinal` → `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_non_session_scopes_before_finalize` | Ephemeral masking key is not provisioned until partition finalization |
+| SecurityDomain scope without a created SD → `UnsupportedKeyScope` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_security_domain_scope` | No SD masking key is available |
+| Unsupported hash discriminant → `InvalidArg` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_hash` | Exercises `0`, `4`, and `u8::MAX` |
+| Unsupported scope discriminant → `UnsupportedKeyScope` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_scope` | Exercises invalid wire scope values |
+| Crypto-User can generate and use Session-scoped keys | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_crypto_user_session_scope` | Exercises SHA-256 / SHA-384 / SHA-512 under rotated CU PSK |
+| Empty key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_empty_key_label` | Covers the default empty `key_label` request value |
+| Non-empty key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_non_empty_key_label` | Generates a usable HMAC key with a caller-supplied label |
+| Binary key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_binary_key_label` | Covers arbitrary label bytes including `0x00`, `0x80`, and `0xff` |
+| Maximum key-label length is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_max_key_label_length` | Exercises `TBOR_KEY_LABEL_MAX_LEN` |
+| Key label longer than the maximum → `TborInvalidFixedLength` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_oversized_key_label` | Exercises `TBOR_KEY_LABEL_MAX_LEN + 1` |
+| CO default PSK → `DefaultPskMustRotate` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_default_psk` | Proves `HmacGenerateKey` is subject to the dispatcher default-PSK gate |
+| Closed session → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_closed_session` | Request is issued after the originating session is explicitly closed |
+| Unknown session id → `SessionNotFound` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_invalid_session_id` | Exercises invalid session identifiers |
 
 ## `EccGenerateKey` (opcode in-session, gated)
 

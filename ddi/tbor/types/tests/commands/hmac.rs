@@ -28,8 +28,8 @@ use azihsm_ddi_tbor_types::HMAC_HASH_SHA384;
 use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
 
-use crate::commands::hmac_generate_key::SCOPE_EPHEMERAL;
-use crate::commands::hmac_generate_key::SCOPE_SESSION;
+use crate::commands::common::SCOPE_EPHEMERAL;
+use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::harness::TestCtx;
