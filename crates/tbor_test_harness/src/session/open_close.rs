@@ -34,7 +34,7 @@ use super::init::session_open_init;
 
 /// One-shot helper: run both phases of the session handshake against
 /// `dev`. Equivalent to `session_open_init(...)? → session_open_finish(...)`.
-pub(crate) fn session_open(
+pub fn session_open(
     dev: &<AzihsmDdi as Ddi>::Dev,
     psk_id: u8,
     session_type: SessionType,
@@ -44,10 +44,7 @@ pub(crate) fn session_open(
 }
 
 /// Issue `SessionClose(session_id)` and return on success.
-pub(crate) fn session_close(
-    dev: &<AzihsmDdi as Ddi>::Dev,
-    session_id: u16,
-) -> Result<(), DdiError> {
+pub fn session_close(dev: &<AzihsmDdi as Ddi>::Dev, session_id: u16) -> Result<(), DdiError> {
     let req = TborSessionCloseReq { session_id };
     let mut cookie = None;
     let _resp: TborSessionCloseResp = dev.exec_op_tbor(&req, None, &mut cookie)?;
