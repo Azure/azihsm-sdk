@@ -10,11 +10,11 @@ use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SessionType;
@@ -31,18 +31,16 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
- fn bounded_mach_seed_envelope(
-     u: &mut arbitrary::Unstructured<'_>,
- ) -> arbitrary::Result<Vec<u8>> {
-     let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
-     Ok(u.bytes(len)?.to_vec())
- }
+fn bounded_mach_seed_envelope(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
+    Ok(u.bytes(len)?.to_vec())
+}
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     /// Fuzzed mach_seed_envelope; 100 bytes is the firmware-valid length.
-     #[arbitrary(with = bounded_mach_seed_envelope)]
-     mach_seed_envelope: Vec<u8>,
+    #[arbitrary(with = bounded_mach_seed_envelope)]
+    mach_seed_envelope: Vec<u8>,
     /// Fixed-length fuzzed POTA thumbprint.
     pota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
     /// Fixed-length fuzzed SATA thumbprint.

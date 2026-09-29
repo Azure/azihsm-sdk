@@ -11,11 +11,11 @@ use azihsm_ddi_interface::*;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
+use common::FuzzRole;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use x509::X509CertificateOp;
-use common::FuzzRole;
 
 /// P-384 coordinate length in bytes.
 const P384_COORD_LEN: usize = 48;
