@@ -40,7 +40,7 @@ use super::finish::SessionHandshake;
 /// `SATA_THUMBPRINT_LEN`.  Any size violation surfaces
 /// [`DdiError::InvalidParameter`] before the request reaches the
 /// device.
-pub(crate) fn part_init(
+pub fn part_init(
     dev: &<AzihsmDdi as Ddi>::Dev,
     session: &SessionHandshake,
     mach_seed: &[u8],
@@ -85,7 +85,7 @@ pub(crate) fn part_init(
 /// Exposed so negative-path tests can mutate the envelope (flip a
 /// ciphertext byte, swap AAD session id, …) before shipping it via a
 /// raw [`TborPartInitReq`].
-pub(crate) fn encrypt_mach_seed_envelope(
+pub fn encrypt_mach_seed_envelope(
     session: &SessionHandshake,
     mach_seed: &[u8],
 ) -> Result<Vec<u8>, DdiError> {
@@ -127,30 +127,10 @@ pub(crate) fn encrypt_mach_seed_envelope(
 /// negative-path tests; the FW handler reconstructs the same bytes
 /// from the wire-pinned constants and rejects any mismatch.
 #[must_use]
-pub(crate) fn build_part_init_mach_seed_aad(session_id: u16) -> [u8; PART_INIT_MACH_SEED_AAD_LEN] {
+pub fn build_part_init_mach_seed_aad(session_id: u16) -> [u8; PART_INIT_MACH_SEED_AAD_LEN] {
     let mut aad = [0u8; PART_INIT_MACH_SEED_AAD_LEN];
     aad[..PART_INIT_MACH_SEED_AAD_LABEL.len()].copy_from_slice(PART_INIT_MACH_SEED_AAD_LABEL);
     aad[PART_INIT_MACH_SEED_AAD_LABEL.len()..PART_INIT_MACH_SEED_AAD_LABEL.len() + 2]
         .copy_from_slice(&session_id.to_le_bytes());
     aad
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mach_seed_aad_layout() {
-        let aad = build_part_init_mach_seed_aad(0x1234);
-        assert_eq!(
-            &aad[..PART_INIT_MACH_SEED_AAD_LABEL.len()],
-            PART_INIT_MACH_SEED_AAD_LABEL
-        );
-        assert_eq!(
-            &aad[PART_INIT_MACH_SEED_AAD_LABEL.len()..PART_INIT_MACH_SEED_AAD_LABEL.len() + 2],
-            &[0x34, 0x12],
-        );
-        assert_eq!(aad.len(), PART_INIT_MACH_SEED_AAD_LEN);
-        assert_eq!(PART_INIT_MACH_SEED_AAD_LEN, 32);
-    }
 }
