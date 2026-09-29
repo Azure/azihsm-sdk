@@ -3,6 +3,9 @@
 
 #![no_main]
 
+#[path = "../../common.rs"]
+mod common;
+
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
@@ -27,8 +30,6 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
-
-static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
@@ -77,52 +78,53 @@ fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let ctx = CTX.get_or_init(TestCtx::new);
-    ctx.erase().expect("erase should succeed");
+    common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
+        ctx.erase().expect("erase should succeed");
 
-    // Rotate the CO PSK to clear the default-PSK gate before PartInit.
-    let bootstrap = ctx
-        .open_session(CO, SessionType::Authenticated)
-        .expect("bootstrap session open should succeed");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
-        .expect("PSK rotation should succeed");
-    bootstrap
-        .close()
-        .expect("bootstrap session close should succeed");
+        // Rotate the CO PSK to clear the default-PSK gate before PartInit.
+        let bootstrap = ctx
+            .open_session(CO, SessionType::Authenticated)
+            .expect("bootstrap session open should succeed");
+        ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
+            .expect("PSK rotation should succeed");
+        bootstrap
+            .close()
+            .expect("bootstrap session close should succeed");
 
-    // Open a fresh CO session under the rotated PSK.
-    let opts =
-        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("session_open_init should succeed");
-    let session = ctx
-        .session_open_finish(pending)
-        .expect("session_open_finish should succeed");
+        // Open a fresh CO session under the rotated PSK.
+        let opts =
+            SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+        let pending = ctx
+            .session_open_init_with_options(opts)
+            .expect("session_open_init should succeed");
+        let session = ctx
+            .session_open_finish(pending)
+            .expect("session_open_finish should succeed");
 
-    let sapota_thumbprint = if input.sapota_present {
-        input.sapota_thumbprint.to_vec()
-    } else {
-        Vec::new()
-    };
+        let sapota_thumbprint = if input.sapota_present {
+            input.sapota_thumbprint.to_vec()
+        } else {
+            Vec::new()
+        };
 
-    // Wire-valid PartPolicy — required so the handler advances past
-    // policy decode into the envelope/pipeline logic under fuzz.
-    let policy_bytes = known_good_part_policy();
-    let part_policy =
-        <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&policy_bytes)
-            .expect("known_good_part_policy must decode");
+        // Wire-valid PartPolicy — required so the handler advances past
+        // policy decode into the envelope/pipeline logic under fuzz.
+        let policy_bytes = known_good_part_policy();
+        let part_policy =
+            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&policy_bytes)
+                .expect("known_good_part_policy must decode");
 
-    let part_init_req = TborPartInitReq {
-        session_id: session.session_id,
-        mach_seed_envelope: input.mach_seed_envelope.to_vec(),
-        part_policy,
-        pota_thumbprint: input.pota_thumbprint,
-        sata_thumbprint: input.sata_thumbprint,
-        sapota_thumbprint,
-    };
-    let _ = ctx.tbor(&part_init_req);
+        let part_init_req = TborPartInitReq {
+            session_id: session.session_id,
+            mach_seed_envelope: input.mach_seed_envelope.to_vec(),
+            part_policy,
+            pota_thumbprint: input.pota_thumbprint,
+            sata_thumbprint: input.sata_thumbprint,
+            sapota_thumbprint,
+        };
+        let _ = ctx.tbor(&part_init_req);
 
-    ctx.session_close(session.session_id)
-        .expect("session close should succeed");
+        ctx.session_close(session.session_id)
+            .expect("session close should succeed");
+    });
 });
