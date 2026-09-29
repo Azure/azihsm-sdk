@@ -8,9 +8,11 @@
 //! and cleanup operations.
 
 use azihsm_api::*;
+#[cfg(not(feature = "session-ex-tests"))]
 use azihsm_api_tests_macro::*;
 use azihsm_crypto::*;
 use parking_lot::Mutex;
+#[cfg(not(feature = "session-ex-tests"))]
 use tracing::*;
 
 /// Serializes tests that reset or initialize the shared test partition.
