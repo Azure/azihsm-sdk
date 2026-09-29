@@ -188,7 +188,7 @@ fn hmac_generate_key_roundtrip_all_scopes() {
     }
 }
 
-/// Rejects SecurityDomain scope when its masking key has not been provisioned.
+/// Generates and uses a Session-scoped HMAC key before partition finalization.
 #[test]
 fn hmac_generate_key_session_scope_before_finalize() {
     // Session-scoped keys are masked under the per-session masking key, so
