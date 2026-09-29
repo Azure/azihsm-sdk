@@ -213,21 +213,8 @@ static CK_RV mem_destroy(void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, CK
 /* Per-attribute outcomes follow PKCS#11 §5.7.5: missing type, sensitive value,
  * two-call sizing, and too-small buffer each set ulValueLen and the return
  * value as the spec's cases prescribe. */
-static CK_RV mem_get_attr(
-    void *ctx,
-    CK_SLOT_ID slot,
-    CK_BBOOL user_logged_in,
-    CK_OBJECT_HANDLE h,
-    CK_ATTRIBUTE *tmpl,
-    CK_ULONG count
-)
+static CK_RV read_attrs(const mem_object *o, CK_ATTRIBUTE *tmpl, CK_ULONG count)
 {
-    mem_store *st = (mem_store *)ctx;
-    mem_object *o = lookup(st, h);
-    if (o == NULL || !visible(o, slot, user_logged_in))
-    {
-        return CKR_OBJECT_HANDLE_INVALID;
-    }
     /* Sensitive or non-extractable secret material must not be revealed. */
     CK_BBOOL sensitive =
         attr_bool(o, CKA_SENSITIVE, CK_FALSE) || !attr_bool(o, CKA_EXTRACTABLE, CK_TRUE);
@@ -269,6 +256,30 @@ static CK_RV mem_get_attr(
     return rv;
 }
 
+static CK_RV mem_get_attr(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_ATTRIBUTE *tmpl,
+    CK_ULONG count
+)
+{
+    mem_store *st = (mem_store *)ctx;
+    mem_object *o = lookup(st, h);
+    if (o == NULL || !visible(o, slot, user_logged_in))
+    {
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+    return read_attrs(o, tmpl, count);
+}
+
+/* The azihsm_pkcs11_objstore_reader a set_attr check sees the object through. */
+static CK_RV read_one(void *rctx, CK_ATTRIBUTE *a)
+{
+    return read_attrs((const mem_object *)rctx, a, 1);
+}
+
 /* All-or-nothing, like the file backend's read-modify-rewrite: every value and
  * the grown attribute array are allocated before the object is touched, so a
  * failed allocation leaves it unchanged rather than half-updated. */
@@ -278,7 +289,9 @@ static CK_RV mem_set_attr(
     CK_BBOOL user_logged_in,
     CK_OBJECT_HANDLE h,
     const CK_ATTRIBUTE *tmpl,
-    CK_ULONG count
+    CK_ULONG count,
+    azihsm_pkcs11_objstore_check check,
+    void *cctx
 )
 {
     mem_store *st = (mem_store *)ctx;
@@ -286,6 +299,14 @@ static CK_RV mem_set_attr(
     if (o == NULL || !visible(o, slot, user_logged_in))
     {
         return CKR_OBJECT_HANDLE_INVALID;
+    }
+    if (check != NULL)
+    {
+        CK_RV crv = check(cctx, read_one, o);
+        if (crv != CKR_OK)
+        {
+            return crv;
+        }
     }
     if (count == 0)
     {

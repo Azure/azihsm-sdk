@@ -31,6 +31,24 @@ extern "C"
 
 typedef struct azihsm_pkcs11_objstore_ops azihsm_pkcs11_objstore_ops;
 
+/*
+ * Reads one attribute of the object a set_attr check is deciding on, with
+ * get_attr semantics for a single-entry template.
+ */
+typedef CK_RV (*azihsm_pkcs11_objstore_reader)(void *rctx, CK_ATTRIBUTE *a);
+
+/*
+ * Decides whether a set_attr may go ahead, from the object as `read` sees it;
+ * anything but CKR_OK refuses the whole template. The backend runs it after it
+ * has locked and loaded the object and before it writes, so the decision and
+ * the write see the same state even when another process shares the store.
+ */
+typedef CK_RV (*azihsm_pkcs11_objstore_check)(
+    void *cctx,
+    azihsm_pkcs11_objstore_reader read,
+    void *rctx
+);
+
 typedef struct
 {
     const azihsm_pkcs11_objstore_ops *ops;
@@ -70,13 +88,20 @@ struct azihsm_pkcs11_objstore_ops
      CK_OBJECT_HANDLE h,
      CK_ATTRIBUTE *tmpl,
      CK_ULONG count);
+    /*
+     * Apply `tmpl` all-or-nothing. `check` (may be NULL) runs first, even for
+     * an empty template, under the same lock as the write; its refusal is
+     * returned and nothing changes.
+     */
     CK_RV(*set_attr)
     (void *ctx,
      CK_SLOT_ID slot,
      CK_BBOOL user_logged_in,
      CK_OBJECT_HANDLE h,
      const CK_ATTRIBUTE *tmpl,
-     CK_ULONG count);
+     CK_ULONG count,
+     azihsm_pkcs11_objstore_check check,
+     void *cctx);
 
     /*
      * Materialise the matches for a template into an opaque cursor the caller

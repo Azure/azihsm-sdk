@@ -539,19 +539,18 @@ CK_RV C_GetAttributeValue(
     return rv;
 }
 
-/* The object C_SetAttributeValue targets, as the attribute policy reads it. */
+/* The request C_SetAttributeValue hands the store to decide under its lock. */
 typedef struct
 {
-    CK_SLOT_ID slot;
-    CK_BBOOL logged_in;
-    CK_OBJECT_HANDLE h;
-} setattr_target;
+    const CK_ATTRIBUTE *tmpl;
+    CK_ULONG count;
+    CK_BBOOL rw_session;
+} setattr_request;
 
-static CK_RV setattr_read(void *ctx, CK_ATTRIBUTE *a)
+static CK_RV setattr_check(void *cctx, azihsm_pkcs11_objstore_reader read, void *rctx)
 {
-    const setattr_target *t = (const setattr_target *)ctx;
-    return g_azihsm_pkcs11.store.ops
-        ->get_attr(g_azihsm_pkcs11.store.ctx, t->slot, t->logged_in, t->h, a, 1);
+    const setattr_request *r = (const setattr_request *)cctx;
+    return azihsm_pkcs11_setattr_check(r->tmpl, r->count, r->rw_session, read, rctx);
 }
 
 CK_RV C_SetAttributeValue(
@@ -576,24 +575,27 @@ CK_RV C_SetAttributeValue(
         azihsm_pkcs11_unlock();
         return CKR_SESSION_HANDLE_INVALID;
     }
-    /* The store applies whatever it is given; the policy decides first, over the
-     * whole template, so a refused attribute leaves the object untouched. */
-    setattr_target t = { s->slot,
-                         g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE,
-                         hObject };
-    CK_BBOOL rw = ((s->flags & CKF_RW_SESSION) != 0) ? CK_TRUE : CK_FALSE;
-    CK_RV rv = azihsm_pkcs11_setattr_check(pTemplate, ulCount, rw, setattr_read, &t);
-    if ((rv == CKR_OK) && (ulCount > 0))
-    {
-        rv = g_azihsm_pkcs11.store.ops->set_attr(
-            g_azihsm_pkcs11.store.ctx,
-            t.slot,
-            t.logged_in,
-            hObject,
-            pTemplate,
-            ulCount
-        );
-    }
+    /*
+     * The store applies whatever it is given, so the policy decides over the
+     * whole template first. It runs inside set_attr rather than before it: the
+     * module lock serialises this process only, and the file backend's token
+     * objects are shared with other processes, so the latches must be judged
+     * on the object as locked for the write.
+     */
+    setattr_request req = { pTemplate,
+                            ulCount,
+                            ((s->flags & CKF_RW_SESSION) != 0) ? CK_TRUE : CK_FALSE };
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_RV rv = g_azihsm_pkcs11.store.ops->set_attr(
+        g_azihsm_pkcs11.store.ctx,
+        s->slot,
+        logged_in,
+        hObject,
+        pTemplate,
+        ulCount,
+        setattr_check,
+        &req
+    );
     azihsm_pkcs11_unlock();
     return rv;
 }

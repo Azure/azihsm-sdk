@@ -57,6 +57,21 @@ static char g_label[] = "unit";
 static CK_DATE g_date = { { '2', '0', '2', '6' }, { '0', '9' }, { '2', '8' } };
 static CK_BYTE g_short_date[3] = { 1, 2, 3 };
 
+#define DATE(y, m, d)                                                                              \
+    {                                                                                              \
+        { (y)[0], (y)[1], (y)[2], (y)[3] }, { (m)[0], (m)[1] },                                    \
+        {                                                                                          \
+            (d)[0], (d)[1]                                                                         \
+        }                                                                                          \
+    }
+static CK_DATE g_date_min = DATE("1900", "01", "01");
+static CK_DATE g_date_max = DATE("9999", "12", "31");
+static CK_DATE g_bad_dates[] = {
+    DATE("2026", "00", "15"), DATE("2026", "13", "15"),  DATE("2026", "06", "00"),
+    DATE("2026", "06", "32"), DATE("1899", "12", "31"),  DATE("20x6", "06", "15"),
+    DATE("2026", " 6", "15"), DATE("2026", "06", "1\0"),
+};
+
 #define ATTR(t, v)                                                                                 \
     {                                                                                              \
         (t), (void *)&(v), sizeof(v)                                                               \
@@ -466,6 +481,18 @@ static void test_shapes_and_order(void)
         "CK_DATE of the wrong width"
     );
     CHECK(on_key((CK_ATTRIBUTE){ CKA_LABEL, NULL, 0 }) == CKR_OK, "empty label");
+    CHECK(
+        (on_key((CK_ATTRIBUTE)ATTR(CKA_START_DATE, g_date_min)) == CKR_OK) &&
+            (on_key((CK_ATTRIBUTE)ATTR(CKA_END_DATE, g_date_max)) == CKR_OK),
+        "CK_DATE range edges 1900-01-01 and 9999-12-31"
+    );
+    for (size_t i = 0; i < COUNT(g_bad_dates); i++)
+    {
+        CHECK(
+            on_key((CK_ATTRIBUTE)ATTR(CKA_END_DATE, g_bad_dates[i])) == CKR_ATTRIBUTE_VALUE_INVALID,
+            "CK_DATE out of range or not all digits"
+        );
+    }
 
     fake_obj o = { AES_KEY, COUNT(AES_KEY), CKR_OK };
     CK_ATTRIBUTE dup[] = { ATTR(CKA_LABEL, g_label), ATTR(CKA_LABEL, g_label) };

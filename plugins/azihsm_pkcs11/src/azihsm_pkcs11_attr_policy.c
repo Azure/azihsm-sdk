@@ -9,6 +9,7 @@
 #include "azihsm_pkcs11_template.h"
 
 #include <stddef.h>
+#include <string.h>
 
 /* Object classes a rule applies to. */
 #define P11_CLS_DATA 0x01u
@@ -191,6 +192,46 @@ static CK_RV carries(
     return rv;
 }
 
+/* Parse `n` ASCII digits; -1 if any is not a digit. */
+static int parse_digits(const CK_CHAR *p, size_t n)
+{
+    int v = 0;
+    for (size_t i = 0; i < n; i++)
+    {
+        if ((p[i] < '0') || (p[i] > '9'))
+        {
+            return -1;
+        }
+        v = (v * 10) + (p[i] - '0');
+    }
+    return v;
+}
+
+/*
+ * An empty value (no date), or a CK_DATE whose fields are in the ranges
+ * pkcs11t.h gives: year 1900-9999, month 01-12, day 01-31. The day is not
+ * checked against the month; the spec defines only the ranges.
+ */
+static CK_BBOOL date_ok(const CK_ATTRIBUTE *a)
+{
+    if (a->ulValueLen == 0)
+    {
+        return CK_TRUE;
+    }
+    if ((a->ulValueLen != sizeof(CK_DATE)) || (a->pValue == NULL))
+    {
+        return CK_FALSE;
+    }
+    CK_DATE d;
+    memcpy(&d, a->pValue, sizeof(d));
+    int year = parse_digits(d.year, sizeof(d.year));
+    int month = parse_digits(d.month, sizeof(d.month));
+    int day = parse_digits(d.day, sizeof(d.day));
+    return ((year >= 1900) && (month >= 1) && (month <= 12) && (day >= 1) && (day <= 31))
+               ? CK_TRUE
+               : CK_FALSE;
+}
+
 static CK_RV check_value(
     const attr_rule *r,
     const CK_ATTRIBUTE *a,
@@ -208,9 +249,7 @@ static CK_RV check_value(
     case P11_VAL_BYTES:
         return CKR_OK;
     case P11_VAL_DATE:
-        return ((a->ulValueLen == 0) || (a->ulValueLen == sizeof(CK_DATE)))
-                   ? CKR_OK
-                   : CKR_ATTRIBUTE_VALUE_INVALID;
+        return date_ok(a) ? CKR_OK : CKR_ATTRIBUTE_VALUE_INVALID;
     case P11_VAL_BOOL:
         return azihsm_pkcs11_tmpl_bool(a, &want);
     case P11_VAL_LATCH_TRUE:

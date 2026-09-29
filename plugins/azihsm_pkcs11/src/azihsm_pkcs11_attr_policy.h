@@ -52,7 +52,9 @@ typedef CK_RV (*azihsm_pkcs11_attr_reader)(void *ctx, CK_ATTRIBUTE *a);
  *   then per attribute, in template order, first failure wins:
  *   CKR_ATTRIBUTE_VALUE_INVALID   NULL value with a non-zero length, a CK_BBOOL
  *                                 not sizeof(CK_BBOOL) wide, a CK_DATE neither
- *                                 empty nor sizeof(CK_DATE) wide
+ *                                 empty nor a valid date (sizeof(CK_DATE)
+ *                                 wide, digits only, year 1900-9999, month
+ *                                 01-12, day 01-31)
  *   CKR_TEMPLATE_INCONSISTENT     a repeated attribute type
  *   CKR_ATTRIBUTE_READ_ONLY       an attribute the class defines as fixed
  *                                 (CKA_CLASS, CKA_TOKEN, CKA_PRIVATE,

@@ -270,6 +270,10 @@ TEST_F(object_attrs_key, key_metadata_is_modifiable)
     ASSERT_EQ(sizeof(id), q.ulValueLen);
     EXPECT_EQ(0, std::memcmp(id, got, sizeof(id)));
 
+    CK_DATE bad_month = { { '2', '0', '2', '6' }, { '1', '3' }, { '0', '1' } };
+    CK_ATTRIBUTE bad_date = { CKA_END_DATE, &bad_month, sizeof(bad_month) };
+    EXPECT_CKR(CKR_ATTRIBUTE_VALUE_INVALID, p11()->C_SetAttributeValue(s_, key, &bad_date, 1));
+
     CK_BBOOL bad_width[2] = { CK_TRUE, CK_TRUE };
     CK_ATTRIBUTE wide = { CKA_DECRYPT, bad_width, sizeof(bad_width) };
     EXPECT_CKR(CKR_ATTRIBUTE_VALUE_INVALID, p11()->C_SetAttributeValue(s_, key, &wide, 1));
