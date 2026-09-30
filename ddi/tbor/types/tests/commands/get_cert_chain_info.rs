@@ -600,7 +600,7 @@ fn maximum_certificate_index_rejected() {
     );
 }
 
-/// A thumbprint buffer with the wrong length is rejected.
+/// A thumbprint buffer shorter than the fixed SHA-256 length is rejected.
 #[test]
 fn wrong_thumbprint_length_rejected() {
     let mut buf = [0u8; 512];
@@ -615,7 +615,7 @@ fn wrong_thumbprint_length_rejected() {
         .expect("finish response");
 
     let err = TborGetCertChainInfoResp::decode_response(bytes)
-        .expect_err("wrong thumbprint length must be rejected");
+        .expect_err("short thumbprint must be rejected");
 
     assert_eq!(err, DecodeError::InvalidFixedLength);
 }
@@ -637,5 +637,5 @@ fn oversized_thumbprint_rejected() {
     let err = TborGetCertChainInfoResp::decode_response(bytes)
         .expect_err("oversized thumbprint must be rejected");
 
-    assert!(matches!(err, DecodeError::InvalidFixedLength { .. }));
+    assert_eq!(err, DecodeError::InvalidFixedLength);
 }
