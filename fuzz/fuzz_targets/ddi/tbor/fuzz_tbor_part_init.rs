@@ -6,9 +6,11 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
@@ -31,16 +33,62 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
-fn bounded_mach_seed_envelope(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
     let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
     Ok(u.bytes(len)?.to_vec())
 }
 
+/// Post-seal mutation applied to the wire-valid `mach_seed_envelope`.
+///
+/// `None` ships the sealed envelope untouched so the handler advances
+/// past AEAD authentication into the policy / thumbprint / seed
+/// pipeline. The other variants exercise AEAD-reject and length-reject
+/// paths without leaving them buried under negligible-probability
+/// arbitrary-byte inputs.
+#[derive(Arbitrary, Debug)]
+enum EnvelopeMutation {
+    /// Ship the sealed envelope unchanged.
+    None,
+    /// XOR a fuzzed mask into a fuzzed offset (offset wrapped modulo
+    /// envelope length). Exercises AEAD tag / ciphertext tampering.
+    FlipByte { offset: u16, mask: u8 },
+    /// Truncate to `len % (envelope.len() + 1)` bytes. Exercises
+    /// short-envelope rejects and post-decrypt length checks.
+    Truncate { len: u16 },
+    /// Append fuzzed trailing bytes (bounded) to exercise over-length
+    /// rejects.
+    Append(#[arbitrary(with = bounded_appended_bytes)] Vec<u8>),
+}
+
+impl EnvelopeMutation {
+    fn apply(&self, envelope: &mut Vec<u8>) {
+        match self {
+            EnvelopeMutation::None => {}
+            EnvelopeMutation::FlipByte { offset, mask } => {
+                if !envelope.is_empty() && *mask != 0 {
+                    let idx = (*offset as usize) % envelope.len();
+                    envelope[idx] ^= *mask;
+                }
+            }
+            EnvelopeMutation::Truncate { len } => {
+                let cap = envelope.len() + 1;
+                envelope.truncate((*len as usize) % cap);
+            }
+            EnvelopeMutation::Append(extra) => {
+                envelope.extend_from_slice(extra);
+            }
+        }
+    }
+}
+
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
-    /// Fuzzed mach_seed_envelope; 100 bytes is the firmware-valid length.
-    #[arbitrary(with = bounded_mach_seed_envelope)]
-    mach_seed_envelope: Vec<u8>,
+    /// 32-byte `mach_seed` plaintext sealed under the active session's
+    /// `param_key`; guarantees the wire envelope authenticates so the
+    /// FW handler advances past AEAD into the policy/seed pipeline.
+    mach_seed: [u8; MACH_SEED_LEN],
+    /// Optional post-seal mutation for reject-path coverage.
+    envelope_mutation: EnvelopeMutation,
     /// Fixed-length fuzzed POTA thumbprint.
     pota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
     /// Fixed-length fuzzed SATA thumbprint.
@@ -120,9 +168,16 @@ fuzz_target!(|input: FuzzInput| {
             <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&policy_bytes)
                 .expect("known_good_part_policy must decode");
 
+        // Seal the fuzzed 32-byte mach_seed under the freshly negotiated
+        // param_key so the envelope authenticates; then optionally apply
+        // a fuzzed mutation to cover AEAD-reject / length-reject paths.
+        let mut mach_seed_envelope = encrypt_mach_seed_envelope(&session, &input.mach_seed)
+            .expect("sealing mach_seed under session param_key should succeed");
+        input.envelope_mutation.apply(&mut mach_seed_envelope);
+
         let part_init_req = TborPartInitReq {
             session_id: session.session_id,
-            mach_seed_envelope: input.mach_seed_envelope.to_vec(),
+            mach_seed_envelope,
             part_policy,
             pota_thumbprint: input.pota_thumbprint,
             sata_thumbprint: input.sata_thumbprint,
