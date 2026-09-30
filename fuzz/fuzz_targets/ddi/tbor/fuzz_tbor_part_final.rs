@@ -14,9 +14,15 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
+use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
+use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PSK_LEN;
+use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
+use azihsm_ddi_tbor_types::PolicyPubKey;
+use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SessionType;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -162,31 +168,39 @@ struct FuzzInput {
 
 /// Build a `PartPolicy` with `pota_raw` (raw P-384 `X ‖ Y`) as the POTA
 /// trust anchor so `PartFinal` can validate the cert chain against it.
-fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
-    const OFF_POTA: usize = 2;
-    const OFF_SATA: usize = 102;
-    const OFF_FLAGS: usize = 418;
-    const OFF_INFO: usize = 419;
+///
+/// Uses the shared [`PartPolicy`] struct + typed [`PolicyPubKey`] /
+/// [`PolicyVer`] constructors so the on-wire byte layout tracks whatever
+/// the policy crate declares (no hand-computed field offsets here).
+fn part_policy_with_pota(pota_raw: &[u8; POLICY_MAX_KEY_LEN]) -> [u8; PART_POLICY_LEN] {
+    use zerocopy::IntoBytes;
 
-    fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
-        bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
-        for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
-            *b = (fill.wrapping_add(i as u8)) | 0x80;
-        }
+    let mut sata_data = [0u8; POLICY_MAX_KEY_LEN];
+    for (i, b) in sata_data.iter_mut().enumerate() {
+        *b = (0x20u8.wrapping_add(i as u8)) | 0x80;
     }
+
+    let policy = PartPolicy {
+        version: PolicyVer {
+            major: POLICY_VERSION_MAJOR,
+            minor: 0,
+        },
+        pota_pub_key: PolicyPubKey::new(
+            PolicyKeyKind::Ecc384,
+            POLICY_MAX_KEY_LEN as u16,
+            *pota_raw,
+        ),
+        sata_pub_key: PolicyPubKey::new(
+            PolicyKeyKind::Ecc384,
+            POLICY_MAX_KEY_LEN as u16,
+            sata_data,
+        ),
+        info: [0xAB; POLICY_INFO_LEN],
+        ..PartPolicy::zeroed()
+    };
 
     let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes[0] = 1; // version major
-    bytes[1] = 0; // version minor
-    write_pubkey(&mut bytes, OFF_POTA, 0x10);
-    write_pubkey(&mut bytes, OFF_SATA, 0x20);
-    bytes[OFF_FLAGS] = 0;
-    for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
-        *b = 0xAB;
-    }
-    // Overwrite the POTA key data with the real public key.
-    bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
+    bytes.copy_from_slice(policy.as_bytes());
     bytes
 }
 
