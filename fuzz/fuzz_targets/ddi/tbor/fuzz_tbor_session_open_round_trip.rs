@@ -6,17 +6,16 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::*;
 use azihsm_ddi_interface::*;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::*;
 use azihsm_session_ex_crypto::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use x509::X509CertificateOp;
-
-use crate::common::DdiTest;
+use common::FuzzRole;
 
 /// P-384 coordinate length in bytes.
 const P384_COORD_LEN: usize = 48;
@@ -36,7 +35,7 @@ struct FuzzInput {
     // When building a valid request, pick the CO/`Authenticated` psk_id +
     // session_type combo instead of CU/`PlainText`, so the mac_tx/mac_rx
     // key-derivation branch in `derive_remaining_keys` gets exercised.
-    valid_use_authenticated: bool,
+    valid_role: FuzzRole,
 
     // input for SessionOpenFinish
     valid_open_finish: bool,
@@ -62,52 +61,15 @@ fn generate_deterministic_ephemeral(
     Ok(VmEphemeralKey { sk, pk_sec1, pk })
 }
 
-/// Same as `session_ex_crypto::seal_seed_envelope`, but takes the
-/// 12-byte AEAD-GCM IV as an input rather than generating it randomly.
-fn seal_seed_envelope_with_iv(
-    param_key: &AesKey,
-    seed: &[u8],
-    iv: &[u8; AES_GCM_IV_LEN],
-) -> SessionExCryptoResult<Vec<u8>> {
-    if seed.len() != SESSION_SEED_LEN {
-        return Err(SessionExCryptoError::InvalidInput);
-    }
-
-    let total = aead_envelope::seal(AeadAlg::AesGcm256, param_key, iv, &[], seed, None)
-        .map_err(|_| SessionExCryptoError::Crypto)?;
-    if total != SEED_ENVELOPE_LEN {
-        return Err(SessionExCryptoError::Crypto);
-    }
-    let mut envelope = vec![0u8; SEED_ENVELOPE_LEN];
-    let written = aead_envelope::seal(
-        AeadAlg::AesGcm256,
-        param_key,
-        iv,
-        &[],
-        seed,
-        Some(&mut envelope),
-    )
-    .map_err(|_| SessionExCryptoError::Crypto)?;
-    if written != SEED_ENVELOPE_LEN {
-        return Err(SessionExCryptoError::Crypto);
-    }
-    Ok(envelope)
-}
-
 fuzz_target!(|input: FuzzInput| {
-    common::common_fuzz_test(&|dev: &mut <DdiTest as Ddi>::Dev, _path: &str| {
+    common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let (req, ephemeral) = if input.valid_open_init || input.valid_open_finish {
             let Ok(ephemeral) = generate_deterministic_ephemeral(&input.pk_init_scalar) else {
                 return;
             };
-            let (psk_id, session_type) = if input.valid_use_authenticated {
-                (0, SessionType::Authenticated.to_u8())
-            } else {
-                (1, SessionType::PlainText.to_u8())
-            };
             let req = TborSessionOpenInitReq {
-                psk_id,
-                session_type,
+                psk_id: input.valid_role.psk_id(),
+                session_type: input.valid_role.session_type().to_u8(),
                 suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
                 pk_init: ephemeral.pk_sec1,
             };
@@ -122,10 +84,8 @@ fuzz_target!(|input: FuzzInput| {
             (req, None)
         };
 
-        let mut cookie = None;
-
         // If session open succeeds, finish then close it afterwards.
-        let init_result = dev.exec_op_tbor::<TborSessionOpenInitReq>(&req, None, &mut cookie);
+        let init_result = ctx.tbor::<TborSessionOpenInitReq>(&req);
 
         // assert open init success if expected
         if input.valid_open_init || input.valid_open_finish {
@@ -143,7 +103,7 @@ fuzz_target!(|input: FuzzInput| {
                 let ephemeral = ephemeral
                     .as_ref()
                     .expect("ephemeral is Some whenever valid_open_finish is true");
-                build_valid_finish_req(&dev, &req, &resp, ephemeral, &input)
+                build_valid_finish_req(ctx, &req, &resp, ephemeral, &input)
             } else {
                 None
             };
@@ -167,12 +127,7 @@ fuzz_target!(|input: FuzzInput| {
                 },
             };
 
-            let mut open_finish_cookie = None;
-            let finish_result = dev.exec_op_tbor::<TborSessionOpenFinishReq>(
-                &open_finish_req,
-                None,
-                &mut open_finish_cookie,
-            );
+            let finish_result = ctx.tbor::<TborSessionOpenFinishReq>(&open_finish_req);
 
             // assert open finish success only when we actually built a valid request
             if input.valid_open_finish {
@@ -201,9 +156,7 @@ fuzz_target!(|input: FuzzInput| {
             let close_req = TborSessionCloseReq {
                 session_id: resp.session_id,
             };
-            let mut close_cookie = None;
-            let close_result: Result<TborSessionCloseResp, _> =
-                dev.exec_op_tbor(&close_req, None, &mut close_cookie);
+            let close_result: Result<TborSessionCloseResp, _> = ctx.tbor(&close_req);
 
             // if session open finish succeeded, the session should be closable
             if finish_result.is_ok() {
@@ -232,13 +185,13 @@ fuzz_target!(|input: FuzzInput| {
 /// the caller can substitute a known-invalid request that forces
 /// firmware to destroy the Pending slot (dropping `DdiEmuDev` cannot).
 fn build_valid_finish_req(
-    dev: &<DdiTest as Ddi>::Dev,
+    ctx: &TestCtx,
     req: &TborSessionOpenInitReq,
     resp: &TborSessionOpenInitResp,
     ephemeral: &VmEphemeralKey,
     input: &FuzzInput,
 ) -> Option<TborSessionOpenFinishReq> {
-    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(dev).ok()?;
+    let (pk_hsm_key, pk_hsm_sec1) = fetch_pk_hsm(ctx).ok()?;
     let info = build_hpke_info(req.psk_id, req.session_type, req.suite_id);
     let psk = default_psk(req.psk_id).ok()?;
     let exported = receive_exported(
@@ -274,7 +227,7 @@ fn build_valid_finish_req(
 
     let param_key = derive_param_key(&exported).ok()?;
     let mut seed_envelope_vec =
-        seal_seed_envelope_with_iv(&param_key, &input.seed, &input.seed_iv).ok()?;
+        common::seal_aead_envelope(&param_key, &input.seed_iv, &[], &input.seed);
     if input.corrupt_seed_envelope {
         // Flip a byte in the ciphertext/tag so the Phase-2 MAC (computed
         // from `exported`/`pk_*`, not the envelope) still verifies, but the
@@ -294,20 +247,14 @@ fn build_valid_finish_req(
 /// Fetches the HSM's leaf certificate (last entry in slot 0's chain) and
 /// returns its public key in both parsed and raw SEC1 form; all failure
 /// modes collapse to `()` since callers only need to bail out via `?`.
-fn fetch_pk_hsm(dev: &<DdiTest as Ddi>::Dev) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
+fn fetch_pk_hsm(ctx: &TestCtx) -> Result<(EccPublicKey, [u8; PK_INIT_LEN]), ()> {
     let info_req = TborGetCertChainInfoReq::new(0);
-    let mut info_cookie = None;
-    let info = dev
-        .exec_op_tbor(&info_req, None, &mut info_cookie)
-        .map_err(|_| ())?;
+    let info = ctx.tbor(&info_req).map_err(|_| ())?;
     if info.num_certs == 0 {
         return Err(());
     }
     let cert_req = TborGetCertReq::new(0, info.num_certs - 1);
-    let mut cert_cookie = None;
-    let leaf = dev
-        .exec_op_tbor(&cert_req, None, &mut cert_cookie)
-        .map_err(|_| ())?;
+    let leaf = ctx.tbor(&cert_req).map_err(|_| ())?;
     let cert = x509::X509Certificate::from_der(leaf.certificate.as_slice()).map_err(|_| ())?;
     let pk_der = cert.get_public_key_der().map_err(|_| ())?;
     let pk = EccPublicKey::from_bytes(&pk_der).map_err(|_| ())?;

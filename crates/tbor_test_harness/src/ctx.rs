@@ -16,13 +16,13 @@
 //!   *must* fail host-side TBOR decoding, panicking otherwise.
 //!
 //! Test files therefore never reach for the bare `Dev` handle or the
-//! `assert_*` helpers in [`crate::harness::assertions`] directly; the
+//! `assert_*` helpers in [`crate::assertions`] directly; the
 //! ctx is the single funnel that future cross-cutting changes (tracing,
 //! retry policy, fault injection) can hook into without touching every
 //! test.
 //!
 //! Cross-test isolation (process-global lock + factory reset) lives
-//! in [`crate::harness::fixture::open_dev`], which this type calls
+//! in [`crate::fixture::open_dev`], which this type calls
 //! through. Tests that mix-and-match raw [`open_dev`] calls and
 //! [`TestCtx`] both get the same guarantee.
 //!
@@ -43,24 +43,25 @@ use azihsm_ddi_tbor_types::TborPartFinalResp;
 use azihsm_ddi_tbor_types::TborPartInitResp;
 use azihsm_ddi_tbor_types::TborStatus;
 
-use crate::harness::api_rev::helper_api_rev_tbor;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::assertions::assert_tbor_decode_error;
-use crate::harness::fixture::open_dev;
-use crate::harness::fixture::open_dev_secondary;
-use crate::harness::fixture::TestDev;
-use crate::harness::session::part_final as part_final_helper;
-use crate::harness::session::part_init as part_init_helper;
-use crate::harness::session::psk_change as psk_change_helper;
-use crate::harness::session::session_close as session_close_helper;
-use crate::harness::session::session_open as session_open_helper;
-use crate::harness::session::session_open_finish as session_open_finish_helper;
-use crate::harness::session::session_open_finish_with_mac as session_open_finish_with_mac_helper;
-use crate::harness::session::session_open_init as session_open_init_helper;
-use crate::harness::session::session_open_init_with_options as session_open_init_with_options_helper;
-use crate::harness::session::PendingHandshake;
-use crate::harness::session::SessionHandshake;
-use crate::harness::session::SessionOpenInitOptions;
+use crate::api_rev::helper_api_rev_tbor;
+use crate::assertions::assert_fw_rejects;
+use crate::assertions::assert_tbor_decode_error;
+use crate::fixture::open_dev;
+use crate::fixture::open_dev_secondary;
+use crate::fixture::open_dev_with_path;
+use crate::fixture::TestDev;
+use crate::session::part_final as part_final_helper;
+use crate::session::part_init as part_init_helper;
+use crate::session::psk_change as psk_change_helper;
+use crate::session::session_close as session_close_helper;
+use crate::session::session_open as session_open_helper;
+use crate::session::session_open_finish as session_open_finish_helper;
+use crate::session::session_open_finish_with_mac as session_open_finish_with_mac_helper;
+use crate::session::session_open_init as session_open_init_helper;
+use crate::session::session_open_init_with_options as session_open_init_with_options_helper;
+use crate::session::PendingHandshake;
+use crate::session::SessionHandshake;
+use crate::session::SessionOpenInitOptions;
 
 /// Fixed default 48-byte SATA thumbprint used by the convenience
 /// [`TestCtx::part_init`] wrapper, whose callers don't exercise the
@@ -98,6 +99,23 @@ impl TestCtx {
     pub fn new_with_path(path: &str) -> Self {
         Self {
             dev: open_dev_secondary(path),
+        }
+    }
+
+    /// Primary counterpart to [`Self::new_with_path`]: opens the
+    /// backend on the caller-supplied `path` **and** acquires
+    /// `TEST_LOCK` + factory-resets the device via
+    /// [`open_dev_with_path`].
+    ///
+    /// Use this when the device is selected out-of-band (e.g. a
+    /// libfuzzer harness reading `FUZZ_DEVICE`) but no other primary
+    /// `TestCtx` is alive to hold the lock. Do **not** call this
+    /// while another primary `TestCtx` exists on the same thread —
+    /// the second `TEST_LOCK` acquisition would deadlock; use
+    /// [`Self::new_with_path`] instead.
+    pub fn new_primary_with_path(path: &str) -> Self {
+        Self {
+            dev: open_dev_with_path(path),
         }
     }
 
@@ -214,7 +232,7 @@ impl TestCtx {
     // -------------------------------------------------------------------
     // TBOR command pass-throughs
     //
-    // Thin wrappers around the free helpers in `harness::session` so
+    // Thin wrappers around the free helpers in `crate::session` so
     // tests can write `ctx.psk_change(&session, &psk)` instead of
     // reaching through a raw device handle. The free helpers remain
     // in place for documentation purposes (their signatures describe
@@ -274,7 +292,8 @@ impl TestCtx {
 
     /// Issue `SessionClose(session_id)`. Used by negative-path
     /// tests (double-close, unknown id) and by callers that hold a
-    /// raw [`SessionHandshake`] outside of a [`SessionGuard`].
+    /// raw [`SessionHandshake`] outside of a
+    /// [`SessionGuard`](crate::SessionGuard).
     pub fn session_close(&self, session_id: u16) -> DdiResult<()> {
         session_close_helper(&self.dev, session_id)
     }

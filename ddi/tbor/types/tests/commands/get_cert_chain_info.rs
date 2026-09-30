@@ -14,6 +14,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::codec::DecodeError;
 use azihsm_ddi_tbor_types::codec::ResponseEncoder;
 use azihsm_ddi_tbor_types::codec::MAX_TOC_ENTRIES;
@@ -28,7 +29,6 @@ use azihsm_ddi_tbor_types::CERT_THUMBPRINT_LEN;
 
 use crate::commands::common::CO;
 use crate::commands::common::CU;
-use crate::harness::TestCtx;
 
 const VALID_SLOT: u8 = 0;
 

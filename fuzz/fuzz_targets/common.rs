@@ -5,18 +5,19 @@
 
 #![allow(dead_code)]
 
+use azihsm_crypto::*;
+use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_tbor_codec::Encoder;
-use azihsm_ddi_tbor_codec::MAX_DATA_SIZE;
-use azihsm_ddi_tbor_codec::MAX_TOC_ENTRIES;
-use azihsm_ddi_tbor_codec::REQ_HEADER_LEN;
-use azihsm_ddi_tbor_codec::RESP_HEADER_LEN;
-use azihsm_ddi_tbor_codec::TOC_ENTRY_LEN;
-use azihsm_ddi_tbor_codec::TocEntry;
+use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_codec::header::Header;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
+use azihsm_ddi_tbor_types::SessionType;
 
 pub type DdiTest = AzihsmDdi;
 
@@ -37,6 +38,31 @@ pub enum EncoderTOCBuilders {
     Padding(u16),
 }
 
+/// Which role's session to open for this iteration.
+#[derive(Arbitrary, Debug)]
+pub enum FuzzRole {
+    /// `psk_id = 0`, `SessionType::Authenticated`
+    Co,
+    /// `psk_id = 1`, `SessionType::PlainText`
+    Cu,
+}
+
+impl FuzzRole {
+    pub fn psk_id(&self) -> u8 {
+        match self {
+            FuzzRole::Co => CO,
+            FuzzRole::Cu => CU,
+        }
+    }
+
+    pub fn session_type(&self) -> SessionType {
+        match self {
+            FuzzRole::Co => SessionType::Authenticated,
+            FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
+}
+
 /// Buffer size used by request encoder fuzz targets.
 ///
 /// Sized to hold the worst-case request: a full header, the maximum number
@@ -51,7 +77,7 @@ pub const FUZZ_RESP_BUF_SIZE: usize =
 
 static mut DEVICE_DISPLAY: bool = false;
 
-pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
+pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
     let ddi = DdiTest::default();
     let dev_infos = ddi.dev_info_list();
     if dev_infos.is_empty() {
@@ -75,8 +101,20 @@ pub fn common_fuzz_test(test: &dyn Fn(&mut <DdiTest as Ddi>::Dev, &str)) {
         }
     }
 
-    let mut dev = ddi.open_dev(&path).expect("Failed to open device");
-    test(&mut dev, &path);
+    let ctx = TestCtx::new_primary_with_path(&path);
+
+    test(&ctx, &path);
+}
+
+/// Two-phase AES-GCM-256 AEAD seal: size-query, allocate, then fill
+pub fn seal_aead_envelope(key: &AesKey, iv: &[u8], aad: &[u8], pt: &[u8]) -> Vec<u8> {
+    let total = aead_envelope::seal(AeadAlg::AesGcm256, key, iv, aad, pt, None)
+        .expect("aead seal size query should succeed");
+    let mut buf = vec![0u8; total];
+    let written = aead_envelope::seal(AeadAlg::AesGcm256, key, iv, aad, pt, Some(&mut buf))
+        .expect("aead seal should succeed");
+    buf.truncate(written);
+    buf
 }
 
 /// Apply a sequence of TOC builder operations to an encoder, returning

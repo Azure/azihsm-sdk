@@ -15,6 +15,7 @@ members = [
   "crates/resiliency_macro",
   "crates/resiliency_test_helpers",
   "crates/session_ex_crypto",
+  "crates/tbor_test_harness",
   "crates/test_with_tracing",
   "crates/test_with_tracing/test_with_tracing_macro",
   "crates/tpm",
@@ -109,6 +110,7 @@ azihsm_ddi_sock = { path = "ddi/sock" }
 azihsm_ddi_sock_proto = { path = "ddi/sock/proto" }
 azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
+azihsm_ddi_tbor_test_harness = { path = "crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_ossl_engine_core = { path = "plugins/ossl_engine/azihsm_ossl_engine_core" }
