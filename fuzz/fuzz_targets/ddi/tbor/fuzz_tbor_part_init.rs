@@ -68,6 +68,25 @@ impl EnvelopeMutation {
             }
         }
     }
+
+    /// `true` iff this mutation would leave the sealed envelope byte-
+    /// identical (matches the `None` variant or a no-op offset/mask/len/
+    /// extra choice inside a mutation variant). Drives the "expect
+    /// success" classification for the result assertion.
+    fn is_noop(&self, envelope: &[u8]) -> bool {
+        match self {
+            EnvelopeMutation::None => true,
+            EnvelopeMutation::FlipByte { mask, .. } => *mask == 0 || envelope.is_empty(),
+            EnvelopeMutation::Truncate { len } => {
+                // `Vec::truncate(new_len)` only shrinks when `new_len <
+                // envelope.len()`; `apply` computes
+                // `len % (envelope.len() + 1)` so a no-op requires the
+                // modulo to land on `envelope.len()`.
+                (*len as usize) % (envelope.len() + 1) == envelope.len()
+            }
+            EnvelopeMutation::Append(extra) => extra.is_empty(),
+        }
+    }
 }
 
 #[derive(Arbitrary, Debug)]
@@ -144,6 +163,9 @@ fuzz_target!(|input: FuzzInput| {
         // a fuzzed mutation to cover AEAD-reject / length-reject paths.
         let mut mach_seed_envelope = encrypt_mach_seed_envelope(&session, &input.mach_seed)
             .expect("sealing mach_seed under session param_key should succeed");
+        // Snapshot noop-ness against the pre-mutation envelope; `apply`
+        // mutates it in place immediately after.
+        let envelope_is_noop = input.envelope_mutation.is_noop(&mach_seed_envelope);
         input.envelope_mutation.apply(&mut mach_seed_envelope);
 
         let part_init_req = TborPartInitReq {
@@ -154,7 +176,36 @@ fuzz_target!(|input: FuzzInput| {
             sata_thumbprint: input.sata_thumbprint,
             sapota_thumbprint,
         };
-        let _ = ctx.tbor(&part_init_req);
+
+        // Classify the fuzzed inputs by deterministic outcome so we can
+        // catch bugs where a valid input is rejected or an invalid input
+        // is accepted (silent regressions the `let _` discard would hide).
+        //
+        // * expect_success: envelope is byte-identical to the freshly
+        //   sealed one AND the rest of the request is wire/handler-valid
+        //   by construction (known-good policy, fixed-length thumbprints,
+        //   SAPOTA is 0 or exactly SAPOTA_THUMBPRINT_LEN). The AEAD open
+        //   authenticates and the handler runs the provisioning
+        //   pipeline through Commit.
+        // * expect_failure: a non-noop envelope mutation guarantees
+        //   either (a) the encoded envelope overflows
+        //   MACH_SEED_ENVELOPE_MAX_LEN and the wire encoder rejects, or
+        //   (b) AES-GCM detects the ciphertext/tag/AAD tamper (or the
+        //   post-decrypt length mismatch after truncation) and
+        //   `AeadEnvelopeAuthFailed` fires. Either surfaces as
+        //   `DdiError`.
+        let result = ctx.tbor(&part_init_req);
+
+        if envelope_is_noop {
+            result.expect(
+                "PartInit should succeed with an unmutated envelope and a wire-valid request",
+            );
+        } else {
+            assert!(
+                result.is_err(),
+                "PartInit should reject a mutated envelope, got Ok({result:?})",
+            );
+        }
 
         ctx.session_close(session.session_id)
             .expect("session close should succeed");
