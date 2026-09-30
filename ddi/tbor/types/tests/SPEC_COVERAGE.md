@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts (last updated 2026-09-25):
-* emu: 134 tests
+* emu: 136 tests
 * mock: 6 tests
 
 ## Legend
