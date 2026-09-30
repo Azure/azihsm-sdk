@@ -8,6 +8,7 @@ use std::io::Read;
 use std::io::Write;
 use std::os::fd::RawFd;
 use std::sync::atomic::AtomicU16;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -178,6 +179,26 @@ pub struct DdiVsockDev {
     cmd_counter: AtomicU16,
     device_kind: DdiDeviceKind,
     port: u32,
+
+    /// Bumped by [`erase`](Self::erase) each time the live connection is
+    /// replaced (partition reset). Used together with `open_sessions` to
+    /// detect a `HsmSession` whose `Drop` impl (`api/lib/src/session.rs`)
+    /// sends a `CloseSession`/`InSession` request for a session id that
+    /// was only ever valid on a connection generation that has since been
+    /// torn down — the replacement connection's firmware can reuse that
+    /// same numeric id for an unrelated, live session, so such a stale
+    /// request must be rejected instead of forwarded.
+    ///
+    /// Only covers the MBOR session path (`exec_op_mbor`): TBOR's
+    /// `TborResp` trait has no accessor for a response-carried session
+    /// id, and (per `api/lib/src/ddi/session_ex.rs`) resiliency/reopen
+    /// handling isn't wired up for the TBOR transport at all yet, so
+    /// there's no existing mechanism this guard would need to match.
+    generation: AtomicU64,
+
+    /// Session ids opened over the MBOR path, each mapped to the
+    /// `generation` they were opened under. Cleared on every `erase()`.
+    open_sessions: Mutex<HashMap<u16, u64>>,
 }
 
 impl std::fmt::Debug for DdiVsockDev {
@@ -201,11 +222,61 @@ impl DdiVsockDev {
             // and sock).
             device_kind: DdiDeviceKind::Physical,
             port,
+            generation: AtomicU64::new(0),
+            open_sessions: Mutex::new(HashMap::new()),
         })
     }
 
     fn next_cmd_id(&self) -> u16 {
         self.cmd_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Reject a `Close`/`InSession` request whose `session_id` doesn't
+    /// belong to the current connection generation.
+    ///
+    /// Called before `submit` so a stale `HsmSession::drop` (see
+    /// `api/lib/src/session.rs`) can't reach a replacement connection at
+    /// all: without this check, a session id freed by a since-reset
+    /// partition could be reused by a brand-new, live session, and the
+    /// stale `CloseSession` would silently tear that unrelated session
+    /// down instead of failing.
+    fn check_session_generation(
+        &self,
+        session_ctrl: SessionControlKind,
+        session_id: Option<u16>,
+    ) -> DdiResult<()> {
+        if session_ctrl == SessionControlKind::Open {
+            // No session id to validate yet: the firmware hasn't assigned
+            // one.
+            return Ok(());
+        }
+        let Some(id) = session_id else {
+            return Ok(());
+        };
+        let current = self.generation.load(Ordering::SeqCst);
+        match self.open_sessions.lock().get(&id) {
+            Some(&generation) if generation == current => Ok(()),
+            _ => Err(DdiError::DdiStatus(DdiStatus::SessionNotFound)),
+        }
+    }
+
+    /// Record the bookkeeping side-effect of a successful MBOR
+    /// `Open`/`Close` exchange on `session_id`.
+    fn record_session_generation(&self, session_ctrl: SessionControlKind, session_id: Option<u16>) {
+        match session_ctrl {
+            SessionControlKind::Open => {
+                if let Some(id) = session_id {
+                    let generation = self.generation.load(Ordering::SeqCst);
+                    self.open_sessions.lock().insert(id, generation);
+                }
+            }
+            SessionControlKind::Close => {
+                if let Some(id) = session_id {
+                    self.open_sessions.lock().remove(&id);
+                }
+            }
+            SessionControlKind::NoSession | SessionControlKind::InSession => {}
+        }
     }
 
     /// Build a submission entry, exchange it with the host, and return
@@ -321,6 +392,13 @@ impl DdiDev for DdiVsockDev {
         };
         buf.truncate(req_len);
 
+        // Reject a `Close`/`InSession` request against a session id that
+        // doesn't belong to the current connection generation *before*
+        // sending anything: see `check_session_generation` for why this
+        // must happen ahead of `submit`, not merely be checked against the
+        // response.
+        self.check_session_generation(session_ctrl, session_id)?;
+
         // ── 2. Build the SQE and exchange it over the vsock connection.
         let resp_buf = self.submit(OP_MBOR, u8::from(session_ctrl), session_id, buf)?;
         if resp_buf.is_empty() {
@@ -335,6 +413,13 @@ impl DdiDev for DdiVsockDev {
         if hdr.status != DdiStatus::Success {
             return Err(DdiError::DdiStatus(hdr.status));
         }
+
+        // `Open` responses carry the firmware-assigned session id in the
+        // header; `Close` requests already know the id being torn down
+        // ahead of time. Record the generation transition now that the
+        // exchange is confirmed successful.
+        let recorded_session_id = session_id.or(hdr.sess_id);
+        self.record_session_generation(session_ctrl, recorded_session_id);
 
         // ── 4. Decode the typed response (header + body).
         let mut body_dec = MborDecoder::new(&resp_buf, post_decode);
@@ -432,6 +517,18 @@ impl DdiDev for DdiVsockDev {
         let mut stream = self.stream.lock();
         stream.shutdown().map_err(DdiError::IoError)?;
         *stream = listener.accept().map_err(DdiError::IoError)?;
+        drop(stream);
+
+        // The replacement connection's firmware starts with a clean
+        // session table, so every session id this client previously
+        // tracked is gone — and any id the firmware hands out from here
+        // on belongs to a new generation, even if it numerically reuses
+        // an id freed by the reset. Bump `generation` and drop the old
+        // bookkeeping so a subsequently-dropped stale `HsmSession` (see
+        // `check_session_generation`) is rejected instead of closing
+        // whatever live session now holds that id.
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.open_sessions.lock().clear();
         Ok(())
     }
 }
