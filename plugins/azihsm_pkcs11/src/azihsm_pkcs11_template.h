@@ -251,6 +251,41 @@ CK_RV azihsm_pkcs11_cipher_out_len(
  */
 bool azihsm_pkcs11_gcm_fits(CK_ULONG aad_len, CK_ULONG data_len);
 
+/*
+ * The length verdict at C_EncryptFinal / C_DecryptFinal of a multi-part
+ * AES-CBC or AES-CBC-PAD operation, from the input fed so far: `fed_mod` is
+ * its length modulo AES_BLOCK_LEN and `fed_any` whether there was any. The
+ * rules are the one-shot ones: an unpadded message and every ciphertext must
+ * be whole blocks (CKR_DATA_LEN_RANGE / CKR_ENCRYPTED_DATA_LEN_RANGE), and a
+ * padded ciphertext at least one block. On CKR_OK, *run_final says whether the
+ * SDK stream has anything to finish: an unpadded operation over no data has
+ * the empty result, which the SDK stream would refuse. CKR_ARGUMENTS_BAD for a
+ * NULL `run_final`.
+ */
+CK_RV azihsm_pkcs11_cbc_final_check(
+    bool encrypt,
+    bool pad,
+    CK_ULONG fed_mod,
+    bool fed_any,
+    bool *run_final
+);
+
+/*
+ * Whether `total` bytes of multi-part GCM or XTS input (with `aad_len` bytes
+ * of GCM AAD) can still make a valid call at C_EncryptFinal / C_DecryptFinal:
+ * the input is buffered until then and run through the one-shot path, so this
+ * is that path's upper limit (azihsm_pkcs11_cipher_out_len and
+ * azihsm_pkcs11_gcm_fits). An update that overshoots fails at once instead of
+ * buffering data the final call must refuse; the lower bounds (the GCM tag,
+ * whole XTS blocks) are left to the final call. false for other mechanisms.
+ */
+bool azihsm_pkcs11_multipart_fits(
+    CK_MECHANISM_TYPE mech,
+    bool encrypt,
+    CK_ULONG aad_len,
+    CK_ULONG total
+);
+
 #ifdef __cplusplus
 }
 #endif

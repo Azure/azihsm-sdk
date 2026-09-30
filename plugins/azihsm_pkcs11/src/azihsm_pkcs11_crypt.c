@@ -3,7 +3,8 @@
 
 /*
  * Key-backed operations: C_GenerateKey (CKM_AES_KEY_GEN, CKM_AES_XTS_KEY_GEN)
- * and one-shot AES-CBC / AES-CBC-PAD / AES-GCM / AES-XTS encrypt/decrypt.
+ * and AES-CBC / AES-CBC-PAD / AES-GCM / AES-XTS encrypt/decrypt, one-shot and
+ * multi-part.
  *
  * The AZIHSM device holds keys only as session-scoped handles; the durable form
  * is the opaque masked blob. So C_GenerateKey stores that blob as the object's
@@ -46,6 +47,21 @@ typedef struct
     CK_BYTE gcm_iv[AES_GCM_IV_LEN]; /* GCM IV (owned copy) */
     CK_BYTE *aad;                   /* GCM additional data (owned copy), NULL if none */
     CK_ULONG aad_len;
+
+    /* Multi-part CBC: the SDK stream does the chaining, padding and block
+     * buffering; the module keeps only what the PKCS#11 length rules and the
+     * two-call convention need. */
+    azihsm_pkcs11_aes_cbc_stream_t *cbc;        /* opened by the first multi-part call */
+    CK_ULONG cbc_fed_mod;                       /* bytes fed, modulo AES_BLOCK_LEN */
+    bool cbc_fed_any;                           /* any byte fed at all */
+    bool cbc_finished;                          /* the stream's final call has run */
+    CK_BYTE cbc_last[AES_CBC_STREAM_FINAL_MAX]; /* its output, kept until collected */
+    CK_ULONG cbc_last_len;
+
+    /* Multi-part GCM / XTS: the input, buffered for the final call. */
+    CK_BYTE *buf;
+    CK_ULONG buf_len;
+    CK_ULONG buf_cap;
 } cipher_op;
 
 void azihsm_pkcs11_cipher_op_free(void *op_ctx)
@@ -55,11 +71,18 @@ void azihsm_pkcs11_cipher_op_free(void *op_ctx)
     {
         return;
     }
+    /* The stream first: it references the device key. */
+    azihsm_pkcs11_key_aes_cbc_stream_free(op->cbc);
     azihsm_pkcs11_key_release(op->hsm_key);
     if (op->aad != NULL)
     {
         azihsm_pkcs11_wipe(op->aad, op->aad_len);
         free(op->aad);
+    }
+    if (op->buf != NULL)
+    {
+        azihsm_pkcs11_wipe(op->buf, op->buf_len);
+        free(op->buf);
     }
     azihsm_pkcs11_wipe(op, sizeof(*op));
     free(op);
@@ -213,7 +236,7 @@ cleanup:
 }
 
 /* ========================================================================= */
-/* One-shot AES-CBC / AES-GCM / AES-XTS encrypt / decrypt                    */
+/* AES-CBC / AES-GCM / AES-XTS: init and one-shot encrypt / decrypt          */
 /* ========================================================================= */
 
 static CK_RV cipher_init(
@@ -423,32 +446,27 @@ CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
 }
 
 /*
- * The GCM and XTS half of cipher_oneshot (called with the lock held and the
- * operation found). Same lifetime rules; the difference is that the output
- * length follows from the input length alone, so sizing needs no device call,
- * and that GCM's tag moves between the device's params struct and the end of
- * the PKCS#11 ciphertext here.
+ * The GCM and XTS device half, shared by the one-shot calls and the
+ * multi-part final call (which runs it over the input the updates buffered).
+ * The output length follows from the input length alone, so sizing needs no
+ * device call, and GCM's tag moves between the device's params struct and the
+ * end of the PKCS#11 ciphertext here. *active is set when the operation must
+ * stay active afterwards: after a sizing probe (out == NULL) or a too-small
+ * buffer; every other outcome ends it.
  */
-static CK_RV cipher_oneshot_fixed(
-    azihsm_pkcs11_session_t *s,
+static CK_RV fixed_crypt(
     cipher_op *op,
     bool encrypt,
-    CK_BYTE_PTR in,
+    const CK_BYTE *in,
     CK_ULONG in_len,
     CK_BYTE_PTR out,
-    CK_ULONG_PTR out_len
+    CK_ULONG_PTR out_len,
+    bool *active
 )
 {
-    CK_RV rv = CKR_OK;
+    *active = false;
     CK_ULONG need = 0;
-    if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
-    {
-        rv = CKR_ARGUMENTS_BAD;
-    }
-    else
-    {
-        rv = azihsm_pkcs11_cipher_out_len(op->mech, encrypt, in_len, &need);
-    }
+    CK_RV rv = azihsm_pkcs11_cipher_out_len(op->mech, encrypt, in_len, &need);
     if ((rv == CKR_OK) && (op->mech == CKM_AES_GCM) &&
         !azihsm_pkcs11_gcm_fits(op->aad_len, encrypt ? in_len : need))
     {
@@ -456,19 +474,19 @@ static CK_RV cipher_oneshot_fixed(
     }
     if (rv != CKR_OK)
     {
-        azihsm_pkcs11_session_reset_op(s);
         return rv;
     }
-    s->op_mode = P11_OP_MODE_ONESHOT;
 
     if (out == NULL_PTR)
     {
         *out_len = need; /* sizing probe: report, keep the operation */
+        *active = true;
         return CKR_OK;
     }
     if (*out_len < need)
     {
         *out_len = need;
+        *active = true;
         return CKR_BUFFER_TOO_SMALL; /* op stays active for the retry */
     }
 
@@ -534,7 +552,6 @@ static CK_RV cipher_oneshot_fixed(
         );
     }
     *out_len = (rv == CKR_OK) ? written : 0;
-    azihsm_pkcs11_session_reset_op(s);
     return rv;
 }
 
@@ -574,25 +591,40 @@ static CK_RV cipher_oneshot(
         return CKR_OPERATION_NOT_INITIALIZED;
     }
     cipher_op *op = (cipher_op *)s->op_ctx;
-    if ((op->mech == CKM_AES_GCM) || (op->mech == CKM_AES_XTS))
-    {
-        CK_RV rv = cipher_oneshot_fixed(s, op, encrypt, in, in_len, out, out_len);
-        azihsm_pkcs11_unlock();
-        return rv;
-    }
-    bool pad = (op->mech == CKM_AES_CBC_PAD);
-
-    /* Argument check, then the deterministic length policy, host-side (the
-     * device would reject these too, but with statuses that don't map to the
-     * spec's *_LEN_RANGE). The input length is also range-checked here before
-     * it is narrowed to the device buffer's 32-bit length in
-     * azihsm_pkcs11_key_aes_cbc. */
     CK_RV rv = CKR_OK;
     if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
     {
         rv = CKR_ARGUMENTS_BAD;
     }
-    else if (in_len > (CK_ULONG)UINT32_MAX)
+    else if (s->op_mode == P11_OP_MODE_MULTIPART)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* only C_EncryptFinal / C_DecryptFinal may finish it now */
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    if ((op->mech == CKM_AES_GCM) || (op->mech == CKM_AES_XTS))
+    {
+        s->op_mode = P11_OP_MODE_ONESHOT;
+        bool active = false;
+        rv = fixed_crypt(op, encrypt, in, in_len, out, out_len, &active);
+        if (!active)
+        {
+            azihsm_pkcs11_session_reset_op(s);
+        }
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
+    bool pad = (op->mech == CKM_AES_CBC_PAD);
+
+    /* The deterministic length policy, host-side (the device would reject
+     * these too, but with statuses that don't map to the spec's *_LEN_RANGE).
+     * The input length is also range-checked here before it is narrowed to the
+     * device buffer's 32-bit length in azihsm_pkcs11_key_aes_cbc. */
+    if (in_len > (CK_ULONG)UINT32_MAX)
     {
         rv = encrypt ? CKR_DATA_LEN_RANGE : CKR_ENCRYPTED_DATA_LEN_RANGE;
     }
@@ -610,9 +642,22 @@ static CK_RV cipher_oneshot(
         azihsm_pkcs11_unlock();
         return rv;
     }
-    /* Recorded so the multi-part calls (once implemented) refuse to join a
-     * one-shot operation with CKR_OPERATION_ACTIVE, as the digests do. */
+    /* Recorded so the multi-part calls refuse to join a one-shot operation
+     * with CKR_OPERATION_ACTIVE, as the digests do. */
     s->op_mode = P11_OP_MODE_ONESHOT;
+
+    if (!pad && (in_len == 0))
+    {
+        /* The empty message is a whole number of blocks, but the SDK refuses
+         * an unpadded call over no data; the empty result needs no device. */
+        *out_len = 0;
+        if (out != NULL_PTR)
+        {
+            azihsm_pkcs11_session_reset_op(s);
+        }
+        azihsm_pkcs11_unlock();
+        return CKR_OK;
+    }
 
     if (out == NULL_PTR)
     {
@@ -665,4 +710,376 @@ CK_RV C_Decrypt(
 )
 {
     return cipher_oneshot(hSession, false, pEncryptedData, ulEncryptedDataLen, pData, pulDataLen);
+}
+
+/* ========================================================================= */
+/* Multi-part AES-CBC / AES-GCM / AES-XTS encrypt / decrypt                  */
+/* ========================================================================= */
+
+/*
+ * CBC streams through the SDK's stream context, which does the chaining, the
+ * padding and the block buffering. GCM and XTS cannot: the device runs each as
+ * one operation over the whole message, the SDK's GCM decrypt stream takes the
+ * tag at init while PKCS#11 appends it to the ciphertext, and its XTS stream
+ * wants whole data units of a length fixed at init while a PKCS#11 XTS
+ * operation is a single data unit. So their updates buffer the input and the
+ * final call runs the one-shot path over it. The OpenSSL provider meets the
+ * same SDK constraints (plugins/ossl_prov/src/azihsm_ossl_cipher.c).
+ */
+
+/* A multi-part GCM / XTS buffer starts this large and doubles as needed. */
+#define MULTIPART_BUF_MIN 256
+
+/* Append `in` to the operation's GCM / XTS buffer. The old copy is wiped
+ * rather than realloc'd, since realloc may leave it behind in freed memory. */
+static CK_RV buf_append(cipher_op *op, const CK_BYTE *in, CK_ULONG in_len)
+{
+    if ((op == NULL) || ((in == NULL) && (in_len > 0)) ||
+        (in_len > ((CK_ULONG)UINT32_MAX - op->buf_len)))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if (in_len == 0)
+    {
+        return CKR_OK;
+    }
+    CK_ULONG need = op->buf_len + in_len;
+    if (need > op->buf_cap)
+    {
+        CK_ULONG cap = (op->buf_cap < MULTIPART_BUF_MIN) ? MULTIPART_BUF_MIN : op->buf_cap;
+        while (cap < need)
+        {
+            cap = (cap <= (need / 2)) ? (cap * 2) : need;
+        }
+        CK_BYTE *grown = (CK_BYTE *)malloc(cap);
+        if (grown == NULL)
+        {
+            return CKR_HOST_MEMORY;
+        }
+        if (op->buf != NULL)
+        {
+            memcpy(grown, op->buf, op->buf_len);
+            azihsm_pkcs11_wipe(op->buf, op->buf_len);
+            free(op->buf);
+        }
+        op->buf = grown;
+        op->buf_cap = cap;
+    }
+    memcpy(op->buf + op->buf_len, in, in_len);
+    op->buf_len = need;
+    return CKR_OK;
+}
+
+static CK_RV cbc_open(cipher_op *op, bool encrypt)
+{
+    if (op->cbc != NULL)
+    {
+        return CKR_OK;
+    }
+    return azihsm_pkcs11_key_aes_cbc_stream_new(
+        encrypt,
+        op->mech == CKM_AES_CBC_PAD,
+        op->hsm_key,
+        op->iv,
+        &op->cbc
+    );
+}
+
+/*
+ * The mechanism halves of cipher_update and cipher_final, called with the lock
+ * held, the operation found and the arguments judged. Each sets *active when
+ * the operation stays active afterwards; the caller ends it otherwise.
+ */
+
+static CK_RV cbc_update(
+    cipher_op *op,
+    bool encrypt,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len,
+    bool *active
+)
+{
+    *active = false;
+    if (op->cbc_finished)
+    {
+        return CKR_OPERATION_ACTIVE; /* the final call has run; only its retry may follow */
+    }
+    if (in_len > AES_CBC_STREAM_MAX_PART)
+    {
+        return encrypt ? CKR_DATA_LEN_RANGE : CKR_ENCRYPTED_DATA_LEN_RANGE;
+    }
+    if (out == NULL_PTR)
+    {
+        /* The SDK's sizing call runs the update whenever no output is due, so
+         * a sizing probe never reaches it. PKCS#11 lets the probe report an
+         * upper bound: the stream releases at most the block it holds back
+         * plus the new input, in whole blocks. */
+        *out_len = ((in_len / AES_BLOCK_LEN) + 1) * AES_BLOCK_LEN;
+        *active = true;
+        return CKR_OK;
+    }
+    CK_RV rv = cbc_open(op, encrypt);
+    if (rv == CKR_OK)
+    {
+        rv = azihsm_pkcs11_key_aes_cbc_stream_update(op->cbc, in, in_len, out, out_len);
+    }
+    if (rv == CKR_BUFFER_TOO_SMALL)
+    {
+        *active = true; /* nothing was consumed */
+        return rv;
+    }
+    if (rv != CKR_OK)
+    {
+        *out_len = 0;
+        return rv;
+    }
+    op->cbc_fed_mod = (op->cbc_fed_mod + (in_len % AES_BLOCK_LEN)) % AES_BLOCK_LEN;
+    op->cbc_fed_any = op->cbc_fed_any || (in_len > 0);
+    *active = true;
+    return CKR_OK;
+}
+
+static CK_RV cbc_final(
+    cipher_op *op,
+    bool encrypt,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len,
+    bool *active
+)
+{
+    *active = false;
+    if (!op->cbc_finished)
+    {
+        bool run = false;
+        CK_RV rv = azihsm_pkcs11_cbc_final_check(
+            encrypt,
+            op->mech == CKM_AES_CBC_PAD,
+            op->cbc_fed_mod,
+            op->cbc_fed_any,
+            &run
+        );
+        if (rv != CKR_OK)
+        {
+            return rv;
+        }
+        if (out == NULL_PTR)
+        {
+            /* Finishing the stream cannot be undone, so only a call with a
+             * buffer runs it; a probe before that gets the most it can write. */
+            *out_len = run ? AES_CBC_STREAM_FINAL_MAX : 0;
+            *active = true;
+            return CKR_OK;
+        }
+        if (run)
+        {
+            CK_ULONG n = sizeof(op->cbc_last);
+            rv = cbc_open(op, encrypt);
+            if (rv == CKR_OK)
+            {
+                rv = azihsm_pkcs11_key_aes_cbc_stream_final(op->cbc, op->cbc_last, &n);
+            }
+            if (rv != CKR_OK)
+            {
+                *out_len = 0;
+                return rv;
+            }
+            op->cbc_last_len = n;
+        }
+        /* Kept until collected: the SDK wants more room than a padded decrypt
+         * returns, and a too-small caller buffer must be able to retry. */
+        op->cbc_finished = true;
+    }
+    if (out == NULL_PTR)
+    {
+        *out_len = op->cbc_last_len;
+        *active = true;
+        return CKR_OK;
+    }
+    if (*out_len < op->cbc_last_len)
+    {
+        *out_len = op->cbc_last_len;
+        *active = true;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+    memcpy(out, op->cbc_last, op->cbc_last_len);
+    *out_len = op->cbc_last_len;
+    return CKR_OK;
+}
+
+static CK_RV fixed_update(
+    cipher_op *op,
+    bool encrypt,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len,
+    bool *active
+)
+{
+    *active = false;
+    /* buf_len never passes 32 bits (multipart_fits), which makes the first
+     * test the overflow guard for the sum. */
+    if ((in_len > ((CK_ULONG)UINT32_MAX - op->buf_len)) ||
+        !azihsm_pkcs11_multipart_fits(op->mech, encrypt, op->aad_len, op->buf_len + in_len))
+    {
+        return encrypt ? CKR_DATA_LEN_RANGE : CKR_ENCRYPTED_DATA_LEN_RANGE;
+    }
+    /* Nothing comes out before the final call, which also keeps a GCM decrypt
+     * from releasing plaintext before its tag is checked. */
+    *out_len = 0;
+    if (out == NULL_PTR)
+    {
+        *active = true; /* a sizing probe consumes nothing */
+        return CKR_OK;
+    }
+    CK_RV rv = buf_append(op, in, in_len);
+    *active = (rv == CKR_OK);
+    return rv;
+}
+
+/*
+ * Shared C_EncryptUpdate / C_DecryptUpdate body. Same lifetime rules as
+ * cipher_oneshot, plus the mode rule: a one-shot call in progress refuses the
+ * multi-part calls, and the other way round.
+ */
+static CK_RV cipher_update(
+    CK_SESSION_HANDLE hSession,
+    bool encrypt,
+    CK_BYTE_PTR in,
+    CK_ULONG in_len,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len
+)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    azihsm_pkcs11_op_type_t want = encrypt ? P11_OP_ENCRYPT : P11_OP_DECRYPT;
+    if ((s->op != want) || (s->op_ctx == NULL))
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+    cipher_op *op = (cipher_op *)s->op_ctx;
+    bool active = false;
+    CK_RV rv = CKR_OK;
+    if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_ONESHOT)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* a one-shot call is in progress */
+    }
+    else
+    {
+        s->op_mode = P11_OP_MODE_MULTIPART;
+        rv = ((op->mech == CKM_AES_GCM) || (op->mech == CKM_AES_XTS))
+                 ? fixed_update(op, encrypt, in, in_len, out, out_len, &active)
+                 : cbc_update(op, encrypt, in, in_len, out, out_len, &active);
+    }
+    if (!active)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+    }
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+/* Shared C_EncryptFinal / C_DecryptFinal body; lifetime rules as above. */
+static CK_RV cipher_final(
+    CK_SESSION_HANDLE hSession,
+    bool encrypt,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len
+)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    azihsm_pkcs11_op_type_t want = encrypt ? P11_OP_ENCRYPT : P11_OP_DECRYPT;
+    if ((s->op != want) || (s->op_ctx == NULL))
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+    cipher_op *op = (cipher_op *)s->op_ctx;
+    bool active = false;
+    CK_RV rv = CKR_OK;
+    if (out_len == NULL_PTR)
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else if (s->op_mode == P11_OP_MODE_ONESHOT)
+    {
+        rv = CKR_OPERATION_ACTIVE; /* a one-shot call is in progress */
+    }
+    else
+    {
+        /* Straight after the init this is the (allowed) zero-part case. */
+        s->op_mode = P11_OP_MODE_MULTIPART;
+        rv = ((op->mech == CKM_AES_GCM) || (op->mech == CKM_AES_XTS))
+                 ? fixed_crypt(op, encrypt, op->buf, op->buf_len, out, out_len, &active)
+                 : cbc_final(op, encrypt, out, out_len, &active);
+    }
+    if (!active)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+    }
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+CK_RV C_EncryptUpdate(
+    CK_SESSION_HANDLE hSession,
+    CK_BYTE_PTR pPart,
+    CK_ULONG ulPartLen,
+    CK_BYTE_PTR pEncryptedPart,
+    CK_ULONG_PTR pulEncryptedPartLen
+)
+{
+    return cipher_update(hSession, true, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen);
+}
+
+CK_RV C_EncryptFinal(
+    CK_SESSION_HANDLE hSession,
+    CK_BYTE_PTR pLastEncryptedPart,
+    CK_ULONG_PTR pulLastEncryptedPartLen
+)
+{
+    return cipher_final(hSession, true, pLastEncryptedPart, pulLastEncryptedPartLen);
+}
+
+CK_RV C_DecryptUpdate(
+    CK_SESSION_HANDLE hSession,
+    CK_BYTE_PTR pEncryptedPart,
+    CK_ULONG ulEncryptedPartLen,
+    CK_BYTE_PTR pPart,
+    CK_ULONG_PTR pulPartLen
+)
+{
+    return cipher_update(hSession, false, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen);
+}
+
+CK_RV C_DecryptFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart, CK_ULONG_PTR pulLastPartLen)
+{
+    return cipher_final(hSession, false, pLastPart, pulLastPartLen);
 }
