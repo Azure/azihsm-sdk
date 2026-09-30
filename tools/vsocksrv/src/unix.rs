@@ -440,12 +440,20 @@ fn write_connect_command(stream: &mut impl Write, port: u32) -> io::Result<()> {
 ///
 /// Reads one byte at a time up to a sane line-length bound so it never
 /// consumes bytes belonging to the request/response frame that follows.
-fn read_connect_ack(stream: &mut UnixStream) -> io::Result<()> {
+/// Bounded by `deadline` overall (not just each individual `read_exact`
+/// syscall's socket timeout), mirroring [`DeadlineRead`]'s reasoning: a
+/// peer that drips one byte just under the socket timeout could
+/// otherwise keep this blocked far longer than intended.
+fn read_connect_ack(stream: &mut UnixStream, deadline: Instant) -> io::Result<()> {
     const MAX_ACK_LEN: usize = 32;
+    let mut deadline_stream = DeadlineRead {
+        inner: stream,
+        deadline,
+    };
     let mut line = Vec::with_capacity(MAX_ACK_LEN);
     let mut byte = [0u8; 1];
     loop {
-        stream.read_exact(&mut byte)?;
+        deadline_stream.read_exact(&mut byte)?;
         line.push(byte[0]);
         if byte[0] == b'\n' {
             break;
@@ -473,40 +481,61 @@ fn read_connect_ack(stream: &mut UnixStream) -> io::Result<()> {
     Ok(())
 }
 
+/// Dials out to `path` and performs the `CONNECT`/`OK` handshake,
+/// retrying (with a fixed backoff) on both connection-level errors
+/// (the listener not existing yet) and transient handshake failures
+/// (e.g. the backend restarting mid-handshake), so a transient
+/// backend/guest restart cannot permanently stop AF_UNIX mode's
+/// automatic reconnects. Errors that indicate a genuine configuration
+/// or protocol problem (e.g. a malformed acknowledgement) are surfaced
+/// immediately instead of being retried forever.
 fn connect_unix(path: &Path, port: u32, idle_timeout: Duration) -> io::Result<UnixStream> {
     loop {
-        match UnixStream::connect(path) {
-            Ok(mut stream) => {
-                // The read timeout bounds the idle wait for the next
-                // request frame (see `idle_timeout`'s callers); the write
-                // timeout bounds writing a response and stays at
-                // `CONNECTION_READ_TIMEOUT` for every socket type, since
-                // that's a liveness bound on an in-flight write, not on
-                // command cadence.
-                stream.set_read_timeout(Some(idle_timeout))?;
-                stream.set_write_timeout(Some(CONNECTION_READ_TIMEOUT))?;
-                write_connect_command(&mut stream, port)?;
-                // The ack itself can take a moment (the backend waits
-                // on a real guest-side vsock accept), so bound it with
-                // the same liveness timeout as writes rather than the
-                // (potentially unbounded) idle timeout.
-                stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT))?;
-                read_connect_ack(&mut stream)?;
-                stream.set_read_timeout(Some(idle_timeout))?;
-                return Ok(stream);
-            }
+        match connect_unix_once(path, port, idle_timeout) {
+            Ok(stream) => return Ok(stream),
             Err(error)
                 if matches!(
                     error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                    io::ErrorKind::NotFound
+                        | io::ErrorKind::ConnectionRefused
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::BrokenPipe
+                        | io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
                 ) =>
             {
-                tracing::debug!(socket = %path.display(), ?error, "Waiting for AF_UNIX listener");
+                tracing::debug!(
+                    socket = %path.display(),
+                    ?error,
+                    "Waiting for AF_UNIX listener/handshake"
+                );
                 thread::sleep(Duration::from_millis(100));
             }
             Err(error) => return Err(error),
         }
     }
+}
+
+/// A single connect + `CONNECT`/`OK` handshake attempt, with no retry.
+fn connect_unix_once(path: &Path, port: u32, idle_timeout: Duration) -> io::Result<UnixStream> {
+    let mut stream = UnixStream::connect(path)?;
+    // The read timeout bounds the idle wait for the next request frame
+    // (see `idle_timeout`'s callers); the write timeout bounds writing a
+    // response and stays at `CONNECTION_READ_TIMEOUT` for every socket
+    // type, since that's a liveness bound on an in-flight write, not on
+    // command cadence.
+    stream.set_read_timeout(Some(idle_timeout))?;
+    stream.set_write_timeout(Some(CONNECTION_READ_TIMEOUT))?;
+    write_connect_command(&mut stream, port)?;
+    // The ack itself can take a moment (the backend waits on a real
+    // guest-side vsock accept), so bound it with the same liveness
+    // timeout as writes rather than the (potentially unbounded) idle
+    // timeout.
+    read_connect_ack(&mut stream, Instant::now() + CONNECTION_READ_TIMEOUT)?;
+    stream.set_read_timeout(Some(idle_timeout))?;
+    Ok(stream)
 }
 
 /// Number of attempts to re-enable a partition after a disconnect-triggered

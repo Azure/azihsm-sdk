@@ -106,9 +106,15 @@ impl VsockListener {
             None,
         )
         .map_err(nix_to_io)?;
+        // Wrap `fd` immediately so a `bind`/`listen` failure below still
+        // closes it via `Drop` instead of leaking the descriptor: `listener_for`
+        // only caches the listener once `bind` fully succeeds, so repeated
+        // `open_dev` retries after a transient failure would otherwise leak
+        // one fd per attempt.
+        let listener = Self(fd);
         bind(fd, &VsockAddr::new(libc::VMADDR_CID_ANY, port)).map_err(nix_to_io)?;
         listen(fd, 128).map_err(nix_to_io)?;
-        Ok(Self(fd))
+        Ok(listener)
     }
 
     fn accept(&self) -> std::io::Result<VsockStream> {
