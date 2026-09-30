@@ -6,6 +6,8 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::x509_fixture::PtaChain;
@@ -248,7 +250,7 @@ fuzz_target!(|input: FuzzInput| {
         // Fresh-slate CO session under a rotated (non-default) PSK — the
         // gate `PartInit` / `PartFinal` need cleared before the fuzzed
         // opcode can fire.
-        let session = common::erase_and_open_rotated_co_session(ctx);
+        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
         // Generate a POTA trust anchor and embed its public key in the policy.
         let pota = CaKey::generate();

@@ -6,6 +6,8 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
@@ -143,7 +145,7 @@ fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         // Fresh-slate CO session under a rotated (non-default) PSK — the
         // gate `PartInit` needs cleared before the fuzzed opcode can fire.
-        let session = common::erase_and_open_rotated_co_session(ctx);
+        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
         let sapota_thumbprint = if input.sapota_present {
             input.sapota_thumbprint.to_vec()
