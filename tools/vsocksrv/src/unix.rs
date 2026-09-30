@@ -857,6 +857,18 @@ fn serve(
                 )?;
                 debug!("HSM client disconnected; reconnecting");
                 tracing::info!("HSM client disconnected; reconnecting");
+                // Drop the old connection *before* dialing the new one:
+                // `stream = connect_unix(...)` would otherwise evaluate
+                // the RHS (the full CONNECT/OK reconnect handshake)
+                // before dropping the old `stream`, per Rust's normal
+                // assignment order. That keeps the old connection open
+                // on this side for the reconnect's entire duration,
+                // which deadlocks any backend that (like Cloud
+                // Hypervisor's real virtio-vsock unix listener, or the
+                // test bridge) serves connections sequentially and
+                // needs to observe this old connection's EOF before it
+                // can accept and handshake the new one.
+                drop(stream);
                 stream = connect_unix(path, args.port, UNIX_IDLE_READ_TIMEOUT)
                     .context("Failed to reconnect to AF_UNIX")?;
                 tracing::info!(

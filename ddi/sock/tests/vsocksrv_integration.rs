@@ -116,7 +116,7 @@ fn bridge_connection(mut ch: UnixStream, ddi: UnixStream) -> io::Result<()> {
     // The real backend acks with its own ephemeral local port rather than
     // the requested one, but `vsocksrv` only validates the `OK <digits>\n`
     // shape, so echoing the requested port back is sufficient here.
-    write!(ch, "OK {port}\n")?;
+    writeln!(ch, "OK {port}")?;
     ch.flush()?;
     let mut ddi = ddi;
 
