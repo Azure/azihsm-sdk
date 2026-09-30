@@ -58,6 +58,19 @@ const TRANSPORT_ERROR: u32 = 1;
 /// treated the same as a disconnect: the partition is reset and the
 /// connection is dropped so the next client can be accepted.
 const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Idle-read deadline used while waiting for the *next* request frame (as
+/// opposed to `CONNECTION_READ_TIMEOUT`, which also bounds writing a
+/// response and, for AF_VSOCK, the initial idle wait). AF_UNIX mode is
+/// inherently single-connection: `serve`'s AF_UNIX loop always reconnects to
+/// the same peer (the cloud-hypervisor manticorevsock device), so there is
+/// no other client whose fairness this timeout would protect (contrast the
+/// AF_VSOCK rationale on `CONNECTION_READ_TIMEOUT`). Applying the same 30s
+/// bound there instead let an ordinary idle gap between guest-issued HSM
+/// commands look identical to a peer disconnect, silently resetting the
+/// partition (wiping keys/sessions/vault) and orphaning the guest's
+/// existing connection out from under it. Use an effectively unbounded
+/// value instead so only a real disconnect ends an AF_UNIX connection.
+const UNIX_IDLE_READ_TIMEOUT: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Adjusts a stream's per-syscall socket timeouts.
@@ -417,18 +430,17 @@ fn write_connect_command(stream: &mut impl Write, port: u32) -> io::Result<()> {
     stream.flush()
 }
 
-fn connect_unix(path: &Path, port: u32) -> io::Result<UnixStream> {
+fn connect_unix(path: &Path, port: u32, idle_timeout: Duration) -> io::Result<UnixStream> {
     loop {
         match UnixStream::connect(path) {
             Ok(mut stream) => {
-                // Bound how long a single connection can occupy the server
-                // (see `CONNECTION_READ_TIMEOUT`), matching the timeouts
-                // `VsockListener::accept` applies to AF_VSOCK connections.
-                // Without this, a stalled AF_UNIX peer could block
-                // `serve_connection_and_reset` forever, preventing the
-                // single-threaded server from resetting and serving any
-                // other client.
-                stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT))?;
+                // The read timeout bounds the idle wait for the next
+                // request frame (see `idle_timeout`'s callers); the write
+                // timeout bounds writing a response and stays at
+                // `CONNECTION_READ_TIMEOUT` for every socket type, since
+                // that's a liveness bound on an in-flight write, not on
+                // command cadence.
+                stream.set_read_timeout(Some(idle_timeout))?;
                 stream.set_write_timeout(Some(CONNECTION_READ_TIMEOUT))?;
                 write_connect_command(&mut stream, port)?;
                 return Ok(stream);
@@ -532,8 +544,9 @@ fn serve_connection_and_reset(
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
+    idle_timeout: Duration,
 ) -> Result<()> {
-    match serve_connection(stream, hsm, runtime, partition_id) {
+    match serve_connection(stream, hsm, runtime, partition_id, idle_timeout) {
         Ok(()) => tracing::info!("HSM client connection closed"),
         Err(error) => tracing::warn!(?error, "HSM client connection closed with an error"),
     }
@@ -545,6 +558,7 @@ fn serve_connection(
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
+    idle_timeout: Duration,
 ) -> Result<()> {
     let mut request_id = 0u64;
     loop {
@@ -552,7 +566,7 @@ fn serve_connection(
         tracing::trace!("Waiting for request frame");
         let mut deadline_stream = DeadlineRead {
             inner: stream,
-            deadline: Instant::now() + CONNECTION_READ_TIMEOUT,
+            deadline: Instant::now() + idle_timeout,
         };
         let request = match Request::read_from(&mut deadline_stream) {
             Ok(request) => request,
@@ -566,10 +580,13 @@ fn serve_connection(
                         | io::ErrorKind::TimedOut
                 ) =>
             {
-                // WouldBlock/TimedOut means the connection's read timeout
-                // (see `CONNECTION_READ_TIMEOUT`) expired; treat a stalled
-                // client the same as a disconnect so it can't hold up every
-                // other client waiting to be served.
+                // WouldBlock/TimedOut means the connection's idle-read
+                // timeout (`idle_timeout`) expired; treat a stalled client
+                // the same as a disconnect so it can't hold up every other
+                // client waiting to be served. For AF_UNIX this is
+                // `UNIX_IDLE_READ_TIMEOUT` (effectively unbounded), so this
+                // path is only expected to fire for a genuinely stalled
+                // AF_VSOCK client.
                 debug!("Client disconnected");
                 tracing::debug!(kind = ?error.kind(), "Client disconnected");
                 // The caller (`serve_connection_and_reset`) resets the
@@ -658,13 +675,14 @@ fn serve_connection_logged(
     hsm: &StdHsm,
     runtime: &tokio::runtime::Handle,
     partition_id: u8,
+    idle_timeout: Duration,
 ) -> Result<()> {
     let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
     tracing::info!(connection_id, "Connected HSM client");
     let connection_span = tracing::info_span!("connection", connection_id);
     let _connection_guard = connection_span.enter();
     tracing::debug!("Started connection worker");
-    serve_connection_and_reset(&mut stream, hsm, runtime, partition_id)
+    serve_connection_and_reset(&mut stream, hsm, runtime, partition_id, idle_timeout)
 }
 
 pub(crate) fn main() -> Result<()> {
@@ -683,7 +701,8 @@ pub(crate) fn main() -> Result<()> {
             .as_ref()
             .context("AF_UNIX socket is required")?;
         tracing::info!(socket = %path.display(), port = args.port, "Connecting to Cloud Hypervisor");
-        let stream = connect_unix(path, args.port).context("Failed to connect to AF_UNIX")?;
+        let stream = connect_unix(path, args.port, UNIX_IDLE_READ_TIMEOUT)
+            .context("Failed to connect to AF_UNIX")?;
         tracing::info!(
             socket = %path.display(),
             port = args.port,
@@ -754,7 +773,14 @@ fn serve(
                 // disconnect wipe another's live sessions/keys. Handling
                 // connections serially also removes any need to bound
                 // concurrent threads against this untrusted listener.
-                serve_connection_logged(stream, hsm, runtime.handle(), args.partition_id).context(
+                serve_connection_logged(
+                    stream,
+                    hsm,
+                    runtime.handle(),
+                    args.partition_id,
+                    CONNECTION_READ_TIMEOUT,
+                )
+                .context(
                     "Partition reset failed after a client disconnected; refusing to \
                          serve further clients on a partition that isn't known to be reset",
                 )?;
@@ -768,14 +794,21 @@ fn serve(
                 .context("AF_UNIX socket is required")?;
             let mut stream = unix_stream.take().context("AF_UNIX stream is missing")?;
             loop {
-                serve_connection_and_reset(&mut stream, hsm, runtime.handle(), args.partition_id)
-                    .context(
+                serve_connection_and_reset(
+                    &mut stream,
+                    hsm,
+                    runtime.handle(),
+                    args.partition_id,
+                    UNIX_IDLE_READ_TIMEOUT,
+                )
+                .context(
                     "Partition reset failed after a client disconnected; refusing to \
                          serve further clients on a partition that isn't known to be reset",
                 )?;
                 debug!("HSM client disconnected; reconnecting");
                 tracing::info!("HSM client disconnected; reconnecting");
-                stream = connect_unix(path, args.port).context("Failed to reconnect to AF_UNIX")?;
+                stream = connect_unix(path, args.port, UNIX_IDLE_READ_TIMEOUT)
+                    .context("Failed to reconnect to AF_UNIX")?;
                 tracing::info!(
                     socket = %path.display(),
                     port = args.port,
