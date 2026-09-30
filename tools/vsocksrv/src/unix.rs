@@ -430,6 +430,49 @@ fn write_connect_command(stream: &mut impl Write, port: u32) -> io::Result<()> {
     stream.flush()
 }
 
+/// Reads and validates the `OK <local-port>\n` acknowledgement Cloud
+/// Hypervisor's standard virtio-vsock unix backend sends after a
+/// successful host-initiated `CONNECT <port>\n`.
+///
+/// The acknowledged port is the backend's own ephemeral host-local port
+/// for this connection (not the guest destination port passed to
+/// `CONNECT`), so this only validates the `OK <digits>\n` shape.
+///
+/// Reads one byte at a time up to a sane line-length bound so it never
+/// consumes bytes belonging to the request/response frame that follows.
+fn read_connect_ack(stream: &mut UnixStream) -> io::Result<()> {
+    const MAX_ACK_LEN: usize = 32;
+    let mut line = Vec::with_capacity(MAX_ACK_LEN);
+    let mut byte = [0u8; 1];
+    loop {
+        stream.read_exact(&mut byte)?;
+        line.push(byte[0]);
+        if byte[0] == b'\n' {
+            break;
+        }
+        if line.len() >= MAX_ACK_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CONNECT acknowledgement exceeded the expected length",
+            ));
+        }
+    }
+    let text = std::str::from_utf8(&line)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "CONNECT ack wasn't UTF-8"))?;
+    let port_digits = text
+        .strip_prefix("OK ")
+        .and_then(|rest| rest.strip_suffix('\n'));
+    if !port_digits
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unexpected CONNECT acknowledgement: {line:?}"),
+        ));
+    }
+    Ok(())
+}
+
 fn connect_unix(path: &Path, port: u32, idle_timeout: Duration) -> io::Result<UnixStream> {
     loop {
         match UnixStream::connect(path) {
@@ -443,6 +486,13 @@ fn connect_unix(path: &Path, port: u32, idle_timeout: Duration) -> io::Result<Un
                 stream.set_read_timeout(Some(idle_timeout))?;
                 stream.set_write_timeout(Some(CONNECTION_READ_TIMEOUT))?;
                 write_connect_command(&mut stream, port)?;
+                // The ack itself can take a moment (the backend waits
+                // on a real guest-side vsock accept), so bound it with
+                // the same liveness timeout as writes rather than the
+                // (potentially unbounded) idle timeout.
+                stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT))?;
+                read_connect_ack(&mut stream)?;
+                stream.set_read_timeout(Some(idle_timeout))?;
                 return Ok(stream);
             }
             Err(error)
