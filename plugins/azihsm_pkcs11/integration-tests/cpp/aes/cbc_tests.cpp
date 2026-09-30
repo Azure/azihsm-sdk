@@ -104,6 +104,37 @@ TEST_F(aes_cbc, raw_cbc_roundtrip)
     EXPECT_EQ(two_blocks, back);
 }
 
+TEST_F(aes_cbc, raw_cbc_of_the_empty_message_is_empty)
+{
+    // Zero bytes are a whole number of blocks. The SDK refuses an unpadded call
+    // over no data, so the module answers it without the device.
+    for (bool encrypt : { true, false })
+    {
+        SCOPED_TRACE(encrypt ? "encrypt" : "decrypt");
+        ASSERT_CKR_OK(
+            encrypt ? p11()->C_EncryptInit(s_, &raw_, key_) : p11()->C_DecryptInit(s_, &raw_, key_)
+        );
+        CK_ULONG need = kAesBlock;
+        ASSERT_CKR_OK(
+            encrypt ? p11()->C_Encrypt(s_, nullptr, 0, nullptr, &need)
+                    : p11()->C_Decrypt(s_, nullptr, 0, nullptr, &need)
+        );
+        EXPECT_EQ(0u, need);
+        CK_BYTE out[kAesBlock];
+        CK_ULONG len = sizeof(out);
+        ASSERT_CKR_OK(
+            encrypt ? p11()->C_Encrypt(s_, nullptr, 0, out, &len)
+                    : p11()->C_Decrypt(s_, nullptr, 0, out, &len)
+        );
+        EXPECT_EQ(0u, len);
+        EXPECT_CKR(
+            CKR_OPERATION_NOT_INITIALIZED,
+            encrypt ? p11()->C_Encrypt(s_, nullptr, 0, out, &len)
+                    : p11()->C_Decrypt(s_, nullptr, 0, out, &len)
+        ) << "the call completed the operation";
+    }
+}
+
 TEST_F(aes_cbc, same_input_same_iv_gives_same_ciphertext)
 {
     // The IV seed is re-applied on every call, so probing and retrying never

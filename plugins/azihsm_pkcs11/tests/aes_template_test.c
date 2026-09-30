@@ -18,7 +18,8 @@
  * plain AES, GCM (by CKA_ALLOWED_MECHANISMS) and XTS, the append-if-absent
  * rules of azihsm_pkcs11_keygen_build_template, the cipher mechanism table,
  * the allowed-mechanism gate, CK_GCM_PARAMS decoding, the GCM/XTS output
- * length plan, and the status maps including the padded-decrypt remap.
+ * length plan, the multi-part length rules, and the status maps including the
+ * padded-decrypt remap.
  */
 
 #include "azihsm_pkcs11_status.h"
@@ -1338,6 +1339,134 @@ static void test_out_len(void)
     );
 }
 
+static void test_multipart(void)
+{
+    printf("== multi-part length rules ==\n");
+    typedef struct
+    {
+        bool encrypt;
+        bool pad;
+        CK_ULONG fed_mod;
+        bool fed_any;
+        CK_RV rv;
+        bool run;
+        const char *why;
+    } final_case;
+    static const final_case cases[] = {
+        { true, false, 0, false, CKR_OK, false, "CBC encrypt of nothing: empty, no SDK call" },
+        { true, false, 0, true, CKR_OK, true, "CBC encrypt of whole blocks" },
+        { true, false, 5, true, CKR_DATA_LEN_RANGE, false, "CBC encrypt of a partial block" },
+        { true, true, 0, false, CKR_OK, true, "CBC-PAD encrypt of nothing: one padding block" },
+        { true, true, 0, true, CKR_OK, true, "CBC-PAD encrypt of whole blocks" },
+        { true, true, 7, true, CKR_OK, true, "CBC-PAD encrypt of a partial block" },
+        { false, false, 0, false, CKR_OK, false, "CBC decrypt of nothing: empty, no SDK call" },
+        { false, false, 0, true, CKR_OK, true, "CBC decrypt of whole blocks" },
+        { false,
+          false,
+          3,
+          true,
+          CKR_ENCRYPTED_DATA_LEN_RANGE,
+          false,
+          "CBC decrypt, partial block" },
+        { false,
+          true,
+          0,
+          false,
+          CKR_ENCRYPTED_DATA_LEN_RANGE,
+          false,
+          "CBC-PAD decrypt of nothing" },
+        { false, true, 0, true, CKR_OK, true, "CBC-PAD decrypt of whole blocks" },
+        { false,
+          true,
+          AES_BLOCK_LEN - 1,
+          true,
+          CKR_ENCRYPTED_DATA_LEN_RANGE,
+          false,
+          "CBC-PAD decrypt, partial block" },
+    };
+    for (size_t i = 0; i < COUNT(cases); i++)
+    {
+        const final_case *c = &cases[i];
+        bool run = !c->run; /* must be overwritten on every path */
+        CK_RV rv = azihsm_pkcs11_cbc_final_check(c->encrypt, c->pad, c->fed_mod, c->fed_any, &run);
+        CHECK((rv == c->rv) && (run == c->run), c->why);
+    }
+    CHECK(
+        azihsm_pkcs11_cbc_final_check(true, false, 0, true, NULL) == CKR_ARGUMENTS_BAD,
+        "NULL run_final -> CKR_ARGUMENTS_BAD"
+    );
+
+    /* GCM / XTS buffering: the one-shot path's upper limits, no lower ones. */
+    CHECK(azihsm_pkcs11_multipart_fits(CKM_AES_GCM, true, 0, 0), "GCM encrypt: nothing yet");
+    CHECK(
+        azihsm_pkcs11_multipart_fits(CKM_AES_GCM, true, 0, (CK_ULONG)UINT32_MAX - AES_GCM_TAG_LEN),
+        "GCM encrypt: the most whose tagged output stays within 32 bits"
+    );
+    CHECK(
+        !azihsm_pkcs11_multipart_fits(
+            CKM_AES_GCM,
+            true,
+            0,
+            (CK_ULONG)UINT32_MAX - AES_GCM_TAG_LEN + 1
+        ),
+        "GCM encrypt: one byte more does not fit"
+    );
+    CHECK(
+        azihsm_pkcs11_multipart_fits(
+            CKM_AES_GCM,
+            true,
+            1,
+            (CK_ULONG)UINT32_MAX - AES_GCM_AAD_ALIGN
+        ),
+        "GCM encrypt: padded AAD plus data at the 32-bit limit"
+    );
+    CHECK(
+        !azihsm_pkcs11_multipart_fits(
+            CKM_AES_GCM,
+            true,
+            1,
+            (CK_ULONG)UINT32_MAX - AES_GCM_AAD_ALIGN + 1
+        ),
+        "GCM encrypt: padded AAD plus data one byte over"
+    );
+    CHECK(
+        azihsm_pkcs11_multipart_fits(CKM_AES_GCM, false, (CK_ULONG)UINT32_MAX, AES_GCM_TAG_LEN - 1),
+        "GCM decrypt: short of a tag there is no ciphertext to measure yet"
+    );
+    CHECK(
+        azihsm_pkcs11_multipart_fits(CKM_AES_GCM, false, 0, AES_GCM_TAG_LEN - 1),
+        "GCM decrypt: short of a tag, the tag is not subtracted"
+    );
+    CHECK(
+        azihsm_pkcs11_multipart_fits(CKM_AES_GCM, false, 0, (CK_ULONG)UINT32_MAX),
+        "GCM decrypt: a 32-bit input with no AAD"
+    );
+    CHECK(
+        !azihsm_pkcs11_multipart_fits(CKM_AES_GCM, false, AES_GCM_AAD_ALIGN, (CK_ULONG)UINT32_MAX),
+        "GCM decrypt: padded AAD plus ciphertext over 32 bits"
+    );
+    if (sizeof(CK_ULONG) > sizeof(uint32_t))
+    {
+        CHECK(
+            !azihsm_pkcs11_multipart_fits(CKM_AES_GCM, false, 0, (CK_ULONG)UINT32_MAX + 1),
+            "GCM decrypt: input beyond 32 bits"
+        );
+    }
+    CHECK(azihsm_pkcs11_multipart_fits(CKM_AES_XTS, true, 0, 0), "XTS: nothing yet");
+    CHECK(
+        azihsm_pkcs11_multipart_fits(CKM_AES_XTS, false, 0, AES_XTS_MAX_DATA_LEN),
+        "XTS: the data-unit ceiling"
+    );
+    CHECK(
+        !azihsm_pkcs11_multipart_fits(CKM_AES_XTS, true, 0, AES_XTS_MAX_DATA_LEN + 1),
+        "XTS: past the data-unit ceiling"
+    );
+    CHECK(
+        !azihsm_pkcs11_multipart_fits(CKM_AES_CBC, true, 0, AES_BLOCK_LEN),
+        "CBC does not buffer here -> false"
+    );
+}
+
 int main(void)
 {
     test_tmpl_find();
@@ -1352,6 +1481,7 @@ int main(void)
     test_cipher_mechs();
     test_gcm_params();
     test_out_len();
+    test_multipart();
     test_status_maps();
     printf(
         g_fail ? "\naes_template_test: FAILED (%d checks)\n"

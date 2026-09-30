@@ -46,6 +46,7 @@ set(SOURCE
     aes/cbc_tests.cpp
     aes/gcm_tests.cpp
     aes/xts_tests.cpp
+    aes/multipart_tests.cpp
     session/op_lifecycle_tests.cpp
 )
 add_executable(azihsm_pkcs11_cpp_tests ${SOURCE})

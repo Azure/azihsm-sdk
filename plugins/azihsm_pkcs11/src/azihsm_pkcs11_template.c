@@ -593,3 +593,57 @@ bool azihsm_pkcs11_gcm_fits(CK_ULONG aad_len, CK_ULONG data_len)
         (((uint64_t)aad_len + (AES_GCM_AAD_ALIGN - 1)) / AES_GCM_AAD_ALIGN) * AES_GCM_AAD_ALIGN;
     return (padded + (uint64_t)data_len) <= (uint64_t)UINT32_MAX;
 }
+
+CK_RV azihsm_pkcs11_cbc_final_check(
+    bool encrypt,
+    bool pad,
+    CK_ULONG fed_mod,
+    bool fed_any,
+    bool *run_final
+)
+{
+    if (run_final == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    *run_final = false;
+    if (encrypt)
+    {
+        if (!pad && (fed_mod != 0))
+        {
+            return CKR_DATA_LEN_RANGE;
+        }
+    }
+    else if ((fed_mod != 0) || (pad && !fed_any))
+    {
+        return CKR_ENCRYPTED_DATA_LEN_RANGE;
+    }
+    *run_final = pad || fed_any;
+    return CKR_OK;
+}
+
+bool azihsm_pkcs11_multipart_fits(
+    CK_MECHANISM_TYPE mech,
+    bool encrypt,
+    CK_ULONG aad_len,
+    CK_ULONG total
+)
+{
+    switch (mech)
+    {
+    case CKM_AES_GCM:
+        if (encrypt)
+        {
+            return (total <= ((CK_ULONG)UINT32_MAX - AES_GCM_TAG_LEN)) &&
+                   azihsm_pkcs11_gcm_fits(aad_len, total);
+        }
+        /* Until the tag is complete there is no ciphertext to measure. */
+        return (total <= (CK_ULONG)UINT32_MAX) &&
+               ((total < AES_GCM_TAG_LEN) ||
+                azihsm_pkcs11_gcm_fits(aad_len, total - AES_GCM_TAG_LEN));
+    case CKM_AES_XTS:
+        return total <= AES_XTS_MAX_DATA_LEN;
+    default:
+        return false;
+    }
+}
