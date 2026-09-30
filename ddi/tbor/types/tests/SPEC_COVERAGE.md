@@ -212,6 +212,8 @@ without requiring an active session.
 | Single unknown trailing response field is ignored | ✅ | `get_cert_chain_info::trailing_unknown_toc_type_is_ignored` | Known `num_certs` and thumbprint fields remain intact |
 | Wrong TOC type for `num_certs` is rejected | ✅ | `get_cert_chain_info::wrong_num_certs_type_rejected` | Encodes `num_certs` as `Uint16`; expects `UnexpectedTocType` |
 | Wrong TOC type for `thumbprint` is rejected | ✅ | `get_cert_chain_info::wrong_thumbprint_type_rejected` | Encodes the thumbprint as `Uint8`; expects `UnexpectedTocType` |
+| Thumbprint buffer shorter than `CERT_THUMBPRINT_LEN` is rejected with `InvalidFixedLength` | ✅ | `get_cert_chain_info::wrong_thumbprint_length_rejected` | Uses a correctly typed `Buffer` with `CERT_THUMBPRINT_LEN - 1` bytes. |
+| Thumbprint buffer longer than `CERT_THUMBPRINT_LEN` is rejected with `InvalidFixedLength` | ✅ | `get_cert_chain_info::oversized_thumbprint_rejected` | Uses a correctly typed `Buffer` with `CERT_THUMBPRINT_LEN + 1` bytes. |
 
 ## `GetCertificate` (opcode out-of-session)
 

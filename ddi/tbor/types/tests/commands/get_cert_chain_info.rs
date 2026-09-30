@@ -19,6 +19,8 @@ use azihsm_ddi_tbor_types::codec::DecodeError;
 use azihsm_ddi_tbor_types::codec::ResponseEncoder;
 use azihsm_ddi_tbor_types::codec::MAX_TOC_ENTRIES;
 use azihsm_ddi_tbor_types::codec::PROTOCOL_VERSION;
+use azihsm_ddi_tbor_types::codec::RESP_HEADER_LEN;
+use azihsm_ddi_tbor_types::codec::TOC_ENTRY_LEN;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborGetCertChainInfoResp;
@@ -456,11 +458,9 @@ fn trailing_unknown_toc_type_is_ignored() {
         bytes.len()
     };
 
-    const RESPONSE_HEADER_LEN: usize = 8;
-    const TOC_ENTRY_LEN: usize = 4;
     const UNKNOWN_TOC_TYPE: u8 = 63;
 
-    let trailing_toc = RESPONSE_HEADER_LEN + 2 * TOC_ENTRY_LEN;
+    let trailing_toc = RESP_HEADER_LEN + 2 * TOC_ENTRY_LEN;
 
     buf[trailing_toc] = (buf[trailing_toc] & 0x03) | (UNKNOWN_TOC_TYPE << 2);
 
@@ -598,4 +598,44 @@ fn maximum_certificate_index_rejected() {
         &TborGetCertReq::new(VALID_SLOT, u8::MAX),
         TborStatus::InvalidArg,
     );
+}
+
+/// A thumbprint buffer with the wrong length is rejected.
+#[test]
+fn wrong_thumbprint_length_rejected() {
+    let mut buf = [0u8; 512];
+    let thumbprint = [0xA5u8; CERT_THUMBPRINT_LEN - 1];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(4)
+        .expect("encode num_certs")
+        .buffer(&thumbprint)
+        .expect("encode short thumbprint")
+        .finish()
+        .expect("finish response");
+
+    let err = TborGetCertChainInfoResp::decode_response(bytes)
+        .expect_err("wrong thumbprint length must be rejected");
+
+    assert_eq!(err, DecodeError::InvalidFixedLength);
+}
+
+/// A thumbprint buffer longer than the fixed SHA-256 length is rejected.
+#[test]
+fn oversized_thumbprint_rejected() {
+    let mut buf = [0u8; 512];
+    let thumbprint = [0xA5u8; CERT_THUMBPRINT_LEN + 1];
+
+    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+        .uint8(4)
+        .expect("encode num_certs")
+        .buffer(&thumbprint)
+        .expect("encode oversized thumbprint")
+        .finish()
+        .expect("finish response");
+
+    let err = TborGetCertChainInfoResp::decode_response(bytes)
+        .expect_err("oversized thumbprint must be rejected");
+
+    assert!(matches!(err, DecodeError::InvalidFixedLength { .. }));
 }
