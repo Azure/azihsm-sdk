@@ -53,3 +53,7 @@ Cloud Hypervisor uses the corresponding endpoint as follows:
 ```text
 --manticorevsock cid=<guest_cid>,socket=<unix_socket>,port=5000
 ```
+
+See [BRIDGE_TESTING.md](BRIDGE_TESTING.md) for how to bridge a
+`manticorevsock` guest to `vsocksrv` running as an `AF_VSOCK` listener in a
+second VM.
