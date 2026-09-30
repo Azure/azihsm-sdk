@@ -300,10 +300,7 @@ fuzz_target!(|input: FuzzInput| {
         } else if expect_failure {
             assert!(
                 result.is_err(),
-                "PartFinal should reject wire-schema-invalid input, got Ok({result:?}) \
-                 (chain_len={}, backup_len={})",
-                chain_items.len(),
-                input.prev_local_mk_backup.len(),
+                "PartFinal should reject wire-schema-invalid input"
             );
         }
 

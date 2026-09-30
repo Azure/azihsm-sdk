@@ -205,7 +205,7 @@ fuzz_target!(|input: FuzzInput| {
         } else {
             assert!(
                 result.is_err(),
-                "PartInit should reject a mutated envelope, got Ok({result:?})",
+                "PartInit should reject a mutated envelope",
             );
         }
 
