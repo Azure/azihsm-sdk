@@ -289,6 +289,7 @@ pub(crate) fn with_partition<F>(mut test: F)
 where
     F: FnMut(HsmPartition, HsmCredentials),
 {
+    let _partition_guard = PARTITION_LOCK.lock();
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {

@@ -126,6 +126,7 @@ fn make_api_test(item: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
         fn #name() #return_type {
             #item
             crate::utils::api::init();
+            let _partition_guard = crate::utils::partition::PARTITION_LOCK.lock();
             let span = tracing::span!(tracing::Level::INFO, stringify!(#name));
             let _span_guard = span.enter();
             #name()
