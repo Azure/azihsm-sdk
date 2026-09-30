@@ -271,7 +271,9 @@ pub(crate) fn save_mobk_after_init(part: &HsmPartition) {
 /// This utility function discovers available HSM partitions, opens each one,
 /// initializes it with test credentials, and executes the provided test closure
 /// with the partition and credentials as parameters. This allows tests to run
-/// against all available partitions sequentially.
+/// against all available partitions sequentially. The shared partition lock is
+/// held across setup and callback execution so concurrent session tests cannot
+/// observe a reset or reinitialization.
 ///
 /// # Type Parameters
 ///

@@ -94,8 +94,9 @@ pub fn session_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// This function transforms the input test function into a test that:
 /// 1. Initializes tracing
-/// 2. Creates a named tracing span for the test
-/// 3. Enters the span and executes the original test function
+/// 2. Acquires the shared partition lock
+/// 3. Creates a named tracing span for the test
+/// 4. Enters the span and executes the original test function
 ///
 /// # Arguments
 ///
