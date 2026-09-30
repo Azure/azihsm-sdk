@@ -7,8 +7,8 @@
 mod common;
 
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -203,10 +203,7 @@ fuzz_target!(|input: FuzzInput| {
                 "PartInit should succeed with an unmutated envelope and a wire-valid request",
             );
         } else {
-            assert!(
-                result.is_err(),
-                "PartInit should reject a mutated envelope",
-            );
+            assert!(result.is_err(), "PartInit should reject a mutated envelope",);
         }
 
         ctx.session_close(session.session_id)

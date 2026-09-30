@@ -7,8 +7,8 @@
 mod common;
 
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::x509_fixture::PtaChain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
