@@ -24,12 +24,12 @@ use crate::tbor;
 pub const TBOR_OP_AES_GENERATE_KEY: u8 = 0x15;
 
 /// Minimum masked AES-key envelope length (AES-128, 16-byte key): an
-/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖
+/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖
 /// pt(16) ‖ tag(16)`.
-pub const MASKED_AES_KEY_MIN_LEN: usize = 8 + 12 + 96 + 16 + 16;
+pub const MASKED_AES_KEY_MIN_LEN: usize = 8 + 12 + 192 + 16 + 16;
 
 /// Maximum masked AES-key envelope length (AES-256, 32-byte key).
-pub const MASKED_AES_KEY_MAX_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_AES_KEY_MAX_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// `AesKeySize` discriminant for AES-128 (16-byte key).
 pub const AES_KEY_SIZE_128: u8 = 1;
@@ -38,9 +38,14 @@ pub const AES_KEY_SIZE_192: u8 = 2;
 /// `AesKeySize` discriminant for AES-256 (32-byte key).
 pub const AES_KEY_SIZE_256: u8 = 3;
 
+/// Maximum caller-supplied key-label length (bytes) recorded in the masked
+/// blob's metadata (`MaskedKeyMetadata.key_label`). Not AES-specific: every
+/// TBOR key kind shares the same 128-byte label cap.
+pub const TBOR_KEY_LABEL_MAX_LEN: usize = 128;
+
 /// Host-facing TBOR `AesGenerateKey` request.
 #[tbor(opcode = TBOR_OP_AES_GENERATE_KEY, session_ctrl = in_session)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborAesGenerateKeyReq {
     /// Session id this request is bound to.  Cross-checked against the
     /// SQE-carried session id by the dispatcher.
@@ -53,6 +58,16 @@ pub struct TborAesGenerateKeyReq {
     /// AES key size as the 1-byte `AesKeySize` discriminant (see
     /// [`AES_KEY_SIZE_128`] / [`AES_KEY_SIZE_192`] / [`AES_KEY_SIZE_256`]).
     pub key_size: u8,
+
+    /// Requested key-usage permissions, `KeyUsage` bitfield (u64) — a
+    /// generated AES key carries exactly `ENCRYPT | DECRYPT`.
+    pub key_usage: u64,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to [`TBOR_KEY_LABEL_MAX_LEN`] (128) bytes.  Empty for an unlabeled
+    /// key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `AesGenerateKey` response.
@@ -60,9 +75,9 @@ pub struct TborAesGenerateKeyReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborAesGenerateKeyResp {
     /// The freshly generated AES key, masked (AEAD-GCM-256) under the
-    /// requested scope's masking key.  148 / 156 / 164 B for
+    /// requested scope's masking key.  244 / 252 / 260 B for
     /// AES-128 / 192 / 256; not stored on-device.
-    #[tbor(max_len = 164)]
+    #[tbor(max_len = 260)]
     pub masked_key: Vec<u8>,
 }
 
@@ -71,6 +86,8 @@ mod tests {
     use azihsm_ddi_tbor_types::TborOpReq;
 
     use super::*;
+    use crate::KEY_USAGE_DECRYPT;
+    use crate::KEY_USAGE_ENCRYPT;
 
     #[test]
     fn request_encodes_scope_and_size() {
@@ -79,6 +96,8 @@ mod tests {
             // KeyScope::Local discriminant (0b011).
             scope: 0b011,
             key_size: AES_KEY_SIZE_256,
+            key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+            key_label: b"my-aes-key".to_vec(),
         };
 
         let mut buf = [0u8; 256];

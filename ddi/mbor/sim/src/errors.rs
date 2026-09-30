@@ -325,6 +325,21 @@ pub enum ManticoreError {
     /// Bk3 Already Initialized
     Bk3AlreadyInitialized,
 
+    /// BK3 provisioning PIN has already been set.
+    Bk3PinAlreadySet,
+
+    /// BK3 provisioning PIN has not been set.
+    Bk3PinNotSet,
+
+    /// BK3 transport integrity authentication failed.
+    Bk3TransportTagMismatch,
+
+    /// BK3 PIN authentication failed.
+    Bk3PinTagMismatch,
+
+    /// BK3 has not been provisioned, so sealed BK3 operations are unavailable.
+    Bk3NotSecurelyProvisioned,
+
     /// Sealed BK3 already set
     SealedBk3AlreadySet,
 
@@ -436,6 +451,11 @@ impl From<ManticoreError> for DdiStatus {
             ManticoreError::AesDecryptFailed => DdiStatus::InvalidArg,
             ManticoreError::ReportSignatureMismatch => DdiStatus::InvalidArg,
             ManticoreError::Bk3AlreadyInitialized => DdiStatus::Bk3AlreadyInitialized,
+            ManticoreError::Bk3PinAlreadySet => DdiStatus::Bk3PinAlreadySet,
+            ManticoreError::Bk3PinNotSet => DdiStatus::Bk3PinNotSet,
+            ManticoreError::Bk3TransportTagMismatch => DdiStatus::Bk3TransportTagMismatch,
+            ManticoreError::Bk3PinTagMismatch => DdiStatus::Bk3PinTagMismatch,
+            ManticoreError::Bk3NotSecurelyProvisioned => DdiStatus::Bk3NotSecurelyProvisioned,
             ManticoreError::SealedBk3AlreadySet => DdiStatus::SealedBk3AlreadySet,
             ManticoreError::PartitionIdKeyGenerationPctFailed => {
                 DdiStatus::PartitionIdKeyGenerationPctFailed

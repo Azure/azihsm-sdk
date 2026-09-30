@@ -14,11 +14,10 @@
 //! loader produces, so generate→sign works without a reload, and the blob
 //! reloads later via `ENGINE_load_private_key`.
 //!
-//! The provider's companion options are accepted with validated values:
-//! `azihsm.session` (only `false` — session keys are not implemented yet) and
-//! `azihsm.key_usage` (only `digitalSignature` — `keyAgreement` needs ECDH
-//! derive, which lands separately). Unsupported values fail keygen with a
-//! clear error instead of minting keys the engine cannot use.
+//! `azihsm.key_usage` selects the pair's exclusive usage: `digitalSignature`
+//! (sign/verify, the default) or `keyAgreement` (ECDH derive, see
+//! [`crate::derive`]). `azihsm.session` accepts only `false` — session keys
+//! are not implemented yet and fail keygen with a clear error.
 //!
 //! Unarmed keygen contexts never reach this module — the toolkit delegates
 //! them to OpenSSL's software keygen (see the pkey_method module docs).
@@ -69,7 +68,7 @@ fn curve_from_nid(nid: c_int) -> EngineResult<HsmEccCurve> {
 /// fsynced, then atomically renamed into place — so a crash cannot leave a
 /// torn blob, a pre-existing destination (symlink or wrong permissions) is
 /// replaced rather than reused, and the result is always a fresh 0600 file.
-fn write_masked_blob(path: &Path, blob: &[u8]) -> EngineResult<()> {
+pub(crate) fn write_masked_blob(path: &Path, blob: &[u8]) -> EngineResult<()> {
     let file_name = path.file_name().ok_or_else(|| {
         EngineError::Other(format!(
             "masked key path {} has no file name",
@@ -129,19 +128,11 @@ impl EcKeygenHandler for AzihsmEcKeygen {
     ) -> EngineResult<()> {
         let curve = curve_from_nid(params.curve_nid)?;
 
-        // Provider-parity options are accepted at the parameter surface, but
-        // only their defaults are implemented so far; the rest fail loudly
-        // here rather than minting keys the engine cannot use yet.
+        // Session keys are not implemented yet; fail loudly rather than mint
+        // a key the engine cannot use.
         if params.session {
             return Err(EngineError::Other(
                 "azihsm.session:true (session keys) is not yet supported by the engine".into(),
-            ));
-        }
-        if params.key_usage == EcKeyUsage::KeyAgreement {
-            return Err(EngineError::Other(
-                "azihsm.key_usage:keyAgreement is not yet supported by the engine \
-                 (requires ECDH derive)"
-                    .into(),
             ));
         }
 
@@ -152,15 +143,18 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // First caller may be the keygen itself (idempotent open).
         data.open_hsm_from_env()?;
 
-        // Generate a persistent signing key pair on the HSM and export the
-        // masked blob + public-key DER.
+        // Generate a persistent key pair on the HSM and export the masked
+        // blob + public-key DER. Usage is exclusive: sign/verify for
+        // digitalSignature, derive on both halves for keyAgreement.
+        let agree = params.key_usage == EcKeyUsage::KeyAgreement;
         let (priv_key, masked, pub_der) = data.with_session(|session| {
             let priv_props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Private)
                 .key_kind(HsmKeyKind::Ecc)
                 .ecc_curve(curve)
                 .is_session(false)
-                .can_sign(true)
+                .can_sign(!agree)
+                .can_derive(agree)
                 .build()
                 .map_err(|e| EngineError::wrap("build private key props", e))?;
             let pub_props = HsmKeyPropsBuilder::default()
@@ -168,7 +162,8 @@ impl EcKeygenHandler for AzihsmEcKeygen {
                 .key_kind(HsmKeyKind::Ecc)
                 .ecc_curve(curve)
                 .is_session(false)
-                .can_verify(true)
+                .can_verify(!agree)
+                .can_derive(agree)
                 .build()
                 .map_err(|e| EngineError::wrap("build public key props", e))?;
             let mut algo = HsmEccKeyGenAlgo::default();

@@ -35,8 +35,8 @@
 //!    `pok_remote_backup = enc ‖ ct` (161 B).
 //! 6. Derive `SDBMK = KBKDF(BKS3, mfgr_seed[svn] ‖ owner_seed[owner] ‖
 //!    policy_hash)`, mint a random `SDMK`, and mask `SDMK` under `SDBMK`
-//!    into `sd_mk_backup` (164 B).  Mask BKS3 under the partition-local
-//!    masking key (`PartLocalMK`) into `pok_local_backup` (180 B).
+//!    into `sd_mk_backup` (260 B).  Mask BKS3 under the partition-local
+//!    masking key (`PartLocalMK`) into `pok_local_backup` (276 B).
 //! 7. **Commit** (undo-guarded): claim the one-shot `SD_INITIALIZED`
 //!    gate, `vault_key_create` the `SDMK` (SecurityDomain scope), and
 //!    record its id in `SD_MK_KEY_ID`.  BKS3, `SDMK`, `SDBMK`, and
@@ -341,8 +341,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 /// Provision the security domain from a freshly minted `bks3`.
 ///
 /// Mints a random `SDMK`, derives `SDBMK`, and writes the two backups —
-/// `sd_mk_out` (`SDMK` masked under `SDBMK`, 164 B) and `pok_local_out`
-/// (`bks3` masked under `PartLocalMK`, 180 B) — then commits the SD to the
+/// `sd_mk_out` (`SDMK` masked under `SDBMK`, 260 B) and `pok_local_out`
+/// (`bks3` masked under `PartLocalMK`, 276 B) — then commits the SD to the
 /// vault (see [`sd_backup::commit_sd_to_vault`]).  The minted `SDMK` /
 /// derived `SDBMK` scratch is zeroized on all paths (the caller wipes
 /// `bks3`).

@@ -78,13 +78,13 @@ pub struct TborAesEncryptDecryptReq<'a> {
     pub session_id: SessionId,
 
     /// The masked AES key (from `AesGenerateKey` / `UnwrapKey`), an
-    /// AEAD-GCM-256 envelope of 148..=164 B.  Unmasked on-device to
+    /// AEAD-GCM-256 envelope of 244..=260 B.  Unmasked on-device to
     /// recover the key and confirm its AES kind and direction permission.
     ///
     /// Marked `#[tbor(mutable)]` so the handler can `unmask` it **in place**
     /// in the request buffer (via `decode_mut`) — no scratch copy of the
     /// blob, and the recovered key is used straight from `target_key`.
-    #[tbor(buffer, min_len = 148, max_len = 164, mutable)]
+    #[tbor(buffer, min_len = 244, max_len = 260, mutable)]
     pub masked_key: &'a [u8],
 
     /// The direction, carried as the 1-byte [`AesOp`] discriminant.
@@ -226,8 +226,8 @@ mod tests {
         // literals; pin them against the exported consts.
         const _: () = assert!(1024 == AES_MSG_MAX_LEN);
         const _: () = assert!(16 == AES_IV_LEN);
-        const _: () = assert!(148 == MASKED_AES_KEY_MIN_LEN);
-        const _: () = assert!(164 == MASKED_AES_KEY_MAX_LEN);
+        const _: () = assert!(244 == MASKED_AES_KEY_MIN_LEN);
+        const _: () = assert!(260 == MASKED_AES_KEY_MAX_LEN);
         assert_eq!(AES_MSG_MAX_LEN, 1024);
         assert_eq!(AES_IV_LEN, 16);
     }

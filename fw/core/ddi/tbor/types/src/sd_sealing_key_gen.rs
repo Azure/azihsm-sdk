@@ -22,7 +22,7 @@
 //!
 //! * `masked_key` — the new sealing key's ECC-P384 **private** half,
 //!   masked (AEAD-GCM-256) under the requested scope's masking key, as a
-//!   fixed [`MASKED_SEALING_KEY_LEN`] (180 B) envelope.  The private key
+//!   fixed [`MASKED_SEALING_KEY_LEN`] (276 B) envelope.  The private key
 //!   is **not** stored on the device: the caller holds the masked blob
 //!   and re-imports it (unmask-on-use) when the key is later needed.
 //! * `pub_key` — the raw P-384 public key of the new sealing key: the
@@ -45,12 +45,12 @@ pub const TBOR_OP_SD_SEALING_KEY_GEN: u8 = 0x09;
 pub const SD_SEALING_PUB_KEY_LEN: usize = 96;
 
 /// Wire length of the masked sealing private key: an AEAD-GCM-256
-/// masked-key envelope (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖
+/// masked-key envelope (`header(8) ‖ iv(12) ‖ aad(192) ‖ pt(48) ‖
 /// tag(16)`) whose plaintext is the 48-byte raw P-384 private scalar and
-/// whose AAD is the 96-byte `MaskedKeyMetadata`.  Pinned into the
-/// `#[tbor(buffer, len = 180)]` literal on
+/// whose AAD is the 192-byte `MaskedKeyMetadata`.  Pinned into the
+/// `#[tbor(buffer, len = 276)]` literal on
 /// [`TborSdSealingKeyGenResp::masked_key`].
-pub const MASKED_SEALING_KEY_LEN: usize = 8 + 12 + 96 + 48 + 16;
+pub const MASKED_SEALING_KEY_LEN: usize = 8 + 12 + 192 + 48 + 16;
 
 /// `SdSealingKeyGen` request schema.
 ///
@@ -74,9 +74,9 @@ pub struct TborSdSealingKeyGenReq {
 pub struct TborSdSealingKeyGenResp<'a> {
     /// The new sealing key's ECC-P384 private half, masked (AEAD-GCM-256)
     /// under the requested scope's masking key.  Always exactly
-    /// [`MASKED_SEALING_KEY_LEN`] (180 B).  The private key is not stored
+    /// [`MASKED_SEALING_KEY_LEN`] (276 B).  The private key is not stored
     /// on the device; the caller re-imports this blob when needed.
-    #[tbor(buffer, len = 180)]
+    #[tbor(buffer, len = 276)]
     pub masked_key: &'a [u8],
 
     /// Raw P-384 public key (`x ‖ y` affine coordinates, 96 bytes,
@@ -130,8 +130,8 @@ mod tests {
         // The `#[tbor(buffer, len = N)]` attributes must remain numeric
         // literals; pin them against the exported consts.
         const _: () = assert!(96 == SD_SEALING_PUB_KEY_LEN);
-        const _: () = assert!(180 == MASKED_SEALING_KEY_LEN);
+        const _: () = assert!(276 == MASKED_SEALING_KEY_LEN);
         assert_eq!(SD_SEALING_PUB_KEY_LEN, 96);
-        assert_eq!(MASKED_SEALING_KEY_LEN, 180);
+        assert_eq!(MASKED_SEALING_KEY_LEN, 276);
     }
 }

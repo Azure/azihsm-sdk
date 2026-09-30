@@ -152,7 +152,7 @@ fn sealing_key_gen_valid_props_pass_host_guards() {
 }
 
 /// Full round trip: on a fully provisioned partition, generating a sealing
-/// key succeeds and yields a usable key — the pinned 180-byte masked blob
+/// key succeeds and yields a usable key — the pinned 276-byte masked blob
 /// plus a P-384 public key — with the expected typed properties.
 #[test]
 fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
@@ -180,6 +180,20 @@ fn sealing_key_gen_roundtrip_generates_usable_sealing_key() {
     // The public key is retrievable as DER SubjectPublicKeyInfo.
     let pub_der = key.pub_key_der_vec().expect("public key der");
     assert!(!pub_der.is_empty());
+}
+
+/// Explicit deletion exercises the `Unpinned` no-op instead of relying on
+/// `Drop`, which intentionally ignores deletion errors.
+#[test]
+fn sealing_key_explicit_delete_succeeds() {
+    let _guard = PARTITION_LOCK.lock();
+    let session = crate::utils::sd_provision::finalized_co_session();
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, sealing_props())
+        .expect("generate sealing key on a provisioned partition");
+
+    HsmKeyManager::delete_key(key).expect("delete unpinned sealing key");
 }
 
 /// Each `SdSealingKeyGen` call produces fresh key material: two keys

@@ -51,7 +51,7 @@ variable-length data section.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | CO session this request is bound to; cross-checked against the SQE-carried session id. |
-| 8  | `masked_sealing_key` | `buffer` (fixed 180 B) | Sender's masked SD-sealing key (the `masked_key` from `SdSealingKeyGen`), unmasked on-device to recover `SndrPriv`. `MASKED_SEALING_KEY_LEN` (180 B). |
+| 8  | `masked_sealing_key` | `buffer` (fixed 276 B) | Sender's masked SD-sealing key (the `masked_key` from `SdSealingKeyGen`), unmasked on-device to recover `SndrPriv`. `MASKED_SEALING_KEY_LEN` (276 B). |
 | 12 | `mfgr_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Manufacturer certificate-chain descriptors (from the `Evidence` field group). |
 | 16 | `owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Owner certificate-chain descriptors. |
 | 20 | `part_owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Partition-owner certificate-chain descriptors. |
@@ -69,7 +69,7 @@ and the report's COSE_Key is recovered as `RcvrPub`.
 
 ### Data section
 
-Carries the 180-byte `masked_sealing_key`, the packed cert-chain / report
+Carries the 276-byte `masked_sealing_key`, the packed cert-chain / report
 descriptors, and the 484-byte `policy` image.  The referenced evidence
 payloads (the receiver `KeyReport`) travel out of band.
 
@@ -83,19 +83,19 @@ section.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 8 | `pok_remote_backup` | `buffer` (fixed 161 B) | Remote partition-owner-key backup: an HPKE-Auth seal of BKS3 under `DHKemP384Sha384AesGcm256`, `enc(97) ‖ ct(64)` = `POK_REMOTE_BACKUP_LEN` (161 B). |
-| 12 | `pok_local_backup` | `buffer` (fixed 180 B) | Local partition-owner-key backup: BKS3 masked under `PartLocalMK`. `MASKED_SD_LEN` (180 B). |
-| 16 | `sd_mk_backup` | `buffer` (fixed 164 B) | Security-domain masking-key backup: `SDMK` masked under the derived `SDBMK`. `LOCAL_MK_BACKUP_LEN` (164 B). |
+| 12 | `pok_local_backup` | `buffer` (fixed 276 B) | Local partition-owner-key backup: BKS3 masked under `PartLocalMK`. `MASKED_SD_LEN` (276 B). |
+| 16 | `sd_mk_backup` | `buffer` (fixed 260 B) | Security-domain masking-key backup: `SDMK` masked under the derived `SDBMK`. `LOCAL_MK_BACKUP_LEN` (260 B). |
 
 ### Data section
 
-Carries the 161-byte `pok_remote_backup` seal, the 180-byte
-`pok_local_backup`, and the 164-byte `sd_mk_backup` envelope.
+Carries the 161-byte `pok_remote_backup` seal, the 276-byte
+`pok_local_backup`, and the 260-byte `sd_mk_backup` envelope.
 
 ## Errors
 
 | Error | Cause |
 |---|---|
-| `TborInvalidFixedLength` | `masked_sealing_key` (180 B) or `policy` (484 B) is the wrong length (rejected at decode before the handler runs) |
+| `TborInvalidFixedLength` | `masked_sealing_key` (276 B) or `policy` (484 B) is the wrong length (rejected at decode before the handler runs) |
 | `InvalidArg` | Not `Initialized`; missing out-of-band evidence; policy hash mismatch; or the policy does not name this partition as the backing partition |
 | `SdAlreadyInitialized` | A security domain is already initialized on this partition incarnation (one-shot gate) |
 | `InvalidPermissions` | Not a Crypto-Officer session |

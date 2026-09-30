@@ -665,8 +665,8 @@ mod tests {
         );
         assert_eq!(
             resp.data.max,
-            DdiApiRev { major: 1, minor: 0 },
-            "firmware should report max api rev 1.0",
+            DdiApiRev { major: 1, minor: 1 },
+            "firmware should report max api rev 1.1",
         );
     }
 

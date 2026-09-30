@@ -57,8 +57,8 @@ pub struct TborEccSignReq<'a> {
     pub session_id: SessionId,
 
     /// The masked ECC private key (from `EccGenerateKey` / `UnwrapKey`), an
-    /// AEAD-GCM-256 envelope of 164..=200 B.  Its kind recovers the curve.
-    #[tbor(buffer, min_len = 164, max_len = 200, mutable)]
+    /// AEAD-GCM-256 envelope of 260..=296 B.  Its kind recovers the curve.
+    #[tbor(buffer, min_len = 260, max_len = 296, mutable)]
     pub masked_key: &'a [u8],
 
     /// The pre-computed message digest in wire little-endian order. Its

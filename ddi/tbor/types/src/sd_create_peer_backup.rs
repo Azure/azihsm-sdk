@@ -44,7 +44,7 @@ pub struct TborSdCreatePeerBackupReq {
     pub session_id: u16,
 
     /// The sender's masked SD-sealing key (from `SdSealingKeyGen`), exactly
-    /// [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to recover
+    /// [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to recover
     /// the sender's private HPKE key (`SndrPriv`) that authenticates the
     /// seal.  A fixed-length `[u8; N]` field; the firmware schema is the
     /// length authority.
@@ -73,7 +73,7 @@ pub struct TborSdCreatePeerBackupReq {
 
     /// Device-local partition-owner-key backup (a masked BKS3 wrapped under
     /// `PartLocalMK`) from which BKS3 is recovered.  Exactly
-    /// [`MASKED_SD_LEN`] (180 B); the firmware schema is the length
+    /// [`MASKED_SD_LEN`] (276 B); the firmware schema is the length
     /// authority.
     pub pok_local_backup: [u8; MASKED_SD_LEN],
 }
@@ -107,7 +107,7 @@ mod tests {
             pok_local_backup: [0xABu8; MASKED_SD_LEN],
         };
 
-        let mut buf = [0u8; 1024];
+        let mut buf = [0u8; 2048];
         let frame = req.encode_request(&mut buf).expect("encode");
 
         // The 484-byte policy plus the sealing key and the backup must be

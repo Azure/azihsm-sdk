@@ -148,6 +148,14 @@ impl HsmSession {
         }
     }
 
+    /// Returns `true` for a V2 (security-domain / TBOR) session.
+    ///
+    /// Used by the DDI layer to route key operations to the TBOR
+    /// (masked, non-resident) path vs. the MBOR (device-resident) path.
+    pub(crate) fn is_ex(&self) -> bool {
+        matches!(self.inner.read().kind, SessionKind::Ver2 { .. })
+    }
+
     /// Issues TBOR `PskChange` (opcode `0x06`) on this session.
     ///
     /// Rotates this session's own partition PSK to `new_psk`, sealed

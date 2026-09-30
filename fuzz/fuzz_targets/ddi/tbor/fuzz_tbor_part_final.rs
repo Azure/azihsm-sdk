@@ -3,6 +3,9 @@
 
 #![no_main]
 
+#[path = "../../common.rs"]
+mod common;
+
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
@@ -22,12 +25,9 @@ const CO: u8 = 0;
 
 /// Non-default CO PSK used to clear the default-PSK gate before `PartInit`.
 const ROTATED_CO_PSK: [u8; PSK_LEN] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
-    0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE,
-    0xBF, 0xC0,
+    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
+    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
-
-static CTX: std::sync::OnceLock<TestCtx> = std::sync::OnceLock::new();
 
 fn bounded_prev_local_mk_backup(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
     // Keep allocations bounded to improve fuzz throughput while still exercising invalid lengths.
@@ -90,45 +90,53 @@ fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
 }
 
 fuzz_target!(|input: FuzzInput| {
-    let ctx = CTX.get_or_init(TestCtx::new);
-    ctx.erase().expect("erase should succeed");
+    common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
+        ctx.erase().expect("erase should succeed");
 
-    // Rotate the CO PSK to clear the default-PSK gate before PartInit.
-    let bootstrap = ctx
-        .open_session(CO, SessionType::Authenticated)
-        .expect("bootstrap session open should succeed");
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
-        .expect("PSK rotation should succeed");
-    bootstrap.close().expect("bootstrap session close should succeed");
+        // Rotate the CO PSK to clear the default-PSK gate before PartInit.
+        let bootstrap = ctx
+            .open_session(CO, SessionType::Authenticated)
+            .expect("bootstrap session open should succeed");
+        ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
+            .expect("PSK rotation should succeed");
+        bootstrap
+            .close()
+            .expect("bootstrap session close should succeed");
 
-    // Open a CO session under the rotated PSK.
-    let opts =
-        SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
-    let pending = ctx
-        .session_open_init_with_options(opts)
-        .expect("session_open_init should succeed");
-    let session = ctx
-        .session_open_finish(pending)
-        .expect("session_open_finish should succeed");
+        // Open a CO session under the rotated PSK.
+        let opts =
+            SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
+        let pending = ctx
+            .session_open_init_with_options(opts)
+            .expect("session_open_init should succeed");
+        let session = ctx
+            .session_open_finish(pending)
+            .expect("session_open_finish should succeed");
 
-    // Generate a POTA trust anchor and embed its public key in the policy.
-    let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
+        // Generate a POTA trust anchor and embed its public key in the policy.
+        let pota = CaKey::generate();
+        let policy = part_policy_with_pota(&pota.raw_pub());
 
-    // PartInit: transition the partition to PartState::Initializing.
-    let init = ctx
-        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
-        .expect("PartInit should succeed");
+        // PartInit: transition the partition to PartState::Initializing.
+        let init = ctx
+            .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+            .expect("PartInit should succeed");
 
-    // Build a valid PTA cert chain anchored to the POTA key, using the CSR
-    // returned by PartInit to certify the correct partition PTA public key.
-    let pta_pub = pta_pub_from_csr(&init.pta_csr);
-    let chain = make_pta_chain(&pota, &pta_pub);
+        // Build a valid PTA cert chain anchored to the POTA key, using the CSR
+        // returned by PartInit to certify the correct partition PTA public key.
+        let pta_pub = pta_pub_from_csr(&init.pta_csr);
+        let chain = make_pta_chain(&pota, &pta_pub);
 
-    // PartFinal: the valid chain clears both the lifecycle and OOB gates,
-    // so the fuzzed prev_local_mk_backup reaches the handler logic.
-    let _ = ctx.part_final(&session, &policy, &input.prev_local_mk_backup, &chain.der_items());
+        // PartFinal: the valid chain clears both the lifecycle and OOB gates,
+        // so the fuzzed prev_local_mk_backup reaches the handler logic.
+        let _ = ctx.part_final(
+            &session,
+            &policy,
+            &input.prev_local_mk_backup,
+            &chain.der_items(),
+        );
 
-    ctx.session_close(session.session_id)
-        .expect("session close should succeed");
+        ctx.session_close(session.session_id)
+            .expect("session close should succeed");
+    });
 });

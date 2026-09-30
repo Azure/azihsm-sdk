@@ -38,7 +38,7 @@ pub struct AzihsmSdEvidence {
 #[repr(C)]
 pub struct AzihsmSdCreateRemoteBackupParams {
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
-    /// `MASKED_SEALING_KEY_LEN` (180 B).
+    /// `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Receiver attestation evidence.
     pub receiver_evidence: *const AzihsmSdEvidence,
@@ -118,9 +118,9 @@ impl<'a: 'b, 'b> From<&'b SdEvidence<'a>> for api::HsmSdEvidence<'b> {
 /// @param[in,out] pok_remote_backup Output buffer for the remote
 ///                partition-owner-key backup (161 B).
 /// @param[in,out] pok_local_backup Output buffer for the local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the security-domain
-///                masking-key backup (164 B).
+///                masking-key backup (260 B).
 ///
 /// All three output buffers follow the probe/fill convention and are
 /// validated **before** the domain is created, so the one-shot command is
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
 #[repr(C)]
 pub struct AzihsmSdResealRemoteBackupParams {
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
-    /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Source (sender) attestation evidence.
     pub src_evidence: *const AzihsmSdEvidence,
@@ -263,7 +263,7 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
 #[repr(C)]
 pub struct AzihsmSdRestoreRemoteBackupParams {
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
-    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Sender attestation evidence.
     pub sender_evidence: *const AzihsmSdEvidence,
@@ -272,7 +272,7 @@ pub struct AzihsmSdRestoreRemoteBackupParams {
     /// Remote backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
     pub src_remote_backup: *const AzihsmBuffer,
     /// Previous security-domain masking-key backup, exactly
-    /// `SD_MK_BACKUP_LEN` (164 B).
+    /// `SD_MK_BACKUP_LEN` (260 B).
     pub prev_sd_mk_backup: *const AzihsmBuffer,
 }
 
@@ -286,9 +286,9 @@ pub struct AzihsmSdRestoreRemoteBackupParams {
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Restore-backup input buffers
 /// @param[in,out] pok_local_backup Output buffer for the local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the security-domain
-///                masking-key backup (164 B).
+///                masking-key backup (260 B).
 ///
 /// Both output buffers follow the probe/fill convention and are validated
 /// **before** the restore is performed.
@@ -352,13 +352,13 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
 #[repr(C)]
 pub struct AzihsmSdCreatePeerBackupParams {
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
-    /// `MASKED_SEALING_KEY_LEN` (180 B).
+    /// `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Destination (peer) attestation evidence.
     pub dst_evidence: *const AzihsmSdEvidence,
     /// Unified partition-policy image (484 B) describing the domain.
     pub policy: *const AzihsmBuffer,
-    /// Device-local partition-owner-key backup (180 B) from which BKS3 is
+    /// Device-local partition-owner-key backup (276 B) from which BKS3 is
     /// recovered.
     pub pok_local_backup: *const AzihsmBuffer,
 }
@@ -424,7 +424,7 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
 #[repr(C)]
 pub struct AzihsmSdRestorePeerBackupParams {
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
-    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Source (peer) attestation evidence.
     pub src_evidence: *const AzihsmSdEvidence,
@@ -433,7 +433,7 @@ pub struct AzihsmSdRestorePeerBackupParams {
     /// Peer backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
     pub pok_peer_backup: *const AzihsmBuffer,
     /// Previous security-domain masking-key backup, exactly
-    /// `SD_MK_BACKUP_LEN` (164 B).
+    /// `SD_MK_BACKUP_LEN` (260 B).
     pub prev_sd_mk_backup: *const AzihsmBuffer,
 }
 
@@ -447,9 +447,9 @@ pub struct AzihsmSdRestorePeerBackupParams {
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Restore-backup input buffers
 /// @param[in,out] pok_local_backup Output buffer for the local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the security-domain
-///                masking-key backup (164 B).
+///                masking-key backup (260 B).
 ///
 /// Both output buffers follow the probe/fill convention and are validated
 /// **before** the restore is performed.
@@ -513,10 +513,10 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
 #[repr(C)]
 pub struct AzihsmSdRestoreLocalBackupParams {
     /// Device-local partition-owner-key backup to restore, exactly
-    /// `MASKED_SD_LEN` (180 B).
+    /// `MASKED_SD_LEN` (276 B).
     pub pok_local_backup: *const AzihsmBuffer,
     /// Security-domain masking-key backup, exactly `SD_MK_BACKUP_LEN`
-    /// (164 B).
+    /// (260 B).
     pub sd_mk_backup: *const AzihsmBuffer,
 }
 
@@ -529,9 +529,9 @@ pub struct AzihsmSdRestoreLocalBackupParams {
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Restore-backup input buffers
 /// @param[in,out] pok_local_backup Output buffer for the refreshed local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the refreshed
-///                security-domain masking-key backup (164 B).
+///                security-domain masking-key backup (260 B).
 ///
 /// Both output buffers follow the probe/fill convention and are validated
 /// **before** the restore is performed.

@@ -18,8 +18,8 @@
 //!
 //! Envelopes:
 //!
-//! * `pok_local_backup` (180 B) = `mask(BKS3, PartLocalMK)`.
-//! * `sd_mk_backup` (164 B) = `mask(SDMK, SDBMK)`.
+//! * `pok_local_backup` (276 B) = `mask(BKS3, PartLocalMK)`.
+//! * `sd_mk_backup` (260 B) = `mask(SDMK, SDBMK)`.
 
 use azihsm_fw_core_crypto_key_derive::derive_masking_key;
 use azihsm_fw_core_crypto_key_masking::aead::mask;
@@ -166,7 +166,7 @@ pub(super) async fn derive_sdbmk<'a, P: HsmPal>(
 }
 
 /// Mask `sdmk` under `sdbmk` into `out`, producing the `sd_mk_backup`
-/// envelope (exactly [`SD_MK_BACKUP_LEN`], 164 B).
+/// envelope (exactly [`SD_MK_BACKUP_LEN`], 260 B).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn mask_sd_mk_backup<P: HsmPal>(
     pal: &P,
@@ -206,7 +206,7 @@ pub(super) async fn mask_sd_mk_backup<P: HsmPal>(
 
 /// Mask `bks3` under the partition-local masking key (`PartLocalMK`) into
 /// `out`, producing the `pok_local_backup` envelope (exactly
-/// [`MASKED_SD_LEN`], 180 B).
+/// [`MASKED_SD_LEN`], 276 B).
 pub(super) async fn mask_pok_local_backup<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,

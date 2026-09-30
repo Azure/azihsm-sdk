@@ -41,10 +41,6 @@ use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
 
-/// Envelope key-label recorded in the derived-key masked blob's
-/// `MaskedKeyMetadata`.
-const HKDF_KEY_LABEL: &[u8] = b"HkdfKey";
-
 /// Which attribute family the derived key is created with — AES keys carry
 /// `encrypt`/`decrypt`, HMAC keys carry `sign`/`verify`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -216,6 +212,9 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // unmask below.
     let salt = (!req.salt.is_empty()).then_some(req.salt);
     let info = (!req.info.is_empty()).then_some(req.info);
+    // Caller-supplied label stamped into the derived-key metadata (≤ 128 B,
+    // bounded by the wire `max_len`); empty for an unlabeled key.
+    let caller_label = req.key_label;
 
     // The scope that masked the IKM is recorded (cleartext, tag-bound) in
     // its blob metadata; resolve its masking key before unmasking.  The
@@ -254,8 +253,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 // scratch wipes.  Scope exit only resets the bump watermark;
                 // it does not zero freed memory.
                 let masking_key_target = resolve_masking_key(pal, io, target_scope, sess_id)?;
-                let key_label = alloc.dma_alloc(HKDF_KEY_LABEL.len())?;
-                key_label.copy_from_slice(HKDF_KEY_LABEL);
+                let key_label = alloc.dma_alloc(caller_label.len())?;
+                key_label.copy_from_slice(caller_label);
                 let params = MaskParams {
                     key_kind: target.kind,
                     key_attrs: attrs,

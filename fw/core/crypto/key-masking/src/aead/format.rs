@@ -6,18 +6,18 @@
 //!
 //! The masked-key blob is a thin schema over
 //! [`azihsm_fw_core_crypto_aead_envelope`]: the envelope's AAD is
-//! exactly one fixed 96-byte [`MaskedKeyMetadata`] record, and the
+//! exactly one fixed 192-byte [`MaskedKeyMetadata`] record, and the
 //! envelope's ciphertext is the masked plaintext key.
 //!
 //! ```text
-//!   off    0           8          20                         116
+//!   off    0           8          20                        212
 //!         ┌───────────┬──────────┬────────────────────────┬─────────┬─────┐
 //!         │ AEAD hdr  │   IV     │  MaskedKeyMetadata     │   CT    │ TAG │
-//!         │   8 B     │  12 B    │        96 B            │  N B    │16 B │
+//!         │   8 B     │  12 B    │       192 B            │  N B    │16 B │
 //!         └───────────┴──────────┴────────────────────────┴─────────┴─────┘
 //! ```
 //!
-//! Every byte from offset 0 through `116 + N` (exclusive of the
+//! Every byte from offset 0 through `212 + N` (exclusive of the
 //! trailing tag itself) is authenticated by the GCM tag, including
 //! the magic, version, `key_kind`, `usage_flags`, `svn`,
 //! `owner_seed_id`, `key_label`, and the entire reserved tail of
@@ -42,16 +42,16 @@ use zerocopy::Unaligned;
 // =============================================================================
 
 /// Fixed `MaskedKeyMetadata` size in bytes (== AAD length).
-pub(crate) const META_LEN: usize = 96;
+pub(crate) const META_LEN: usize = 192;
 
 /// Length of the reserved tail in [`MaskedKeyMetadata`].
 const RESERVED_LEN: usize = 38;
 
 /// Maximum length in bytes of a caller-supplied `key_label`. Labels
-/// are left-justified in a fixed 32-byte slot and zero-padded; the
+/// are left-justified in a fixed 128-byte slot and zero-padded; the
 /// decoder rejects blobs whose `key_label_len` exceeds this limit or
 /// whose pad bytes are non-zero.
-pub const KEY_LABEL_MAX: usize = 32;
+pub const KEY_LABEL_MAX: usize = 128;
 
 /// Total masked-key blob length for an AEAD algorithm and a
 /// `target_key_len`-byte target key. Crate-private — callers
@@ -67,7 +67,7 @@ pub const fn blob_len(alg: AeadAlg, target_key_len: usize) -> usize {
 // =============================================================================
 
 /// Metadata magic — 4 ASCII bytes `b"MKEY"` at offset 0 of every
-/// [`MaskedKeyMetadata`]. Identifies the 96 B AAD region as
+/// [`MaskedKeyMetadata`]. Identifies the 192 B AAD region as
 /// masked-key metadata (vs. some other aead_envelope user's AAD
 /// schema).
 pub const META_MAGIC: [u8; 4] = *b"MKEY";
@@ -82,7 +82,7 @@ pub const META_VERSION_V1: u16 = 1;
 // MaskedKeyMetadata
 // =============================================================================
 
-/// Fixed 96-byte metadata record that occupies the AEAD envelope's
+/// Fixed 192-byte metadata record that occupies the AEAD envelope's
 /// AAD region.
 ///
 /// `repr(C)` with little-endian wire fields; readable / writable via
@@ -98,8 +98,8 @@ pub const META_VERSION_V1: u16 = 1;
 ///    8    8  usage_flags LE   HsmVaultKeyAttrs::into_bits()
 ///   16    8  svn         LE   partition SVN at mask time
 ///   24    2  owner_seed_id LE  owner-seed (BKS2) lineage identifier
-///   26   32  key_label        left-justified, zero-padded
-///   58   38  _reserved        = 0 (future-extension space)
+///   26  128  key_label        left-justified, zero-padded
+///  154   38  _reserved        = 0 (future-extension space)
 /// ```
 ///
 /// The `key_kind` and `usage_flags` bits are passed through unchanged

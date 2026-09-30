@@ -1,0 +1,51 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// Zero peripheral address map (zero).
+//
+// A passive, register-less AXI target at 0xA0B0_0000 — the SoC memory
+// map calls it the "Dummy Memory Slave". Despite that name it is a
+// *peripheral*, not memory: it sits in the peripheral aperture beside
+// GDMA (0xA000_0000), PCIe Ctrl (0xA010_0000), AES (0xA020_0000), RNG
+// (0xA030_0000) and HS-SHA (0xA040_0000), and is **outside GSRAM**.
+// Nothing is allocated, reserved, or kept vacant for it.
+//
+// Reads return a constant zero regardless of how many times or how much
+// is read, which makes it the zero source for GDMA-based buffer wiping:
+// the GDMA engine has no fill/memset — an SQ entry's OP_CODE only
+// encodes read-src / write-dst copy — so scrubbing a buffer means
+// DMA-copying out of this window.
+//
+// The 16 KiB below is the decoded width of the AXI window as published
+// in the SoC map, not a buffer anyone has to provide or keep free.
+
+
+// ══════════════════════════════════════════════════════════════
+// Read-as-zero window
+// ══════════════════════════════════════════════════════════════
+
+mem zero_t {
+    desc = "Passive read-as-zero AXI window (16 KB decode). The constant
+            zero source for GDMA buffer zeroization; GDMA has no
+            fill/memset opcode, so a wipe is a DMA copy whose source is
+            this peripheral. Not GSRAM and not backed by any allocation.";
+    mementries = 4096;  // 4096 × 32 bits = 16384 B = 16 KB decode width
+    memwidth   = 32;
+};
+
+
+// ══════════════════════════════════════════════════════════════
+// Address Map
+// ══════════════════════════════════════════════════════════════
+
+addrmap zero {
+    name = "Zero Peripheral";
+    desc = "Passive read-as-zero AXI target (16 KB window at 0xA0B0_0000),
+             used as the constant zero source for GDMA-based buffer
+             wiping. Peripheral aperture, outside GSRAM.";
+
+    default hw = na;
+    default sw = r;
+
+    zero_t ZERO @ 0x0;
+};

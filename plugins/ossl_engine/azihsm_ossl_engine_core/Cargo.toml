@@ -14,6 +14,7 @@ engine = [
   "dep:parking_lot",
   "dep:thiserror",
   "dep:tracing",
+  "dep:zeroize",
 ]
 
 [dependencies]
@@ -21,6 +22,7 @@ azihsm_ossl_engine_sys.workspace = true
 parking_lot = { optional = true, workspace = true }
 thiserror = { optional = true, workspace = true }
 tracing = { optional = true, workspace = true }
+zeroize = { optional = true, workspace = true }
 
 [lints]
 workspace = true

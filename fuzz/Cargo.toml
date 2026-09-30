@@ -10,24 +10,23 @@ version = "0.0.0"
 cargo-fuzz = true
 
 [dependencies]
-azihsm_ddi_emu = { path = "../ddi/emu" }
+azihsm_crypto = { path = "../crates/crypto" }
+azihsm_ddi = { path = "../ddi/lib" }
+azihsm_ddi_emu = { optional = true, path = "../ddi/emu" }
 azihsm_ddi_interface = { path = "../ddi/interface" }
 azihsm_ddi_tbor_codec = { path = "../ddi/tbor/codec" }
-azihsm_ddi_tbor_test_harness = { features = [
-  "emu",
-], path = "../crates/tbor_test_harness" }
+azihsm_ddi_tbor_test_harness = { path = "../crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
+azihsm_session_ex_crypto = { path = "../crates/session_ex_crypto" }
+x509 = { path = "../crates/x509" }
 zerocopy = { version = "0.8.17" }
 
 # dependencies for fuzzing
 libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
 
-[[bin]]
-bench = false
-doc = false
-name = "fuzz_tbor_request_encoder"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_encoder.rs"
-test = false
+[features]
+default = []
+emu = ["azihsm_ddi/emu", "azihsm_ddi_tbor_test_harness/emu"]
 
 [[bin]]
 bench = false
@@ -46,13 +45,6 @@ test = false
 [[bin]]
 bench = false
 doc = false
-name = "fuzz_tbor_response_encoder"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_encoder.rs"
-test = false
-
-[[bin]]
-bench = false
-doc = false
 name = "fuzz_tbor_response_round_trip"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_round_trip.rs"
 test = false
@@ -62,27 +54,6 @@ bench = false
 doc = false
 name = "fuzz_tbor_response_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_view.rs"
-test = false
-
-[[bin]]
-bench = false
-doc = false
-name = "fuzz_tbor_session_close"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_close.rs"
-test = false
-
-[[bin]]
-bench = false
-doc = false
-name = "fuzz_tbor_session_open_finish"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_finish.rs"
-test = false
-
-[[bin]]
-bench = false
-doc = false
-name = "fuzz_tbor_session_open_init"
-path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_init.rs"
 test = false
 
 [[bin]]

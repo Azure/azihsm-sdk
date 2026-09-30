@@ -57,7 +57,7 @@ section carrying the masked key and report data.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4 | `session_id` | `session_id` (inline) | CO session this request is bound to; cross-checked against the SQE-carried session id. |
-| 8 | `masked_key` | `buffer` (≤ 512 B) | The masked-key envelope to attest, as produced by `SdSealingKeyGen`: `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(N) ‖ tag(16)`. |
+| 8 | `masked_key` | `buffer` (≤ 512 B) | The masked-key envelope to attest, as produced by `SdSealingKeyGen`: `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(N) ‖ tag(16)`. |
 | — | `report_data` | `buffer` (128 B) | Caller-supplied data bound into the report payload (typically a freshness nonce or a challenge digest). |
 
 ### Data section

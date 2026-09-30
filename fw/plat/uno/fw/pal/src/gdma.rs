@@ -35,6 +35,10 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_uno_drivers_gdma::GdmaAddr;
 use azihsm_fw_uno_drivers_gdma::GdmaBuf;
 use azihsm_fw_uno_drivers_gdma::MemInterface;
+use azihsm_fw_uno_reg_soc::zero::ZERO_BASE;
+use azihsm_fw_uno_reg_soc::zero::ZERO_SIZE;
+use azihsm_fw_uno_trace::tracing::*;
+use zeroize::Zeroize;
 
 use crate::UnoHsmPal;
 
@@ -132,12 +136,25 @@ impl HsmGdmaController for UnoHsmPal {
 
     /// Zero an HSM-local buffer.
     ///
-    /// Software volatile wipe for now; a hardware GDMA memset will replace
-    /// this on uno later (the async signature is kept so callers are
-    /// unaffected). [`DmaBuf::zeroize`] guarantees the writes are not
-    /// elided so key material is actually scrubbed.
+    /// Wipes off-CPU with the GDMA engine via
+    /// [`gdma_zero_region`](UnoHsmPal::gdma_zero_region), which copies from
+    /// the read-as-zero `ZERO` window — GDMA has no fill/memset opcode,
+    /// so a wipe is a device-to-device copy out of that region. Every
+    /// [`DmaBuf`] is GSRAM-backed by construction (the DTCM heap hands out
+    /// plain `&mut [u8]`, never a `DmaBuf`), so the destination is always
+    /// GDMA-reachable.
+    ///
+    /// Falls back to [`DmaBuf::zeroize`] if the engine has no free tag or the
+    /// transfer fails, so the buffer is scrubbed either way; both paths use
+    /// writes that cannot be optimized away.
     async fn zeroize_mem(&self, _io: &impl HsmIo, dst: &mut DmaBuf) -> HsmResult<()> {
-        dst.zeroize();
+        let len = dst.len();
+        if len == 0 {
+            return Ok(());
+        }
+        if self.gdma_zero_region(dst.as_mut_ptr(), len).await.is_err() {
+            dst.zeroize();
+        }
         Ok(())
     }
 
@@ -170,18 +187,73 @@ impl HsmGdmaController for UnoHsmPal {
         dst: &mut DmaBuf,
         prp: bool,
     ) -> HsmResult<()> {
-        // Only inline SGL Data Block descriptors are supported here; the
-        // GDMA hardware consumes the descriptor and interprets its SGL
-        // format.
+        // The GDMA consumes the descriptor and interprets its SGL
+        // format, so this path is SGL-only.
         if prp {
             return Err(HsmError::UnsupportedCmd);
         }
-        // Transfer length is the descriptor's embedded length; it must
-        // match the destination exactly.
-        let len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
-        if len as usize != dst.len() {
-            return Err(HsmError::InvalidArg);
-        }
+
+        // The descriptor's type is the high nibble of its last byte; the
+        // low nibble is `sub_type`.
+        //
+        // A Data Block names the payload directly, so its embedded
+        // length is the transfer length and must match the destination
+        // exactly. A Segment / Last Segment descriptor instead names a
+        // run of descriptors for the engine to walk, so its length field
+        // is a count of *descriptor* bytes and says nothing about the
+        // payload — the transfer length is what the caller asked for,
+        // and the engine gathers that many bytes by following the
+        // segment. Treating a segment descriptor as a data block would
+        // reject the transfer outright and, if forced through, move the
+        // 16-byte descriptor instead of the item.
+        const SGL_TYPE_DATA_BLOCK: u8 = 0x0;
+        const SGL_TYPE_SEGMENT: u8 = 0x2;
+        const SGL_TYPE_LAST_SEGMENT: u8 = 0x3;
+
+        /// One NVMe SGL descriptor on the wire.
+        const SGL_DESC_LEN: u32 = 16;
+        /// The driver backs every SGL segment with whole pages
+        /// (`coh_mem_sz = seg_cnt * PAGE_SIZE`, `azihsm_dma_io.c`) and
+        /// rejects an item needing more than one page of descriptors, so
+        /// a segment can never legitimately exceed this.
+        const SGL_SEGMENT_MAX_LEN: u32 = 4096;
+
+        let desc_len = u32::from_le_bytes([desc[8], desc[9], desc[10], desc[11]]);
+        let len = match desc[15] >> 4 {
+            SGL_TYPE_DATA_BLOCK => {
+                if desc_len as usize != dst.len() {
+                    return Err(HsmError::InvalidArg);
+                }
+                desc_len
+            }
+            ty @ (SGL_TYPE_SEGMENT | SGL_TYPE_LAST_SEGMENT) => {
+                // The descriptor is forwarded to the engine verbatim, and
+                // the engine uses `desc_len` to bound how many descriptor
+                // bytes it walks. It comes from host memory, so validate
+                // its shape here rather than letting a malformed value
+                // send the engine reading past the segment page.
+                //
+                // A `SEGMENT` needs at least two descriptors: its last one
+                // chains to the next segment rather than describing data,
+                // so a single-descriptor segment would carry no payload
+                // and leave the engine following a chain pointer that is
+                // really the only entry.
+                let min_len = if ty == SGL_TYPE_SEGMENT {
+                    2 * SGL_DESC_LEN
+                } else {
+                    SGL_DESC_LEN
+                };
+                if desc_len < min_len
+                    || desc_len > SGL_SEGMENT_MAX_LEN
+                    || !desc_len.is_multiple_of(SGL_DESC_LEN)
+                {
+                    return Err(HsmError::InvalidArg);
+                }
+                u32::try_from(dst.len()).map_err(|_| HsmError::InvalidArg)?
+            }
+            _ => return Err(HsmError::InvalidArg),
+        };
+
         let src_addr = sgl_desc_buf(desc);
         let dst_addr = device_dma_buf(dst.as_mut_ptr(), len);
         self.gdma
@@ -216,5 +288,137 @@ impl HsmGdmaController for UnoHsmPal {
                 len,
             )?
             .await
+    }
+}
+
+impl UnoHsmPal {
+    /// GDMA-zero a GDMA-reachable device region `[dst_ptr, dst_ptr + len)`.
+    ///
+    /// Copies zeros from the [`ZERO_BASE`] window, chunked to its
+    /// [`ZERO_SIZE`] so an arbitrarily large region can be wiped with a
+    /// fixed 16 KiB zero source. Both operands use the device
+    /// interface. Only valid for GDMA-reachable memory (GSRAM); the M7 TCM
+    /// is not on the GDMA fabric and must be wiped by the CPU.
+    async fn gdma_zero_region(&self, dst_ptr: *mut u8, len: usize) -> HsmResult<()> {
+        let mut off = 0usize;
+        while off < len {
+            let chunk = core::cmp::min(len - off, ZERO_SIZE as usize);
+            let src = device_dma_buf(ZERO_BASE as *const u8, chunk as u32);
+            // SAFETY: `off < len`, so `dst_ptr + off` stays within the
+            // caller-provided `[dst_ptr, dst_ptr + len)` region.
+            let dst = device_dma_buf(unsafe { dst_ptr.add(off) }, chunk as u32);
+            self.gdma
+                .copy_mem(
+                    src,
+                    MemInterface::Device,
+                    chunk as u32,
+                    dst,
+                    MemInterface::Device,
+                    chunk as u32,
+                )?
+                .await?;
+            off += chunk;
+        }
+        Ok(())
+    }
+
+    /// Securely scrub both per-IO scratch buffers for `io_index`.
+    ///
+    /// Called on IO teardown so no key material from one IO survives into
+    /// the next IO that reuses the slot. On Uno every crypto operand lives
+    /// in these bump-allocated buffers (no heap), so wiping them is what
+    /// protects private keys / plaintext — the CPU-visible arena is the
+    /// only place they exist.
+    ///
+    /// The SRAM (DMA) buffer is wiped off-CPU with the GDMA engine; the DTCM
+    /// (NonDma) buffer sits in the M7 TCM, which GDMA cannot reach, so it is
+    /// wiped by the CPU. If the GDMA wipe fails (e.g. no free tags under
+    /// heavy concurrency), the SRAM buffer is scrubbed by the CPU as a
+    /// fallback so secrets are never left resident.
+    ///
+    /// Only each heap's *high-water* region is wiped, not its full capacity.
+    /// The bump watermark rewinds on every scope exit, but the peak bounds
+    /// every byte written since the previous scrub, and everything past it is
+    /// already zero from that scrub. Measured over ~1.7k host IOs the DMA peak
+    /// averaged ~933 B of the 16 KiB slot (max ~3.3 KiB). The slot is sized to
+    /// `ZERO`, so even a full-capacity wipe is a single GDMA transfer.
+    /// A heap that was never touched is skipped entirely.
+    pub(crate) async fn scrub_io_slot(&self, io_index: u16) {
+        let (dma_ptr, dma_len) = crate::alloc::io_slot_dma_dirty(self, io_index);
+        if dma_len != 0 && self.gdma_zero_region(dma_ptr, dma_len).await.is_err() {
+            // Surface the fallback: a persistent GDMA fault would otherwise
+            // silently degrade every wipe into a CPU loop with no signal.
+            // Logged via the trace facade (as the iic/oic drivers do for
+            // unexpected conditions); compiled out when no trace backend is
+            // selected. Correctness is unaffected — the CPU wipe below still
+            // fully scrubs the buffer.
+            warn!(
+                "gdma",
+                "SRAM scrub for slot {} fell back to CPU (GDMA wipe failed)", io_index
+            );
+            // SAFETY: `(dma_ptr, dma_len)` is a prefix of the slot's SRAM
+            // buffer, valid for writes over its whole length.
+            unsafe { cpu_zeroize(dma_ptr, dma_len) };
+        }
+        // DTCM (NonDma) heap — not GDMA-reachable, so wipe with the CPU.
+        let (nd_ptr, nd_len) = crate::alloc::io_slot_nondma_dirty(self, io_index);
+        // SAFETY: `(nd_ptr, nd_len)` is a prefix of the slot's DTCM buffer,
+        // valid for writes over its whole length.
+        unsafe { cpu_zeroize(nd_ptr, nd_len) };
+
+        // Both heaps are now zero up to their peaks; drop the high-water marks
+        // so the next scrub covers only writes made after this point.
+        crate::alloc::clear_io_peak(self, io_index);
+    }
+}
+
+/// Volatile CPU zeroization of `[ptr, ptr + len)` that the optimizer cannot
+/// elide, via the vetted [`zeroize`] crate. Used for the M7 TCM (which GDMA
+/// cannot reach) and as the GDMA-failure fallback for SRAM.
+///
+/// Zeroes the widest naturally-aligned element the region supports: an
+/// 8-byte-aligned `u64` (QWORD) body, framed by a byte-wise head/tail for
+/// any unaligned edges. `[u64]::zeroize()` lowers to 64-bit volatile stores
+/// (a single `STRD`/64-bit AXI transfer on Cortex-M7), so it issues half as
+/// many stores as a 32-bit wipe and a quarter of a byte-wise one.
+///
+/// The **head** is normally empty: callers pass a per-IO region base, and
+/// both regions are 8-byte aligned (`DTCM_IO_BUF` 0x600, `SRAM_IO_BUF`
+/// 0x4000). The **tail** is not — `len` is the heap's dirty high-water
+/// mark, not the region size, and the bump allocator aligns to each
+/// value's `align_of`, so a watermark that is not a multiple of 8 is the
+/// normal case and the tail path runs routinely.
+///
+/// `zeroize` emits the volatile writes plus a compiler+atomic fence, so
+/// the wipe cannot be elided.
+///
+/// # Safety
+///
+/// `ptr` must be valid for writes of `len` bytes.
+#[inline]
+unsafe fn cpu_zeroize(ptr: *mut u8, len: usize) {
+    // Byte-wise head up to the first 8-byte boundary (empty when the
+    // caller passes an 8-aligned region base, which is the normal case).
+    let head = ((8 - (ptr as usize & 7)) & 7).min(len);
+    if head != 0 {
+        // SAFETY: `head <= len`, so this stays within the caller's region.
+        unsafe { core::slice::from_raw_parts_mut(ptr, head) }.zeroize();
+    }
+    // QWORD body: a whole number of `u64`s at an 8-byte-aligned address.
+    let body_len = (len - head) & !7usize;
+    if body_len != 0 {
+        // SAFETY: `ptr + head` is 8-byte aligned by construction and
+        // `body_len` is a `u64` multiple within the region, so the cast and
+        // slice are valid for writes.
+        let body_ptr = unsafe { ptr.add(head) } as *mut u64;
+        let body = unsafe { core::slice::from_raw_parts_mut(body_ptr, body_len / 8) };
+        body.zeroize();
+    }
+    // Byte-wise tail (sub-`u64` remainder). Unlike the head this is
+    // common: `len` is the dirty high-water mark, not the region size.
+    let tail_off = head + body_len;
+    if tail_off < len {
+        // SAFETY: `tail_off < len`, so `ptr + tail_off` is within the region.
+        unsafe { core::slice::from_raw_parts_mut(ptr.add(tail_off), len - tail_off) }.zeroize();
     }
 }

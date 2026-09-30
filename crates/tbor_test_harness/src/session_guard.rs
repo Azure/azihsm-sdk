@@ -8,7 +8,7 @@
 //! and closes the session when dropped — including when the test is
 //! unwinding from a failed assertion. The emulator's session table
 //! is process-global and the per-test serialisation provided by
-//! [`open_dev`](crate::open_dev)'s `TEST_LOCK` only orders
+//! [`open_dev`](crate::fixture::open_dev)'s `TEST_LOCK` only orders
 //! execution; it does not clean up leaked slots. The guard
 //! therefore makes panic-safe cleanup the default for every
 //! happy-path session test.
@@ -107,7 +107,7 @@ impl TestCtx {
     /// return a [`SessionGuard`] that will close it on `Drop`.
     ///
     /// Fallible: propagates any FW or transport error from the
-    /// underlying [`Self::open_session_raw`]. Happy-path callers
+    /// underlying `open_session_raw`. Happy-path callers
     /// typically `.expect(...)` the returned `Result`; negative-path
     /// tests inspect the `Err` directly.
     pub fn open_session(

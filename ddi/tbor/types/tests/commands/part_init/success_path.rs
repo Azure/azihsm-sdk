@@ -3,14 +3,19 @@
 
 //! Happy-path `PartInit` tests:
 //!
-//! * [`part_init_smoke_roundtrip_emu`] — `OpenSession → PskChange →
+//! * [`part_init_smoke_roundtrip`] — `OpenSession → PskChange →
 //!   PartInit` returns a parseable PKCS#10 CSR and a verifiable
 //!   COSE_Sign1 PTAReport that cross-binds to the CSR pubkey; a
 //!   second `PartInit` on a fresh session surfaces the one-shot
 //!   `PtaKeyAlreadySet` guard.
-//! * [`part_init_determinism_emu`] — across two cold restarts (via
+//! * [`part_init_determinism`] — across two cold restarts (via
 //!   `ctx.erase()`), the derived PTA pubkey is byte-identical given
 //!   the same `(UDS, MachineSeed, Policy, POTA thumb)` inputs.
+//! * [`part_init_multi_threaded_single_winner`] — concurrent requests
+//!   race the write-once partition commit; exactly one succeeds and
+//!   every loser observes `PtaKeyAlreadySet`.
+
+use std::sync::Barrier;
 
 use azihsm_crypto::DerEccPublicKey;
 use azihsm_ddi_mbor_sim::attestation::KeyAttester;
@@ -19,10 +24,16 @@ use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
 use azihsm_ddi_mbor_sim::report::CoseSign1Object;
 use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::build_part_init_mach_seed_aad;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::PolicyFlags;
+use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LABEL;
+use azihsm_ddi_tbor_types::PART_INIT_MACH_SEED_AAD_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
@@ -33,12 +44,11 @@ use x509::X509CertificateOp;
 use x509::X509Csr;
 use x509::X509CsrOp;
 
-use super::bootstrap_rotated_co;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::open_co_with;
 use super::pota_thumbprint;
-use super::ROTATED_CO_PSK;
+use crate::commands::part_info::PART_STATE_INITIALIZING;
 
 /// Runs the supplied cleanup function when this value goes out of scope,
 /// including during panic unwinding.
@@ -149,6 +159,69 @@ fn part_init_smoke_roundtrip() {
         .part_init(&session2, &seed, &policy, &thumb)
         .expect_err("second PartInit must be rejected by one-shot state guard");
     assert_fw_rejects(&err, TborStatus::PtaKeyAlreadySet);
+}
+
+/// Concurrent requests share the same active CO session. Firmware publishes
+/// the PartInit metadata and lifecycle transition atomically, so only one
+/// request can commit and every later contender observes the PTA as set.
+#[test]
+fn part_init_multi_threaded_single_winner() {
+    const THREAD_COUNT: usize = 16;
+
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let policy = known_good_part_policy();
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+    let barrier = Barrier::new(THREAD_COUNT);
+
+    let results: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREAD_COUNT)
+            .map(|_| {
+                let barrier = &barrier;
+                let worker_ctx = &ctx;
+                let handshake = &session;
+                let seed = &seed;
+                let policy = &policy;
+                let thumb = &thumb;
+
+                scope.spawn(move || {
+                    barrier.wait();
+                    worker_ctx.part_init(handshake, seed, policy, thumb)
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("worker thread must not panic"))
+            .collect()
+    });
+
+    let (winners, rejections): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one concurrent PartInit request must succeed",
+    );
+    assert_eq!(
+        rejections.len(),
+        THREAD_COUNT - 1,
+        "every non-winning PartInit request must be rejected",
+    );
+
+    for err in rejections.into_iter().map(Result::unwrap_err) {
+        assert_fw_rejects(&err, TborStatus::PtaKeyAlreadySet);
+    }
+
+    let part_info = ctx
+        .tbor(&TborPartInfoReq::new())
+        .expect("PartInfo after concurrent PartInit race");
+    assert_eq!(
+        part_info.part_state, PART_STATE_INITIALIZING,
+        "the winning PartInit must leave the partition Initializing",
+    );
 }
 
 /// Verify the PTAReport COSE_Sign1 envelope and cross-bind its
@@ -660,4 +733,19 @@ fn part_init_modified_inputs_return_fully_valid_artifacts() {
     // Verify the report signature and confirm that its embedded public key
     // matches the PTA public key carried in the CSR.
     verify_pta_report(&ctx, &resp.pta_report, &pta_spki);
+}
+
+#[test]
+fn mach_seed_aad_layout() {
+    let aad = build_part_init_mach_seed_aad(0x1234);
+    assert_eq!(
+        &aad[..PART_INIT_MACH_SEED_AAD_LABEL.len()],
+        PART_INIT_MACH_SEED_AAD_LABEL
+    );
+    assert_eq!(
+        &aad[PART_INIT_MACH_SEED_AAD_LABEL.len()..PART_INIT_MACH_SEED_AAD_LABEL.len() + 2],
+        &[0x34, 0x12],
+    );
+    assert_eq!(aad.len(), PART_INIT_MACH_SEED_AAD_LEN);
+    assert_eq!(PART_INIT_MACH_SEED_AAD_LEN, 32);
 }

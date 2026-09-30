@@ -22,8 +22,12 @@ pub mod error;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod exdata;
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod hkdf_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod method_table;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod pkey_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod rsa_pkey_method;
 
 pub use azihsm_ossl_engine_sys as ffi;

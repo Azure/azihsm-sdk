@@ -33,10 +33,22 @@ mod uri;
 mod keyload;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsaload;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsaimport;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod sign;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
 mod keygen;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod derive;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod hkdf;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
 mod asn1;

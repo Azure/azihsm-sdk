@@ -53,6 +53,7 @@ fn generate_key(ctx: &TestCtx, session_id: u16, scope: u8, hash: u8) -> Vec<u8> 
         scope,
         hash_algo: hash,
         key_length: tag_len_for_hash(hash) as u8,
+        key_label: Vec::new(),
     };
     ctx.tbor(&req).expect("HmacGenerateKey").masked_key
 }

@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::result_large_err,
+    reason = "Asn1Read generates parser closures that return asn1::ParseError"
+)]
+
 //! DER encoding and decoding for DigestInfo structures.
 //!
 //! This module provides functionality to encode and decode DigestInfo structures

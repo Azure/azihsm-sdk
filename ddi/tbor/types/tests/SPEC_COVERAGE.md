@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-06-08):
-* emu: 50 tests
+Test counts (last updated 2026-09-16):
+* emu: 112 tests
 * mock: 6 tests
 
 ## Legend
@@ -109,18 +109,19 @@ All test names below are relative to the
 | CO session with default PSK → `DefaultPskMustRotate` (dispatcher gate) | ✅ | `part_init::fw_rejects::part_init_reject_default_psk_co` |  |
 | CU session (under rotated PSK) → `InvalidPermissions` (handler role gate) | ✅ | `part_init::fw_rejects::part_init_reject_cu_session` | CU PSK rotated up-front so default-PSK gate doesn't fire first |
 | Rotated CO session with malformed `PartPolicy` (all zeros) → `InvalidArg` (`policy::from_bytes` decode gate) | ✅ | `part_init::fw_rejects::part_init_reject_bad_policy` |  |
-| Second `PartInit` after a successful one → `PtaKeyAlreadySet` (one-shot `part_set_pta_key` guard) | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` | Verified as step 2 of the smoke roundtrip |
+| Second `PartInit` after a successful one → `PtaKeyAlreadySet` (one-shot `part_set_pta_key` guard) | ✅ | `part_init::success_path::part_init_smoke_roundtrip` | Verified as step 2 of the smoke roundtrip |
+| Concurrent valid `PartInit` requests → exactly one success; every loser gets `PtaKeyAlreadySet`; final state is `Initializing` | ✅ | `part_init::success_path::part_init_multi_threaded_single_winner` | Runs on emulator and hardware using the same active CO session; verifies the winning atomic commit through `PartInfo` |
 
 ### Happy-path invariants
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Returns DER-tagged (`0x30`) PKCS#10 CSR ≤ `PTA_CSR_MAX_LEN` | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` |  |
-| CSR parses with `x509::X509Csr`; ECDSA-P384 self-signature verifies | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` |  |
-| Returns CBOR-tagged (`0xD2` = COSE_Sign1) PTAReport ≤ `PTA_REPORT_MAX_LEN` | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` |  |
-| PTAReport COSE_Sign1 verifies under PID-leaf pubkey (slot-0 cert chain leaf) | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` | Via `verify_pta_report` helper using `KeyAttester::verify` |
-| PTAReport's embedded COSE_Key `(pk_x, pk_y)` matches CSR SPKI | ✅ | `part_init::happy_path::part_init_smoke_roundtrip_emu` | Cross-binds report to CSR pubkey |
-| Cold-start determinism: same `(UDS, MachineSeed, Policy, POTA thumb)` → byte-identical PTA pubkey | ✅ | `part_init::happy_path::part_init_determinism_emu` | Uses `ctx.erase()` between runs |
+| Returns DER-tagged (`0x30`) PKCS#10 CSR ≤ `PTA_CSR_MAX_LEN` | ✅ | `part_init::success_path::part_init_smoke_roundtrip` |  |
+| CSR parses with `x509::X509Csr`; ECDSA-P384 self-signature verifies | ✅ | `part_init::success_path::part_init_smoke_roundtrip` |  |
+| Returns CBOR-tagged (`0xD2` = COSE_Sign1) PTAReport ≤ `PTA_REPORT_MAX_LEN` | ✅ | `part_init::success_path::part_init_smoke_roundtrip` |  |
+| PTAReport COSE_Sign1 verifies under PID-leaf pubkey (slot-0 cert chain leaf) | ✅ | `part_init::success_path::part_init_smoke_roundtrip` | Via `verify_pta_report` helper using `KeyAttester::verify` |
+| PTAReport's embedded COSE_Key `(pk_x, pk_y)` matches CSR SPKI | ✅ | `part_init::success_path::part_init_smoke_roundtrip` | Cross-binds report to CSR pubkey |
+| Cold-start determinism: same `(UDS, MachineSeed, Policy, POTA thumb)` → byte-identical PTA pubkey | ✅ | `part_init::success_path::part_init_determinism` | Uses `ctx.erase()` between runs |
 
 ### `mach_seed_envelope` AEAD bindings
 
@@ -132,6 +133,29 @@ All test names below are relative to the
 | AAD length ≠ `PART_INIT_MACH_SEED_AAD_LEN` | ✅ | `part_init::crypto_rejects::part_init_wrong_aad_length` | 64-byte AAD; FW length-checks before AAD compare |
 | `mach_seed` plaintext length ≠ `MACH_SEED_LEN` | ✅ 🔁 | `part_init::crypto_rejects::part_init_wrong_mach_seed_length` | Loop over `[MACH_SEED_LEN - 1, MACH_SEED_LEN + 1]`; one rotated-CO session reused across iterations (length check fires before any partition mutation) |
 | Malformed `pota_thumbprint` length | ⚠️ | — | Wire field is fixed-size; FW reaction not exercised |
+
+## `PartFinal` (opcode in-session, gated)
+
+Backend note: emulator tests transport and validate the real PTA
+certificate chain through OOB descriptors. Native M1.0 tests send one
+schema-required placeholder descriptor with no OOB payload because the
+current hardware firmware intentionally ignores certificate descriptors;
+full native certificate-chain validation remains M1.5 work.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| First instantiation returns a 260-byte `local_mk_backup` | ✅ | `part_final::part_final_smoke_roundtrip` | Original test body |
+| Restore a prior backup with the same provisioning identity | ✅ | `part_final::part_final_restore_prev_backup` | Original test body |
+| Tampered prior backup is rejected | 🟡 | `part_final::part_final_reject_tampered_backup` | Original test body; exact status is not pinned |
+| Command before `PartInit` is rejected | 🟡 | `part_final::part_final_reject_wrong_state` | Original test body; exact status is not pinned |
+| Re-supplied policy must match the `PartInit` policy hash | 🟡 | `part_final::part_final_reject_policy_mismatch` | Original test body; exact status is not pinned |
+| PTA chain must anchor to policy POTA | 🟡 (emu) | `part_final::part_final_reject_unanchored_chain_emu` | Original test body; exact status is not pinned and full native chain validation is planned for M1.5 |
+| PTA certificate key must match the partition PTA key | 🟡 (emu) | `part_final::part_final_reject_pta_mismatch_emu` | Original test body; exact status is not pinned and M1.0 hardware uses the documented surrogate |
+| `Initialized` partition continues serving host IO | ✅ | `part_final::part_final_partition_serves_io_when_initialized` | Original dedicated regression |
+| CU session is rejected with `InvalidPermissions` and CO can retry | ✅ | `part_final::part_final_rejects_cu_and_allows_co_retry` | Rotates the CU PSK first so the role gate is reached |
+| Backup from a different machine-seed identity is rejected | ✅ | `part_final::part_final_rejects_backup_from_different_mach_seed` | Verifies identity/state remain stable and fresh finalization still succeeds |
+| Second `PartFinal` is rejected without leaving `Initialized` | ✅ | `part_final::part_final_rejects_second_finalize` | Also verifies a reopened CO session still works |
+| Concurrent valid `PartFinal` requests → exactly one success; every loser gets `InvalidArg` | ✅ | `part_final::part_final_multi_threaded_single_winner` | Runs on emulator and hardware using the same active CO session; the lifecycle transition to `Initialized` is what serialises the race, not any in-FSM flag |
 
 ## Default-PSK dispatcher gate (cross-cutting)
 
@@ -151,11 +175,112 @@ role's partition PSK still matches the compiled-in default.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
+
+
+## `GetCertificate` (opcode out-of-session)
+
+Firmware integration coverage for the TBOR `GetCertificate` command. These tests exercise
+certificate retrieval from slot 0, cross-check TBOR against the MBOR certificate path,
+validate invalid slot/index status handling, and verify that the out-of-session command is
+independent of CO/CU session state.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Every certificate index advertised by `GetCertChainInfo` returns non-empty, valid DER/X.509 within `CERT_MAX_LEN` | ✅ 🔁 | `get_cert::all_indices_round_trip` | Iterates over the full advertised chain and verifies DER SEQUENCE encoding and X.509 parsing. |
+| TBOR certificate bytes match the MBOR certificate path at every index | ✅ 🔁 | `get_cert::matches_mbor_path` | Both interfaces read the same underlying certificate store. |
+| Repeated reads of every advertised certificate are stable | ✅ 🔁 | `get_cert::repeated_reads_are_stable` | Reads each certificate twice and compares the full response. |
+| Distinct certificate indices do not alias the same certificate bytes | ✅ 🔁 | `get_cert::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain. |
+| First index beyond the advertised chain and `u8::MAX` are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_indices_rejected` | Covers the immediate boundary and maximum representable certificate id. |
+| Non-zero / unsupported certificate slots are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_slots_rejected` | Covers slots `1`, `2`, `127`, `254`, and `u8::MAX`. |
+| Invalid requests do not alter a valid certificate | ✅ | `get_cert::rejected_requests_do_not_affect_valid_certificate` | Valid certificate is identical before and after invalid slot/index requests. |
+| Out-of-session `GetCertificate` remains callable while a CO Authenticated session is active | ✅ | `get_cert::callable_while_session_active` | Uses shared `common::CO`; active in-session state must not gate the command. |
+| `GetCertChainInfo::num_certs` exactly matches the readable `GetCertificate` boundary | ✅ | `get_cert::chain_info_count_matches_get_certificate_boundary` | Every advertised index succeeds and index `num_certs` is rejected with `InvalidArg`. |
+| Interleaved reads of other certificate indices do not alter certificate 0 | ✅ | `get_cert::interleaved_reads_are_stable` | Exercises non-isolated read ordering. |
+| Certificate reads are stable before, during, and after a CO Authenticated-session lifecycle | ✅ | `get_cert::stable_across_session_lifecycle` | Verifies session open/close does not affect this out-of-session command. |
+| A rejected request does not affect any certificate in the valid chain | ✅ 🔁 | `get_cert::rejected_request_does_not_affect_entire_chain` | Snapshots the entire chain before an invalid request and compares afterward. |
+| Reading certificates does not change `GetCertChainInfo` metadata | ✅ | `get_cert::certificate_reads_do_not_change_chain_info` | Compares chain-info response before and after reading every certificate. |
+| Certificates can be fetched in reverse order | ✅ 🔁 | `get_cert::certificates_can_be_read_in_reverse_order` | Confirms reads do not depend on sequential traversal. |
+| First and last advertised certificate indices are readable | ✅ | `get_cert::first_and_last_valid_indices_succeed` | Explicit lower/upper valid-boundary coverage. |
+| Interleaving MBOR and TBOR reads preserves byte-identical certificate results | ✅ 🔁 | `get_cert::mbor_tbor_interleaved_reads_remain_identical` | TBOR-before, MBOR, and TBOR-after remain consistent for every certificate. |
+| Invalid slot and invalid certificate-index failures preserve the entire valid chain | ✅ | `get_cert::all_reject_classes_preserve_entire_chain` | Covers both rejection classes against a full-chain snapshot. |
+| Out-of-session `GetCertificate` remains callable while a CU PlainText session is active | ✅ | `get_cert::callable_while_cu_session_active` | Uses shared `common::CU`; CU uses the supported `SessionType::PlainText` pairing. |
+| `GetCertificate` remains stable across both supported CO Authenticated and CU PlainText session lifecycles | ✅ | `get_cert::entire_chain_stable_across_co_and_cu_session_lifecycles` | Verifies every advertised certificate before, during, and after each supported role/session pairing. |
+
+## `EccGenerateKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `EccGenerateKey` command. These tests exercise
+the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Generates fresh ECC keypairs on all supported curves | ✅ | `ecc_generate_key::ecc_generate_key_all_curves` | Covers P-256, P-384, and P-521 and verifies distinct masked/private and public-key outputs. |
+| Session-scoped generation is allowed before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_session_scope_before_finalize` | Session scope does not require Ephemeral or Local masking keys. |
+| Crypto-User session may generate ECC keys | ✅ | `ecc_generate_key::ecc_generate_key_allowed_on_crypto_user_session` | Uses a rotated CU PSK and exercises all supported curves. |
+| SecurityDomain scope is rejected before its masking key is provisioned | ✅ | `ecc_generate_key::ecc_generate_key_security_domain_scope_rejected` | Expects `UnsupportedKeyScope`. |
+| Ephemeral scope is rejected before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_ephemeral_scope_before_finalize_rejected` | Expects `UnsupportedKeyScope`. |
+| Local scope is rejected before partition finalization | ✅ | `ecc_generate_key::ecc_generate_key_local_scope_before_finalize_rejected` | Expects `UnsupportedKeyScope`. |
+| Supported provisioned scopes generate valid keys | ✅ | `ecc_generate_key::ecc_generate_key_scopes` | Covers Session, Ephemeral, and Local scopes across all supported curves. |
+| Unknown curve values are rejected | ✅ | `ecc_generate_key::ecc_generate_key_unknown_curve_rejected` | Covers values below/above the supported curve range and `u8::MAX`. |
+| Unknown key scope is rejected | ✅ | `ecc_generate_key::ecc_generate_key_unknown_scope_rejected` | Expects `UnsupportedKeyScope`. |
+| Mismatched session id is rejected | ✅ | `ecc_generate_key::ecc_generate_key_mismatched_session_id_rejected` | Exercises the invalid session id on all supported curves. |
+| DERIVE key usage is accepted | ✅ | `ecc_generate_key::ecc_generate_key_derive_usage` | Generates a derive-capable P-256 ECC key. |
+| DERIVE key usage is accepted on all supported curves | ✅ | `ecc_generate_key::ecc_generate_key_derive_usage_all_curves` | Covers P-256, P-384, and P-521. |
+| Non-empty key label is accepted | ✅ | `ecc_generate_key::ecc_generate_key_non_empty_label_all_curves` | Exercises a non-empty label on all supported ECC curves. |
+| One-byte key label is accepted | ✅ | `ecc_generate_key::ecc_generate_key_one_byte_label` | Covers the smallest non-empty key label. |
+| Maximum key-label length is accepted | ✅ | `ecc_generate_key::ecc_generate_key_max_label_length_all_curves` | Exercises `TBOR_KEY_LABEL_MAX_LEN` on all supported ECC curves. |
+| Key label longer than the maximum is rejected | ✅ | `ecc_generate_key::ecc_generate_key_label_too_long_rejected` | Expects `TborInvalidFixedLength`. |
+| Binary key label is accepted | ✅ | `ecc_generate_key::ecc_generate_key_binary_label` | Covers arbitrary non-text label bytes including `0x00`, `0x80`, and `0xff`. |
+| DERIVE usage accepts valid key labels | ✅ | `ecc_generate_key::ecc_generate_key_derive_usage_with_labels_all_curves` | Covers non-empty and maximum-length labels with DERIVE on all supported ECC curves. |
+| Default CO PSK is rejected | ✅ | `ecc_generate_key::ecc_generate_key_rejects_default_co_psk` | Expects `DefaultPskMustRotate`. |
+| SIGN and DERIVE combined usage is rejected | ✅ | `ecc_generate_key::ecc_generate_key_sign_and_derive_usage_rejected` | Expects `InvalidPermissions`. |
+| Empty key-usage bitfield is rejected | ✅ | `ecc_generate_key::ecc_generate_key_zero_usage_rejected` | `key_usage = 0` expects `InvalidPermissions`. |
+| Unknown key-usage bits are rejected | ✅ | `ecc_generate_key::ecc_generate_key_unknown_usage_rejected` | Uses an unsupported high usage bit and expects `InvalidPermissions`. |
+| Defined but invalid ECC key usages are rejected | ✅ | `ecc_generate_key::ecc_generate_key_known_invalid_usages_rejected` | Covers ENCRYPT, DECRYPT, VERIFY, WRAP, UNWRAP, and invalid usage combinations. |
+| Closed session is rejected | ✅ | `ecc_generate_key::ecc_generate_key_closed_session_rejected` | Attempts generation after session close on P-256, P-384, and P-521 and expects `SessionNotFound`. |
+| Session-scoped generation succeeds after closing and reopening the CO session | ✅ | `ecc_generate_key::ecc_generate_key_session_scope_after_reopen` | Confirms a newly opened authenticated CO session can generate a Session-scoped key. |
+
+## `EcdhDerive` (opcode in-session, gated)
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Derive succeeds for P-256, P-384, and P-521 | ✅ 🔁 | `ecdh_derive::ecdh_derive_all_curves` | Loops over all three supported curves and validates the returned masked-secret envelope length |
+| Derived result can be returned under Session, Ephemeral, and Local scopes | ✅ 🔁 | `ecdh_derive::ecdh_derive_scopes` | Loops over all provisioned output scopes |
+| CO session using the default PSK → `DefaultPskMustRotate` | ✅ | `ecdh_derive::ecdh_derive_rejects_default_co_psk` | Verifies the dispatcher gate for CO before ECDH field validation |
+| CU session using the default PSK → `DefaultPskMustRotate` | ✅ | `ecdh_derive::ecdh_derive_rejects_default_cu_psk` | Verifies the dispatcher gate for CU before ECDH field validation |
+| Peer public key shorter than the required wire length → `InvalidArg` | ✅ 🔁 | `ecdh_derive::ecdh_derive_bad_peer_pub_len_rejected` | Loops over P-256, P-384, and P-521; each peer key is truncated by one byte |
+| P-256 peer public key with one trailing byte → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_p256_peer_pub_trailing_byte_rejected` | 64-byte valid peer key becomes 65 bytes and reaches ECDH length validation |
+| P-384 peer public key with one trailing byte → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_p384_peer_pub_trailing_byte_rejected` | 96-byte valid peer key becomes 97 bytes and reaches ECDH length validation |
+| P-521 peer public key with one trailing byte → `TborInvalidFixedLength` | ✅ | `ecdh_derive::ecdh_derive_p521_peer_pub_trailing_byte_rejected` | Valid P-521 peer key already occupies the 136-byte TBOR maximum; 137 bytes is rejected during TBOR decoding |
+| Peer public key wire size belongs to a different curve → `InvalidArg` | ✅ 🔁 | `ecdh_derive::ecdh_derive_peer_curve_mismatch_rejected` | Covers all six local/peer mismatched-curve combinations |
+| Peer coordinates fail coordinate/public-key validation → `EccPublicKeyValidationFailed` | ✅ 🔁 | `ecdh_derive::ecdh_derive_invalid_peer_coordinates_rejected` | Loops over P-256, P-384, and P-521 using all-zero peer coordinates |
+| P-256 peer coordinates exceed the field upper bound → `EccPublicKeyValidationFailed` | ✅ | `ecdh_derive::ecdh_derive_peer_coordinates_above_upper_bound_rejected` | Uses all-ones coordinates to exercise the coordinate upper-bound validation branch |
+| In-range P-256 peer coordinates that are not on the curve → `EccPointValidationFailed` | ✅ | `ecdh_derive::ecdh_derive_off_curve_peer_point_rejected` | Uses `(1, 1)` to reach the separate curve-equation validation branch |
+| Tampered masked private-key envelope → `AesGcmDecryptTagDoesNotMatch` | ✅ | `ecdh_derive::ecdh_derive_tampered_masked_key_rejected` | Flips one byte in the authenticated masked-key envelope |
+| Masked key is not an ECC private key → `InvalidKeyType` | ✅ | `ecdh_derive::ecdh_derive_wrong_key_class_rejected` | Supplies a valid masked AES key |
+| SecurityDomain output scope is not provisioned → `UnsupportedKeyScope` | ✅ | `ecdh_derive::ecdh_derive_unsupported_target_scope_rejected` | Requests SecurityDomain result scope |
+| Request session id does not match active handle session → `FileHandleSessionIdDoesNotMatch` | ✅ | `ecdh_derive::ecdh_derive_unknown_session_rejected` | Uses `u16::MAX` as an unused session id |
+| Session-scoped ECC keys and derived results work before partition finalization | ✅ | `ecdh_derive::ecdh_derive_session_scope_before_finalize` | Uses a rotated CO session before `PartFinal` |
+| Crypto-User session is authorized to derive | ✅ | `ecdh_derive::ecdh_derive_allowed_on_crypto_user_session` | Rotates the CU PSK first so the command reaches its handler |
+| Imported ECC private key with `KEY_USAGE_DERIVE` can derive | ✅ | `ecdh_derive::ecdh_derive_with_unwrapped_key` | Imports host-generated P-256 PKCS#8 material through `UnwrapKey` |
+| Imported ECC private key without Derive permission → `InvalidPermissions` | ✅ | `ecdh_derive::ecdh_derive_key_without_derive_usage_rejected` | Key has Sign/Verify usage only |
+| Empty peer public key → `InvalidArg` | ✅ | `ecdh_derive::ecdh_derive_empty_peer_pub_rejected` |  |
+| Empty masked private-key envelope → `TborInvalidFixedLength` | ✅ | `ecdh_derive::ecdh_derive_empty_masked_key_rejected` |  |
+| Truncated masked private-key envelope → `TborInvalidFixedLength` | ✅ | `ecdh_derive::ecdh_derive_truncated_masked_key_rejected` | Removes one byte from an otherwise valid envelope |
+| Unknown output-scope discriminant → `UnsupportedKeyScope` | ✅ | `ecdh_derive::ecdh_derive_invalid_scope_rejected` | Uses scope `0xff` |
+| Local result scope before partition finalization → `UnsupportedKeyScope` | ✅ | `ecdh_derive::ecdh_derive_local_target_before_finalize_rejected` | Input key remains Session scoped so the output-scope gate is isolated |
+| Ephemeral result scope before partition finalization → `UnsupportedKeyScope` | ✅ | `ecdh_derive::ecdh_derive_ephemeral_target_before_finalize_rejected` | Input key remains Session scoped so the output-scope gate is isolated |
+| Session-scoped private key cannot be reused after its originating session closes | ✅ | `ecdh_derive::ecdh_derive_session_key_from_other_session_rejected` | Reopened session cannot authenticate the old session-scoped masked key |
+| Local-scoped private key remains usable after session close and reopen | ✅ | `ecdh_derive::ecdh_derive_local_key_across_sessions` | Confirms Local masking scope survives the session lifecycle |
+ | Non-empty key labels are accepted | ✅ | `ecdh_derive::ecdh_derive_non_empty_key_label` |  |
+ | Key label at `TBOR_KEY_LABEL_MAX_LEN` is accepted | ✅ | `ecdh_derive::ecdh_derive_max_key_label_length` |  |
+ | Key label over `TBOR_KEY_LABEL_MAX_LEN` → `TborInvalidFixedLength` | ✅ | `ecdh_derive::ecdh_derive_key_label_too_long_rejected` |  |
+ | Distinct non-empty key labels are accepted for identical ECDH inputs | ✅ | `ecdh_derive::ecdh_derive_different_labels_succeed` |  |
+ | Binary key labels are accepted | ✅ | `ecdh_derive::ecdh_derive_binary_key_label` |  |
 | Empty response surfaces FW status without attempting body decode | ✅ | `fw_error_decode::empty_response_surfaces_fw_status` | Mock + emu |
 | Non-empty error response surfaces FW status before schema decode | ✅ | `fw_error_decode::fields_response_surfaces_fw_status_before_schema_decode` | Mock + emu |
 | `status == 0` with a valid body still decodes the body | ✅ | `fw_error_decode::zero_status_with_valid_body_still_decodes` | Mock + emu |
 | TOC entry of wrong type yields `TborDecodeError::UnexpectedTocType` | ✅ | `unexpected_toc_type::wrong_toc_entry_type_yields_unexpected_toc_type` | Mock + emu |
-| `mach_seed` AAD wire-layout encoder stability | ✅ | `harness::session::part_init::tests::mach_seed_aad_layout` | Unit test; pure host-side |
+| `mach_seed` AAD wire-layout encoder stability | ✅ | `part_init::success_path::mach_seed_aad_layout` | Unit test; pure host-side |
 
 ---
 
@@ -174,6 +299,11 @@ and could be tightened to assert a specific `TborStatus`:
 2. `session_close::session_close_double_close` — likely `SessionNotFound`.
 3. `open_session::session_open_finish_unknown_session_id_emu` — likely `SessionNotFound` or `SessionNotPending`.
 4. `open_session::open_session_double_finish_emu` — likely `SessionNotPending`.
+5. `part_final::part_final_reject_tampered_backup` — expected `AesGcmDecryptTagDoesNotMatch`.
+6. `part_final::part_final_reject_wrong_state` — expected `InvalidArg`.
+7. `part_final::part_final_reject_policy_mismatch` — expected `InvalidArg`.
+8. `part_final::part_final_reject_unanchored_chain_emu` — expected `InvalidArg`.
+9. `part_final::part_final_reject_pta_mismatch_emu` — expected `PartFinalPtaMismatch`.
 
 ---
 

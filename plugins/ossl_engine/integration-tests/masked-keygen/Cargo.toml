@@ -15,9 +15,10 @@ path = "src/main.rs"
 # cells) doesn't pull the OpenSSL 1.1.x engine; the integration harness builds
 # this with `--features integration`.
 [features]
-integration = ["dep:azihsm_ossl_engine"]
+integration = ["dep:azihsm_api", "dep:azihsm_ossl_engine"]
 
 [dependencies]
+azihsm_api = { optional = true, workspace = true }
 azihsm_ossl_engine = { features = [
   "engine",
   "integration",

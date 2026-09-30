@@ -21,9 +21,9 @@ persisted, so the command records no rollback on the undo log.
 
 The `key_size` selects the AES key length:
 
-- AES-128 → 16-byte key, 148-byte masked blob.
-- AES-192 → 24-byte key, 156-byte masked blob.
-- AES-256 → 32-byte key, 164-byte masked blob.
+- AES-128 → 16-byte key, 244-byte masked blob.
+- AES-192 → 24-byte key, 252-byte masked blob.
+- AES-256 → 32-byte key, 260-byte masked blob.
 
 Only the non-bulk key sizes are generated here (mirroring MBOR
 `AesGenerateKey`); the XTS / GCM bulk variants are intentionally absent.
@@ -65,11 +65,11 @@ _Empty — all fields are carried inline within their TOC entries._
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `masked_key` | `buffer` (148 / 156 / 164 B) | The generated AES key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
+| 8 | `masked_key` | `buffer` (244 / 252 / 260 B) | The generated AES key, masked (AEAD-GCM-256) under the scope's masking key: `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`. Not stored on-device. |
 
 ### Data section
 
-Carries the masked key (148 / 156 / 164 B for AES-128 / 192 / 256).
+Carries the masked key (244 / 252 / 260 B for AES-128 / 192 / 256).
 
 ## Errors
 
