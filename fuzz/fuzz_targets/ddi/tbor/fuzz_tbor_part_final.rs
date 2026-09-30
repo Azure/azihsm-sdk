@@ -9,6 +9,7 @@ mod common;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::PtaChain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -29,6 +30,17 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
+/// Upper bound on a fuzzed per-cert DER: `MAX_CERT_DER_LEN` in the crypto
+/// crate is 1024, so 2× that still exercises oversized rejects without
+/// letting a single input eat the fuzzer's byte pool.
+const FUZZ_MAX_CERT_LEN: usize = 2048;
+
+/// Upper bound on the number of certs the fuzzer may synthesize for the
+/// `Replace` mutation. Real chains are 2 (root → PTA); a small headroom is
+/// enough to hit chain-length and per-item parse rejects without blowing
+/// throughput.
+const FUZZ_MAX_CHAIN_ITEMS: usize = 4;
+
 fn bounded_prev_local_mk_backup(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
     // Keep allocations bounded to improve fuzz throughput while still exercising invalid lengths.
     let max = azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN * 4;
@@ -36,11 +48,116 @@ fn bounded_prev_local_mk_backup(u: &mut arbitrary::Unstructured<'_>) -> arbitrar
     Ok(u.bytes(len)?.to_vec())
 }
 
+fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    let len = usize::arbitrary(u)? % (FUZZ_MAX_CERT_LEN + 1);
+    Ok(u.bytes(len)?.to_vec())
+}
+
+fn bounded_fuzzed_chain(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<Vec<u8>>> {
+    let n = usize::arbitrary(u)? % (FUZZ_MAX_CHAIN_ITEMS + 1);
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let len = usize::arbitrary(u)? % (FUZZ_MAX_CERT_LEN + 1);
+        out.push(u.bytes(len)?.to_vec());
+    }
+    Ok(out)
+}
+
+/// Which slot of the valid root → PTA chain a mutation targets.
+#[derive(Arbitrary, Debug)]
+enum ChainItem {
+    Root,
+    Pta,
+}
+
+/// Post-generation mutation applied to the wire-valid PTA cert chain.
+///
+/// `None` ships the valid root → PTA chain untouched so the handler
+/// advances past cert-chain validation into the `prev_local_mk_backup`
+/// / policy-hash pipeline. The other variants exercise chain-reject
+/// paths (signature tamper, truncation, over-length, and arbitrary
+/// chains) without leaving them buried under negligible-probability
+/// arbitrary-byte inputs.
+#[derive(Arbitrary, Debug)]
+enum ChainMutation {
+    /// Ship the valid root → PTA chain unchanged.
+    None,
+    /// XOR a fuzzed mask into a fuzzed offset of the chosen chain item
+    /// (offset wrapped modulo item length). Exercises signature and
+    /// TBS-tampering rejects in the X.509 validator.
+    FlipByte {
+        item: ChainItem,
+        offset: u16,
+        mask: u8,
+    },
+    /// Truncate the chosen chain item to `len % (item.len() + 1)` bytes.
+    /// Exercises short-DER and length-mismatch rejects.
+    Truncate { item: ChainItem, len: u16 },
+    /// Append fuzzed trailing bytes to the chosen chain item.
+    /// Exercises over-length rejects.
+    Append {
+        item: ChainItem,
+        #[arbitrary(with = bounded_appended_bytes)]
+        extra: Vec<u8>,
+    },
+    /// Replace the entire chain with a caller-supplied list of
+    /// arbitrary-byte certs. Exercises chain-length and per-item parse
+    /// rejects.
+    Replace(#[arbitrary(with = bounded_fuzzed_chain)] Vec<Vec<u8>>),
+}
+
+impl ChainMutation {
+    /// Apply the mutation to the valid chain, returning the DER items in
+    /// the root → PTA order `PartFinal` expects (or a fully synthetic
+    /// chain for `Replace`).
+    fn apply(&self, valid: PtaChain) -> Vec<Vec<u8>> {
+        let PtaChain {
+            mut root_der,
+            mut pta_der,
+        } = valid;
+        match self {
+            ChainMutation::None => vec![root_der, pta_der],
+            ChainMutation::FlipByte { item, offset, mask } => {
+                let target = match item {
+                    ChainItem::Root => &mut root_der,
+                    ChainItem::Pta => &mut pta_der,
+                };
+                if !target.is_empty() && *mask != 0 {
+                    let idx = (*offset as usize) % target.len();
+                    target[idx] ^= *mask;
+                }
+                vec![root_der, pta_der]
+            }
+            ChainMutation::Truncate { item, len } => {
+                let target = match item {
+                    ChainItem::Root => &mut root_der,
+                    ChainItem::Pta => &mut pta_der,
+                };
+                let cap = target.len() + 1;
+                target.truncate((*len as usize) % cap);
+                vec![root_der, pta_der]
+            }
+            ChainMutation::Append { item, extra } => {
+                let target = match item {
+                    ChainItem::Root => &mut root_der,
+                    ChainItem::Pta => &mut pta_der,
+                };
+                target.extend_from_slice(extra);
+                vec![root_der, pta_der]
+            }
+            ChainMutation::Replace(items) => items.clone(),
+        }
+    }
+}
+
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     /// Fuzzed prior local_mk backup (empty = first-instantiation path).
     #[arbitrary(with = bounded_prev_local_mk_backup)]
     prev_local_mk_backup: Vec<u8>,
+    /// Fuzzed mutation applied to the PTA cert chain (`None` ships the
+    /// valid chain so the handler advances past chain validation).
+    chain_mutation: ChainMutation,
 }
 
 /// Build a `PartPolicy` with `pota_raw` (raw P-384 `X ‖ Y`) as the POTA
@@ -122,19 +239,16 @@ fuzz_target!(|input: FuzzInput| {
             .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
             .expect("PartInit should succeed");
 
-        // Build a valid PTA cert chain anchored to the POTA key, using the CSR
-        // returned by PartInit to certify the correct partition PTA public key.
+        // Build the valid PTA chain anchored to the POTA key, then apply
+        // the fuzzed mutation. The `None` variant ships the chain
+        // untouched so `PartFinal` reaches the handler logic past cert
+        // validation; the other variants exercise chain-reject paths.
         let pta_pub = pta_pub_from_csr(&init.pta_csr);
-        let chain = make_pta_chain(&pota, &pta_pub);
+        let valid_chain = make_pta_chain(&pota, &pta_pub);
+        let chain_items = input.chain_mutation.apply(valid_chain);
+        let cert_slices: Vec<&[u8]> = chain_items.iter().map(|v| v.as_slice()).collect();
 
-        // PartFinal: the valid chain clears both the lifecycle and OOB gates,
-        // so the fuzzed prev_local_mk_backup reaches the handler logic.
-        let _ = ctx.part_final(
-            &session,
-            &policy,
-            &input.prev_local_mk_backup,
-            &chain.der_items(),
-        );
+        let _ = ctx.part_final(&session, &policy, &input.prev_local_mk_backup, &cert_slices);
 
         ctx.session_close(session.session_id)
             .expect("session close should succeed");
