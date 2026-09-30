@@ -6,35 +6,26 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::x509_fixture::PtaChain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::MAX_CERTS;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::PolicyVer;
-use azihsm_ddi_tbor_types::SessionType;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-const CO: u8 = 0;
-
-/// Non-default CO PSK used to clear the default-PSK gate before `PartInit`.
-const ROTATED_CO_PSK: [u8; PSK_LEN] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
-    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
-];
 
 /// Upper bound on a fuzzed per-cert DER: `MAX_CERT_DER_LEN` in the crypto
 /// crate is 1024, so 2× that still exercises oversized rejects without
@@ -49,7 +40,7 @@ const FUZZ_MAX_CHAIN_ITEMS: usize = 4;
 
 fn bounded_prev_local_mk_backup(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
     // Keep allocations bounded to improve fuzz throughput while still exercising invalid lengths.
-    let max = azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN * 4;
+    let max = LOCAL_MK_BACKUP_LEN * 4;
     let len = usize::arbitrary(u)? % (max + 1);
     Ok(u.bytes(len)?.to_vec())
 }
@@ -154,6 +145,38 @@ impl ChainMutation {
             ChainMutation::Replace(items) => items.clone(),
         }
     }
+
+    /// `true` iff this mutation would leave the valid chain unchanged
+    /// (matches the `None` variant, or a no-op offset/mask/len/extra
+    /// choice inside a mutation variant). Drives the "expect success"
+    /// classification for the result assertion.
+    fn is_noop(&self, valid: &PtaChain) -> bool {
+        match self {
+            ChainMutation::None => true,
+            ChainMutation::FlipByte { item, mask, .. } => {
+                if *mask == 0 {
+                    return true;
+                }
+                let target = match item {
+                    ChainItem::Root => &valid.root_der,
+                    ChainItem::Pta => &valid.pta_der,
+                };
+                target.is_empty()
+            }
+            ChainMutation::Truncate { item, len } => {
+                let target = match item {
+                    ChainItem::Root => &valid.root_der,
+                    ChainItem::Pta => &valid.pta_der,
+                };
+                // `Vec::truncate(new_len)` only shrinks when `new_len <
+                // target.len()`; `apply` computes `len % (target.len() + 1)`
+                // so a no-op requires the modulo to land on `target.len()`.
+                (*len as usize) % (target.len() + 1) == target.len()
+            }
+            ChainMutation::Append { extra, .. } => extra.is_empty(),
+            ChainMutation::Replace(_) => false,
+        }
+    }
 }
 
 #[derive(Arbitrary, Debug)]
@@ -222,27 +245,10 @@ fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        ctx.erase().expect("erase should succeed");
-
-        // Rotate the CO PSK to clear the default-PSK gate before PartInit.
-        let bootstrap = ctx
-            .open_session(CO, SessionType::Authenticated)
-            .expect("bootstrap session open should succeed");
-        ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
-            .expect("PSK rotation should succeed");
-        bootstrap
-            .close()
-            .expect("bootstrap session close should succeed");
-
-        // Open a CO session under the rotated PSK.
-        let opts =
-            SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
-        let pending = ctx
-            .session_open_init_with_options(opts)
-            .expect("session_open_init should succeed");
-        let session = ctx
-            .session_open_finish(pending)
-            .expect("session_open_finish should succeed");
+        // Fresh-slate CO session under a rotated (non-default) PSK — the
+        // gate `PartInit` / `PartFinal` need cleared before the fuzzed
+        // opcode can fire.
+        let session = common::erase_and_open_rotated_co_session(ctx);
 
         // Generate a POTA trust anchor and embed its public key in the policy.
         let pota = CaKey::generate();
@@ -259,10 +265,45 @@ fuzz_target!(|input: FuzzInput| {
         // validation; the other variants exercise chain-reject paths.
         let pta_pub = pta_pub_from_csr(&init.pta_csr);
         let valid_chain = make_pta_chain(&pota, &pta_pub);
+        // Snapshot noop-ness against the pre-mutation chain; `apply`
+        // consumes the chain immediately after.
+        let chain_is_noop = input.chain_mutation.is_noop(&valid_chain);
         let chain_items = input.chain_mutation.apply(valid_chain);
         let cert_slices: Vec<&[u8]> = chain_items.iter().map(|v| v.as_slice()).collect();
 
-        let _ = ctx.part_final(&session, &policy, &input.prev_local_mk_backup, &cert_slices);
+        // Classify the fuzzed inputs by deterministic outcome so we can
+        // catch bugs where a valid input is rejected or an invalid input
+        // is accepted (silent regressions the `let _` discard would hide).
+        //
+        // * expect_success: chain is unchanged from the valid root → PTA
+        //   pair AND the backup is empty (first-instantiation path) — the
+        //   only combination whose success does not depend on AEAD /
+        //   signature outcomes over fuzzed bytes.
+        // * expect_failure: the request violates the wire schema before
+        //   the FW can act on it — `cert_descriptors` outside
+        //   `1..=MAX_CERTS` (0 certs → placeholder + no OOB, > MAX_CERTS
+        //   → encoder over-length reject), or a backup that overflows
+        //   `LOCAL_MK_BACKUP_LEN`. Any other combination has a
+        //   probabilistic outcome (arbitrary bytes could occasionally
+        //   parse) and is left unasserted.
+        let expect_success = chain_is_noop && input.prev_local_mk_backup.is_empty();
+        let expect_failure = input.prev_local_mk_backup.len() > LOCAL_MK_BACKUP_LEN
+            || chain_items.is_empty()
+            || chain_items.len() > MAX_CERTS;
+
+        let result = ctx.part_final(&session, &policy, &input.prev_local_mk_backup, &cert_slices);
+
+        if expect_success {
+            result.expect("PartFinal should succeed for a valid chain with an empty backup");
+        } else if expect_failure {
+            assert!(
+                result.is_err(),
+                "PartFinal should reject wire-schema-invalid input, got Ok({result:?}) \
+                 (chain_len={}, backup_len={})",
+                chain_items.len(),
+                input.prev_local_mk_backup.len(),
+            );
+        }
 
         ctx.session_close(session.session_id)
             .expect("session close should succeed");

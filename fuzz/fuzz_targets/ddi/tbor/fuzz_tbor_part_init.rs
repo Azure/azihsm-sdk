@@ -6,7 +6,6 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
@@ -14,24 +13,14 @@ use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-const CO: u8 = 0;
-
-/// Non-default CO PSK used to clear the default-PSK gate before `PartInit`.
-const ROTATED_CO_PSK: [u8; PSK_LEN] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
-    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
-];
 
 fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
     let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
@@ -133,27 +122,9 @@ fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        ctx.erase().expect("erase should succeed");
-
-        // Rotate the CO PSK to clear the default-PSK gate before PartInit.
-        let bootstrap = ctx
-            .open_session(CO, SessionType::Authenticated)
-            .expect("bootstrap session open should succeed");
-        ctx.psk_change(bootstrap.handshake(), &ROTATED_CO_PSK)
-            .expect("PSK rotation should succeed");
-        bootstrap
-            .close()
-            .expect("bootstrap session close should succeed");
-
-        // Open a fresh CO session under the rotated PSK.
-        let opts =
-            SessionOpenInitOptions::new(CO, SessionType::Authenticated).with_psk(&ROTATED_CO_PSK);
-        let pending = ctx
-            .session_open_init_with_options(opts)
-            .expect("session_open_init should succeed");
-        let session = ctx
-            .session_open_finish(pending)
-            .expect("session_open_finish should succeed");
+        // Fresh-slate CO session under a rotated (non-default) PSK — the
+        // gate `PartInit` needs cleared before the fuzzed opcode can fire.
+        let session = common::erase_and_open_rotated_co_session(ctx);
 
         let sapota_thumbprint = if input.sapota_present {
             input.sapota_thumbprint.to_vec()

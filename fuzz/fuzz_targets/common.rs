@@ -14,7 +14,10 @@ use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::SessionType;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -104,6 +107,25 @@ pub fn common_fuzz_test(test: &dyn Fn(&TestCtx, &str)) {
     let ctx = TestCtx::new_primary_with_path(&path);
 
     test(&ctx, &path);
+}
+
+/// Erase the device, rotate the CO PSK away from the default, and
+/// return a fresh authenticated CO session opened under
+/// [`ROTATED_CO_PSK`].
+///
+/// Shared by fuzz targets that drive commands gated on a non-default
+/// CO PSK (`PartInit`, `PartFinal`): they need both a clean partition
+/// state and a live CO session under the rotated PSK before the
+/// under-test opcode fires. Delegates the rotation itself to the
+/// test-harness [`bootstrap_rotated_co`] fixture so the byte-level
+/// flow stays in one place.
+///
+/// Each `.expect` mirrors the equivalent call in `bootstrap_rotated_co`
+/// — a panic here is a backend / harness bug, not a fuzz finding, so
+/// crashing loudly beats silently returning `Result`.
+pub fn erase_and_open_rotated_co_session(ctx: &TestCtx) -> SessionHandshake {
+    ctx.erase().expect("erase should succeed");
+    bootstrap_rotated_co(ctx, &ROTATED_CO_PSK)
 }
 
 /// Two-phase AES-GCM-256 AEAD seal: size-query, allocate, then fill
