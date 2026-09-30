@@ -209,7 +209,7 @@ without requiring an active session.
 | Out-of-session command remains callable while a CU session is active | ✅ | `get_cert_chain_info::callable_while_cu_session_active` | Uses the supported CU PlainText bootstrap session |
 | Response missing the thumbprint field is rejected as truncated | ✅ | `get_cert_chain_info::truncated_response_rejected` | Expects `DecodeError::MessageTruncated` |
 | Response with maximum TOC entries decodes the known prefix | ✅ | `get_cert_chain_info::max_toc_response_decodes_known_fields` | Verifies forward compatibility with trailing unknown TOC fields |
-| Single unknown trailing response field is ignored | ✅ | `get_cert_chain_info::trailing_unknown_field_is_ignored` | Known `num_certs` and thumbprint fields remain intact |
+| Single unknown trailing response field is ignored | ✅ | `get_cert_chain_info::trailing_unknown_toc_type_is_ignored` | Known `num_certs` and thumbprint fields remain intact |
 | Wrong TOC type for `num_certs` is rejected | ✅ | `get_cert_chain_info::wrong_num_certs_type_rejected` | Encodes `num_certs` as `Uint16`; expects `UnexpectedTocType` |
 | Wrong TOC type for `thumbprint` is rejected | ✅ | `get_cert_chain_info::wrong_thumbprint_type_rejected` | Encodes the thumbprint as `Uint8`; expects `UnexpectedTocType` |
 
