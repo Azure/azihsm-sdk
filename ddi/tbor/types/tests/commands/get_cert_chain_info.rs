@@ -324,7 +324,7 @@ fn max_toc_response_decodes_known_fields() {
         .buffer(&thumbprint)
         .expect("encode thumbprint");
 
-    // Fill remaining TOC slots with unknown future fields.
+    // Fill the remaining TOC slots with valid trailing Uint8 entries.
     for _ in 2..MAX_TOC_ENTRIES {
         encoder = encoder.uint8(0xFF).expect("encode trailing TOC entry");
     }
@@ -438,24 +438,34 @@ fn callable_while_cu_session_active() {
 /// A response containing one additional unknown TOC entry must preserve
 /// the known fields.
 #[test]
-fn trailing_unknown_field_is_ignored() {
-    // Leave enough room for the response header, TOC entries,
-    // 32-byte thumbprint, and trailing forward-compatible field.
+fn trailing_unknown_toc_type_is_ignored() {
     let mut buf = [0u8; 512];
     let thumbprint = [0x5Au8; CERT_THUMBPRINT_LEN];
 
-    let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
-        .uint8(2)
-        .expect("encode num_certs")
-        .buffer(&thumbprint)
-        .expect("encode thumbprint")
-        .uint8(0xFF)
-        .expect("encode unknown trailing field")
-        .finish()
-        .expect("finish response with trailing field");
+    let len = {
+        let bytes = ResponseEncoder::new(&mut buf, PROTOCOL_VERSION, 0, false)
+            .uint8(2)
+            .expect("encode num_certs")
+            .buffer(&thumbprint)
+            .expect("encode thumbprint")
+            .uint8(0xFF)
+            .expect("encode placeholder trailing field")
+            .finish()
+            .expect("finish response with trailing field");
 
-    let resp = TborGetCertChainInfoResp::decode_response(bytes)
-        .expect("trailing unknown field must not break known prefix");
+        bytes.len()
+    };
+
+    const RESPONSE_HEADER_LEN: usize = 8;
+    const TOC_ENTRY_LEN: usize = 4;
+    const UNKNOWN_TOC_TYPE: u8 = 63;
+
+    let trailing_toc = RESPONSE_HEADER_LEN + 2 * TOC_ENTRY_LEN;
+
+    buf[trailing_toc] = (buf[trailing_toc] & 0x03) | (UNKNOWN_TOC_TYPE << 2);
+
+    let resp = TborGetCertChainInfoResp::decode_response(&buf[..len])
+        .expect("unknown trailing TOC type must not break known prefix");
 
     assert_eq!(resp.num_certs, 2);
     assert_eq!(resp.thumbprint, thumbprint);
