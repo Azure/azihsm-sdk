@@ -16,15 +16,7 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::MAX_CERTS;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
-use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::PolicyVer;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -191,44 +183,6 @@ struct FuzzInput {
     chain_mutation: ChainMutation,
 }
 
-/// Build a `PartPolicy` with `pota_raw` (raw P-384 `X ‖ Y`) as the POTA
-/// trust anchor so `PartFinal` can validate the cert chain against it.
-///
-/// Uses the shared [`PartPolicy`] struct + typed [`PolicyPubKey`] /
-/// [`PolicyVer`] constructors so the on-wire byte layout tracks whatever
-/// the policy crate declares (no hand-computed field offsets here).
-fn part_policy_with_pota(pota_raw: &[u8; POLICY_MAX_KEY_LEN]) -> [u8; PART_POLICY_LEN] {
-    use zerocopy::IntoBytes;
-
-    let mut sata_data = [0u8; POLICY_MAX_KEY_LEN];
-    for (i, b) in sata_data.iter_mut().enumerate() {
-        *b = (0x20u8.wrapping_add(i as u8)) | 0x80;
-    }
-
-    let policy = PartPolicy {
-        version: PolicyVer {
-            major: POLICY_VERSION_MAJOR,
-            minor: 0,
-        },
-        pota_pub_key: PolicyPubKey::new(
-            PolicyKeyKind::Ecc384,
-            POLICY_MAX_KEY_LEN as u16,
-            *pota_raw,
-        ),
-        sata_pub_key: PolicyPubKey::new(
-            PolicyKeyKind::Ecc384,
-            POLICY_MAX_KEY_LEN as u16,
-            sata_data,
-        ),
-        info: [0xAB; POLICY_INFO_LEN],
-        ..PartPolicy::zeroed()
-    };
-
-    let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes.copy_from_slice(policy.as_bytes());
-    bytes
-}
-
 fn mach_seed() -> [u8; MACH_SEED_LEN] {
     let mut v = [0u8; MACH_SEED_LEN];
     for (i, b) in v.iter_mut().enumerate() {
@@ -254,7 +208,7 @@ fuzz_target!(|input: FuzzInput| {
 
         // Generate a POTA trust anchor and embed its public key in the policy.
         let pota = CaKey::generate();
-        let policy = part_policy_with_pota(&pota.raw_pub());
+        let policy = common::known_good_part_policy(pota.raw_pub());
 
         // PartInit: transition the partition to PartState::Initializing.
         let init = ctx
