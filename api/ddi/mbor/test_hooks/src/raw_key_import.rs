@@ -1,74 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Host wire types and helpers for the `RawKeyImport` validation command.
+//! Execution and key-readback helpers for the `RawKeyImport` validation command.
 
 use azihsm_ddi_mbor_codec::*;
-use azihsm_ddi_mbor_derive::Ddi;
 use azihsm_ddi_mbor_types::*;
 use zeroize::Zeroize;
 
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiRawKeyImportReq {
-    #[ddi(id = 1)]
-    pub raw: MborByteArray<3072>,
-    #[ddi(id = 2)]
-    pub key_kind: DdiKeyType,
-    #[ddi(id = 3)]
-    pub key_tag: Option<u16>,
-    #[ddi(id = 4)]
-    pub key_properties: DdiTargetKeyProperties,
-}
-
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiRawKeyImportResp {
-    #[ddi(id = 1)]
-    pub key_id: u16,
-    #[ddi(id = 2)]
-    pub bulk_key_id: Option<u16>,
-    #[ddi(id = 3)]
-    pub masked_key: MborByteArray<3072>,
-}
-
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiRawKeyImportCmdReq {
-    #[ddi(id = 0)]
-    pub hdr: DdiReqHdr,
-    #[ddi(id = 1)]
-    pub data: crate::DdiTestActionReq,
-    #[ddi(id = 2)]
-    pub ext: Option<DdiReqExt>,
-}
-
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiRawKeyImportCmdResp {
-    #[ddi(id = 0)]
-    pub hdr: DdiRespHdr,
-    #[ddi(id = 1)]
-    pub data: DdiRawKeyImportResp,
-    #[ddi(id = 2)]
-    pub ext: Option<DdiRespExt>,
-}
-
-impl DdiOpReq for DdiRawKeyImportCmdReq {
-    type OpResp = DdiRawKeyImportCmdResp;
-
-    fn get_opcode(&self) -> DdiOp {
-        self.hdr.op
-    }
-
-    fn get_session_id(&self) -> Option<u16> {
-        self.hdr.sess_id
-    }
-}
+use crate::common::*;
 
 /// Import raw key material into validation firmware.
 #[allow(clippy::too_many_arguments)]
@@ -92,23 +31,15 @@ pub fn helper_raw_key_import(
         key_tag,
         key_properties,
     };
-    let payload = crate::test_action::encode_action_payload(&action_req);
+    let data = DdiTestActionReq::encode(DdiTestAction::RawKeyImport, &action_req);
     action_req.raw.data_mut().zeroize();
-    let mut payload = payload.map_err(|_| DdiError::InvalidParameter)?;
+    let data = data.map_err(|_| DdiError::InvalidParameter)?;
 
     let mut req = DdiRawKeyImportCmdReq {
-        hdr: DdiReqHdr {
-            op: crate::DDI_OP_TEST_ACTION,
-            sess_id: session_id,
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
-        data: crate::DdiTestActionReq {
-            action: crate::DdiTestAction::RawKeyImport,
-            payload,
-        },
+        hdr: test_action_header(session_id),
+        data,
         ext: None,
     };
-    payload.data_mut().zeroize();
     let result = dev.exec_op_mbor(&req, &mut None);
     req.data.payload.data_mut().zeroize();
     result
@@ -171,10 +102,10 @@ mod tests {
             .expect("valid key properties must convert"),
         };
 
-        let payload = crate::test_action::encode_action_payload(&req)
+        let payload = DdiTestActionReq::encode(DdiTestAction::RawKeyImport, &req)
             .expect("maximum request must fit the TestAction payload");
         assert!(
-            payload.len() <= crate::TEST_ACTION_PAYLOAD_MAX,
+            payload.payload.len() <= TEST_ACTION_PAYLOAD_MAX,
             "encoded payload exceeds TestAction capacity"
         );
     }

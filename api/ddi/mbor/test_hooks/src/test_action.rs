@@ -1,452 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Wire types for the `TestAction` (`DdiOp` 2004) test-hook command
-//! family. These mirror, field-for-field, the request the platform
-//! handler decodes below the PAL.
+//! Semantic request API and execution helper for general TestAction commands.
+//!
+//! Wire structures are kept in `common`; this module maps each typed request
+//! to its action selector and opaque action-specific payload.
 
-use azihsm_ddi_mbor_codec::*;
-use azihsm_ddi_mbor_derive::Ddi;
-use azihsm_ddi_mbor_types::*;
-use open_enum::open_enum;
-use pastey::paste;
-use zeroize::Zeroize;
+use azihsm_ddi_mbor_codec::MborEncode;
+use azihsm_ddi_mbor_codec::MborEncodeError;
 
-/// `DdiOp::TestAction` — not a core opcode; claimed only by the platform
-/// test-hook dispatch below the PAL.
-pub const DDI_OP_TEST_ACTION: DdiOp = DdiOp(2004);
+use crate::common::*;
 
-/// DDI Test Action
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestAction {
-    /// Skip IO with Level-1 Abort trigger
-    Level1SkipIo = 1,
-
-    /// Set Skip IO with Level-2 Abort Trigger
-    SetLevel2SkipIo = 2,
-
-    /// Clear Skip IO with Level-2 Abort Trigger
-    ClearLevel2SkipIo = 3,
-
-    /// Invalidate Cert size cache in partition
-    InvalidateCertSizeCache = 4,
-
-    /// Trigger IO failure
-    TriggerIoFailure = 5,
-
-    /// Trigger DMA out failure
-    TriggerDmaOutFailure = 6,
-
-    /// Trigger DMA End failure
-    TriggerDmaEndFailure = 7,
-
-    /// Trigger crash dump
-    TriggerCrash = 8,
-
-    /// Execute negative self test
-    ExecuteNegativeSelfTest = 9,
-
-    /// Override pin policy context
-    PinPolicyOverride = 10,
-
-    /// Clear pin policy
-    PinPolicyClear = 11,
-
-    /// Force PKA instance
-    ForcePkaInstance = 12,
-
-    /// Trigger RNG HW failure
-    TriggerRngHwFailure = 13,
-
-    /// Toggle FIPS approved state
-    ToggleFipsApprovedState = 14,
-
-    /// Trigger Negative PCT failure
-    TriggerNegativePctFailure = 15,
-
-    /// Trigger ECC error
-    TriggerEccError = 16,
-
-    /// Trigger TDISP interrupt
-    TriggerTdispInterrupt = 17,
-
-    /// Clear User Credentials
-    ClearUserCredentials = 18,
-
-    /// Clear Provisioning State
-    ClearProvisioningState = 19,
-
-    /// Update SVN value
-    UpdateSvn = 20,
-
-    /// Trigger GDMA Error
-    TriggerGdmaError = 21,
-
-    /// Clear BK3 info (masked bk boot and sealed bk3)
-    ClearBk3 = 22,
-
-    /// Trigger Stack Validation error
-    TriggerStackValidation = 23,
-
-    /// Trigger UCD Error
-    TriggerUcdError = 24,
-
-    /// Read back private key material.
-    GetPrivKey = 25,
-
-    /// Import raw key material.
-    RawKeyImport = 26,
-}
-
-/// Test action crash type.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestActionCrashType {
-    /// Trigger Hard Fault
-    HardFault = 1,
-
-    /// Trigger Explicit Crash
-    ExplicitCrash = 2,
-
-    /// Trigger Panic
-    Panic = 3,
-
-    /// Trigger Core Hang.
-    Hang = 4,
-}
-
-/// Test action ECC Error type
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestActionEccErrorType {
-    /// DTCM Double Bit
-    DtcmDoubleBit = 1,
-
-    /// ITCM Double Bit
-    ItcmDoubleBit = 2,
-
-    /// GSRAM Double Bit
-    GsramDoubleBit = 3,
-
-    /// CDMA Single Bit
-    CdmaSingleBit = 4,
-
-    /// CDMA Single Bit ECC error threshold exceeded Interrupt count
-    CdmaEccErrIntrCount = 5,
-}
-
-/// Test action GDMA Error type
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestActionGDMAErrorType {
-    /// GDMA Data Structure Error Bit
-    GdmaDataStructureErrorBit = 1,
-
-    /// GDMA Data Access Error Bit
-    GdmaDataAccessErrorBit = 2,
-
-    /// GDMA Delivery Queue Error Bit
-    GdmaDeliveryQueueErrorBit = 3,
-
-    /// GDMA Completion Queue Error Bit
-    GdmaCompletionQueueErrorBit = 4,
-}
-
-/// Test action UCD Error type
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestActionUCDErrorType {
-    /// UCD IB DFL Overflow Error
-    UcdIbDflOverflowError = 1,
-
-    /// UCD IB Queue Overflow Error
-    UcdIbQueueOverflowError = 2,
-
-    /// UCD OB queue full Error
-    UcdObQueueFullError = 3,
-
-    /// UCD IB Data path Parity Error
-    UcdIbDataParityError = 4,
-
-    /// UCD IB Completion Queue Full Error
-    UcdIbCqFullError = 5,
-}
-
-/// Test action interrupt type.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq, Default)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestActionInterruptSimulationType {
-    /// Trigger TDISP Interrupt
-    Tdisp = 1,
-
-    /// Trigger IDE Interrupt
-    Ide = 2,
-
-    /// Trigger FLR Interrupt
-    Flr = 3,
-
-    /// Trigger Perst Up Interrupt
-    PerstUp = 4,
-
-    /// Trigger Perst Down Interrupt
-    PerstDown = 5,
-}
-
-/// Test action stack error type
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestStackErrorType {
-    /// Trigger Stack Overflow (MemManage fault)
-    StackOverflow = 1,
-
-    /// Stack guard violation (MemManage fault)
-    StackGuardViolation = 2,
-}
-
-/// Test action SoC CPU type.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[open_enum]
-#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
-#[repr(u32)]
-#[ddi(enumeration)]
-pub enum DdiTestActionSocCpuId {
-    /// Admin core
-    Admin = 0,
-
-    /// HSM core
-    Hsm = 1,
-
-    /// FP0 core
-    Fp0 = 2,
-
-    /// FP1 core
-    Fp1 = 3,
-
-    /// FP2 core
-    Fp2 = 4,
-}
-
-/// Test action crash request info
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionCrashReqInfo {
-    /// Crash type.
-    #[ddi(id = 1)]
-    pub crash_type: DdiTestActionCrashType,
-
-    /// CPU ID
-    #[ddi(id = 2)]
-    pub cpu_id: DdiTestActionSocCpuId,
-}
-
-/// Test action stack validation request info
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionStackValidationReqInfo {
-    /// Stack error type.
-    #[ddi(id = 1)]
-    pub stack_error_type: DdiTestStackErrorType,
-
-    /// CPU ID
-    #[ddi(id = 2)]
-    pub cpu_id: DdiTestActionSocCpuId,
-}
-
-/// Test action ECC error request info
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionEccErrorInfo {
-    /// ECC Error type.
-    #[ddi(id = 1)]
-    pub ecc_error_type: DdiTestActionEccErrorType,
-
-    /// CPU ID
-    #[ddi(id = 2)]
-    pub cpu_id: DdiTestActionSocCpuId,
-}
-
-/// DDI Test Action Pin Policy Config
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionPinPolicyConfig {
-    /// Pin policy delay override
-    #[ddi(id = 1)]
-    pub delay_increment: Option<u16>,
-
-    /// Pin policy state
-    #[ddi(id = 2)]
-    pub state: Option<bool>,
-
-    /// Pin policy delay
-    #[ddi(id = 3)]
-    pub delay: Option<u16>,
-
-    /// Pin policy allowed attempts
-    #[ddi(id = 4)]
-    pub allowed_attempts: Option<u16>,
-
-    /// Pin policy lockout delay
-    #[ddi(id = 5)]
-    pub lockout_delay: Option<u32>,
-}
-
-/// Test action negative self-test request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionNegativeSelfTestReqInfo {
-    /// Negative self-test identifier.
-    #[ddi(id = 1)]
-    pub neg_test_id: u32,
-}
-
-/// Test action PKA instance request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionForcePkaInstanceReqInfo {
-    /// PKA instance to use.
-    #[ddi(id = 1)]
-    pub force_pka_instance: u8,
-}
-
-/// Test action negative PCT request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionNegativePctFailureReqInfo {
-    /// Number of pairwise consistency tests to skip.
-    #[ddi(id = 1)]
-    pub neg_pct_skip_cnt: u8,
-}
-
-/// Test action interrupt request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionInterruptReqInfo {
-    /// Interrupt to simulate.
-    #[ddi(id = 1)]
-    pub interrupt_type: DdiTestActionInterruptSimulationType,
-}
-
-/// Test action SVN update request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionUpdateSvnReqInfo {
-    /// Security version number to install.
-    #[ddi(id = 1)]
-    pub updated_svn: u64,
-}
-
-/// Test action GDMA error request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionGdmaErrorReqInfo {
-    /// GDMA error to inject.
-    #[ddi(id = 1)]
-    pub gdma_error_type: DdiTestActionGDMAErrorType,
-}
-
-/// Test action UCD error request info.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionUcdErrorReqInfo {
-    /// UCD error to inject.
-    #[ddi(id = 1)]
-    pub ucd_error_type: DdiTestActionUCDErrorType,
-}
-
-/// Maximum size, in bytes, of a `TestAction` opaque payload — the MBOR
-/// encoding of an action's own request-info map.
-///
-/// Sized for a maximum RawKeyImport request (3252 encoded bytes) plus
-/// headroom. This is only the host-side buffer capacity; only significant
-/// bytes travel on the wire.
-pub const TEST_ACTION_PAYLOAD_MAX: usize = 3584;
-
-/// Opaque, action-specific `TestAction` payload.
-///
-/// Carries the MBOR encoding of an action's own request-info struct as a
-/// byte string, so the `TestAction` request map stays fixed at
-/// `{1: action, 2: payload}` regardless of the action. Payload construction
-/// is owned by the conversion from [`TestActionRequest`] to
-/// [`DdiTestActionReq`]. Parameterless actions use an empty byte string.
-pub type DdiTestActionPayload = MborByteArray<TEST_ACTION_PAYLOAD_MAX>;
-
-/// Every parameterized action uses a dedicated `#[ddi(map)]` request-info
-/// type. The private marker trait keeps bare scalars and enums out of the
-/// payload wire contract.
-trait TestActionPayload: MborEncode {}
-
-impl TestActionPayload for DdiTestActionCrashReqInfo {}
-impl TestActionPayload for DdiTestActionStackValidationReqInfo {}
-impl TestActionPayload for DdiTestActionEccErrorInfo {}
-impl TestActionPayload for DdiTestActionPinPolicyConfig {}
-impl TestActionPayload for DdiTestActionNegativeSelfTestReqInfo {}
-impl TestActionPayload for DdiTestActionForcePkaInstanceReqInfo {}
-impl TestActionPayload for DdiTestActionNegativePctFailureReqInfo {}
-impl TestActionPayload for DdiTestActionInterruptReqInfo {}
-impl TestActionPayload for DdiTestActionUpdateSvnReqInfo {}
-impl TestActionPayload for DdiTestActionGdmaErrorReqInfo {}
-impl TestActionPayload for DdiTestActionUcdErrorReqInfo {}
-
-/// MBOR-encode an action-specific map into the opaque payload container.
-fn encode_test_action_payload<T: TestActionPayload>(
-    request_info: &T,
-) -> Result<DdiTestActionPayload, MborEncodeError> {
-    encode_action_payload(request_info)
-}
-
-pub(crate) fn encode_action_payload<T: MborEncode>(
-    request_info: &T,
-) -> Result<DdiTestActionPayload, MborEncodeError> {
-    let mut buf = [0u8; TEST_ACTION_PAYLOAD_MAX];
-    // The workspace pins `azihsm_ddi_mbor_types` (hence the codec) with
-    // `pre_encode` on, so `MborEncoder::new` always takes this flag here.
-    // `false`: an opaque payload is plain bytes and needs no pre-encode
-    // transform.
-    let mut encoder = MborEncoder::new(&mut buf, false);
-    if let Err(err) = request_info.mbor_encode(&mut encoder) {
-        buf.zeroize();
-        return Err(err);
-    }
-    let len = encoder.position();
-    let payload = DdiTestActionPayload::new(buf, len).map_err(|_| MborEncodeError::BufferOverflow);
-    buf.zeroize();
-    payload
-}
-
-/// A typed `TestAction` request that keeps the action and payload together.
+/// Typed TestAction request that keeps each action paired with its payload.
 #[derive(Debug)]
 pub enum TestActionRequest {
     Level1SkipIo,
@@ -475,29 +40,25 @@ pub enum TestActionRequest {
     TriggerUcdError(DdiTestActionUCDErrorType),
 }
 
-/// DDI Test Action request.
-///
-/// Uses the opaque-payload shape `{1: action, 2: payload}`: every action's
-/// parameters travel in the single [`DdiTestActionPayload`] byte string, so
-/// adding an action never changes this opcode's wire schema. Actions that take
-/// no parameters (for example `ClearUserCredentials`) use an empty payload.
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionReq {
-    /// Test Action
-    #[ddi(id = 1)]
-    pub action: DdiTestAction,
+/// Restricts semantic TestAction conversion to the defined payload maps.
+trait TestActionPayload: MborEncode {}
 
-    /// Opaque, action-specific payload — the MBOR encoding of the action's
-    /// request-info map. Constructed from [`TestActionRequest`].
-    ///
-    /// Spelled as `MborByteArray<..>` rather than the [`DdiTestActionPayload`]
-    /// alias because the `Ddi` derive recognises a byte-array field by that
-    /// type name; an alias would be treated as an ordinary field and fail to
-    /// compile.
-    #[ddi(id = 2)]
-    pub payload: MborByteArray<TEST_ACTION_PAYLOAD_MAX>,
+impl TestActionPayload for DdiTestActionCrashReqInfo {}
+impl TestActionPayload for DdiTestActionNegativeSelfTestReqInfo {}
+impl TestActionPayload for DdiTestActionPinPolicyConfig {}
+impl TestActionPayload for DdiTestActionForcePkaInstanceReqInfo {}
+impl TestActionPayload for DdiTestActionNegativePctFailureReqInfo {}
+impl TestActionPayload for DdiTestActionEccErrorInfo {}
+impl TestActionPayload for DdiTestActionInterruptReqInfo {}
+impl TestActionPayload for DdiTestActionUpdateSvnReqInfo {}
+impl TestActionPayload for DdiTestActionGdmaErrorReqInfo {}
+impl TestActionPayload for DdiTestActionStackValidationReqInfo {}
+impl TestActionPayload for DdiTestActionUcdErrorReqInfo {}
+
+fn encode_test_action_payload<T: TestActionPayload>(
+    request_info: &T,
+) -> Result<DdiTestActionPayload, MborEncodeError> {
+    encode_action_payload(request_info)
 }
 
 impl TryFrom<TestActionRequest> for DdiTestActionReq {
@@ -594,29 +155,14 @@ impl TryFrom<TestActionRequest> for DdiTestActionReq {
             ),
         };
 
-        let payload = match payload {
-            Some(payload) => payload,
-            None => DdiTestActionPayload::from_slice(&[])
-                .map_err(|_| MborEncodeError::BufferOverflow)?,
-        };
-
-        Ok(Self { action, payload })
+        match payload {
+            Some(payload) => Ok(Self::with_payload(action, payload)),
+            None => Self::empty(action),
+        }
     }
 }
 
-/// DDI Test Action response
-#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
-#[derive(Debug, Ddi)]
-#[ddi(map)]
-pub struct DdiTestActionResp {
-    /// Optional 4-byte reusable result parameter returned by certain test actions
-    #[ddi(id = 1)]
-    pub result: Option<u32>,
-}
-
-ddi_op_req_resp!(DdiTestAction);
-
-/// Execute a typed `TestAction` request against validation firmware.
+/// Execute a typed TestAction request against validation firmware.
 pub fn helper_test_action_cmd(
     dev: &mut <azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
     session_id: u16,
@@ -627,11 +173,7 @@ pub fn helper_test_action_cmd(
 
     let data = DdiTestActionReq::try_from(request).map_err(|_| DdiError::InvalidParameter)?;
     let req = DdiTestActionCmdReq {
-        hdr: DdiReqHdr {
-            op: DDI_OP_TEST_ACTION,
-            sess_id: Some(session_id),
-            rev: Some(DdiApiRev { major: 1, minor: 0 }),
-        },
+        hdr: test_action_header(Some(session_id)),
         data,
         ext: None,
     };
@@ -640,6 +182,10 @@ pub fn helper_test_action_cmd(
 
 #[cfg(test)]
 mod tests {
+    use azihsm_ddi_mbor_codec::MborDecode;
+    use azihsm_ddi_mbor_codec::MborDecoder;
+    use azihsm_ddi_mbor_codec::MborMap;
+
     use super::*;
 
     #[test]
@@ -675,8 +221,6 @@ mod tests {
 
         for request in requests {
             let wire = DdiTestActionReq::try_from(request).expect("payload must encode");
-            // The workspace types dependency enables `post_decode`, so the
-            // host decoder constructor includes this flag.
             let mut decoder = MborDecoder::new(wire.payload.as_slice(), false);
             MborMap::mbor_decode(&mut decoder).expect("payload must start with an MBOR map");
         }
