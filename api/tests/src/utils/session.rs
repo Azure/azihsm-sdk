@@ -17,14 +17,25 @@ const SESSION_EX_MIN_TEST_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 1 };
 #[cfg(feature = "session-ex-tests")]
 const ROTATED_CO_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
 
-fn uses_disposable_test_partition() -> bool {
-    cfg!(any(feature = "mock", feature = "emu", feature = "res-test"))
-}
-
-/// Executes a test function with an initialized HSM session.
+/// Executes a test function with the compile-time-selected HSM session API.
 ///
-/// The test crate calls `open_session` by default. Enabling
-/// `session-ex-tests` selects `open_session_ex` for the entire binary.
+/// This fixture calls `open_session` by default and `open_session_ex` when
+/// `session-ex-tests` is enabled.
+///
+/// # Partition State
+///
+/// Each discovered partition is reset before the test, including on hardware.
+/// Use only dedicated test partitions. The partition lock covers setup and the
+/// test closure within this process; it does not coordinate separate processes.
+///
+/// Legacy setup initializes credentials and reuses a cached MOBK when available.
+/// Hardware reset does not clear the one-time BK3 initialization state, so warm
+/// hardware runs in separate processes need a matching `AZIHSM_MOBK_PATH` cache.
+/// The default cache path is process-specific.
+///
+/// EX setup opens a CO session and rotates its default PSK. It does not call
+/// `part_init_ex` or `part_final_ex`; tests requiring partition-local or
+/// security-domain masking keys need additional provisioning.
 ///
 /// # Type Parameters
 ///
@@ -34,9 +45,11 @@ fn uses_disposable_test_partition() -> bool {
 ///
 /// Panics if:
 /// - No partitions are found in the system
+/// - A partition does not advertise a compatible API revision range
 /// - A partition fails to open
-/// - Partition initialization fails
+/// - Partition reset or legacy initialization fails
 /// - Session creation fails
+/// - EX setup cannot rotate the default CO PSK
 #[allow(unused)]
 #[allow(clippy::expect_used)]
 pub(crate) fn with_session<F>(mut test: F)
@@ -84,11 +97,9 @@ fn open_session_test_session(path: &str) -> HsmSession {
         .expect("Failed to open the partition for an open_session test");
     let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
 
-    if uses_disposable_test_partition() {
-        part.reset().expect("Partition reset failed");
-        let (obk_info, pota_endorsement) = make_init_params(&part);
-        init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
-    }
+    part.reset().expect("Partition reset failed");
+    let (obk_info, pota_endorsement) = make_init_params(&part);
+    init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
 
     part.open_session(SESSION_TEST_API_REV, &creds, None)
         .expect("Failed to call open_session for a test")
@@ -99,16 +110,6 @@ fn open_session_test_session(path: &str) -> HsmSession {
 fn open_session_ex_test_session(path: &str, rev: HsmApiRev) -> HsmSession {
     let part = HsmPartitionManager::open_partition(path, rev)
         .expect("Failed to open the partition for an open_session_ex test");
-
-    if !uses_disposable_test_partition() {
-        return part
-            .open_session_ex(
-                rev,
-                HsmSessionPsk::with_psk(HsmPskId::CO, &ROTATED_CO_PSK),
-                HsmSessionExType::Authenticated,
-            )
-            .expect("Failed to call open_session_ex with the test CO PSK");
-    }
 
     part.reset().expect("Partition reset failed");
     let session = part
@@ -144,7 +145,7 @@ fn session_ex_revision(range: HsmApiRevRange) -> HsmApiRev {
 fn test_session_revisions_follow_capabilities() {
     let rev_1_0 = HsmApiRev { major: 1, minor: 0 };
     let rev_1_1 = HsmApiRev { major: 1, minor: 1 };
-    // Synthetic future maximum: verifies that TBOR follows the advertised max
+    // Synthetic future maximum: verifies that session_ex follows the advertised max
     // instead of pinning every capable target to revision 1.1.
     let rev_1_2 = HsmApiRev { major: 1, minor: 2 };
 

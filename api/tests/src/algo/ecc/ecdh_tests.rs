@@ -552,26 +552,15 @@ fn run_ecdh_with_signature_verification(session: &HsmSession, curve: HsmEccCurve
 // test cases sections
 // ============================================================
 
-/// ECDH derive through a V2 (TBOR) session for every supported curve.
-/// Exercises the public API's TBOR dispatch, the DER->wire peer-key
-/// conversion, and the shared-secret masked-blob parsing.
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_ecdh_derive_tbor_all_curves() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
+/// Derive labeled, session-scoped ECDH shared secrets for every supported curve.
+#[session_test]
+fn test_ecdh_derive_labeled_session_secret_all_curves(session: HsmSession) {
     for curve in [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521] {
         let (priv_a, pub_a) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
             .expect("generate party A key");
         let (priv_b, pub_b) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
             .expect("generate party B key");
 
-        // Session-scoped shared secret: the un-finalized session has no
-        // partition-local masking key.
         // A non-empty label proves end-to-end label propagation: the
         // firmware must stamp this exact label into the derived-secret
         // metadata, else `validate_dev_props` rejects the mismatch.
