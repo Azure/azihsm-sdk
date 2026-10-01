@@ -52,7 +52,6 @@ enum EccCurve {
     P256,
     P384,
     P521,
-    Unknown(u32),
 }
 
 impl EccCurve {
@@ -61,7 +60,6 @@ impl EccCurve {
             Self::P256 => ECC_CURVE_P256,
             Self::P384 => ECC_CURVE_P384,
             Self::P521 => ECC_CURVE_P521,
-            Self::Unknown(value) => *value as u8,
         }
     }
 }
