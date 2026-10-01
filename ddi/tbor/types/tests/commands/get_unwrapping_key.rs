@@ -256,7 +256,6 @@ fn get_unwrapping_key_default_cu_psk_rejected() {
 }
 
 /// Rejects a request that references an unknown session ID.
-/// Rejects a request that references an unknown session ID.
 #[test]
 fn get_unwrapping_key_unknown_session_rejected() {
     let ctx = TestCtx::new();
