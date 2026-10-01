@@ -27,8 +27,6 @@
 //! * IV/ciphertext tampering fails authentication; the original key still works.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
 use azihsm_ddi_tbor_test_harness::TestCtx;
@@ -42,8 +40,12 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
 
-use crate::commands::common::{SCOPE_EPHEMERAL, SCOPE_LOCAL, SCOPE_SESSION};
+use crate::commands::common::SCOPE_EPHEMERAL;
+use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
+
+use crate::commands::common::{ENVELOPE_AAD_LEN, ENVELOPE_HEADER_LEN, ENVELOPE_IV_LEN};
 
 /// Sample caller-supplied report data bound into the report payload.
 fn sample_report_data() -> [u8; KEY_REPORT_DATA_LEN] {
@@ -201,16 +203,19 @@ fn report_roundtrip_for_scope(scope: u8) {
     verify_key_report(&ctx, &resp.report, &sealing_pub, &report_data);
 }
 
+/// Verifies a signed key report for an ephemeral sealing key.
 #[test]
 fn key_report_ephemeral_roundtrip() {
     report_roundtrip_for_scope(SCOPE_EPHEMERAL);
 }
 
+/// Verifies a signed key report for a local sealing key.
 #[test]
 fn key_report_local_roundtrip() {
     report_roundtrip_for_scope(SCOPE_LOCAL);
 }
 
+/// Rejects a masked key with a tampered authentication tag.
 #[test]
 fn key_report_rejects_tampered_masked_key() {
     let ctx = TestCtx::new();
@@ -231,6 +236,7 @@ fn key_report_rejects_tampered_masked_key() {
     ctx.expect_fw_reject(&req, TborStatus::AesGcmDecryptTagDoesNotMatch);
 }
 
+/// Rejects KeyReport requests before partition finalization.
 #[test]
 fn key_report_rejects_before_finalize() {
     let ctx = TestCtx::new();
@@ -247,6 +253,7 @@ fn key_report_rejects_before_finalize() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }
 
+/// Rejects KeyReport requests from a Crypto-User session.
 #[test]
 fn key_report_rejected_on_cu_session() {
     let ctx = TestCtx::new();
@@ -266,6 +273,7 @@ fn key_report_rejected_on_cu_session() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
 }
 
+/// Rejects KeyReport requests while the default CO PSK is in use.
 #[test]
 fn key_report_rejected_on_default_psk() {
     let ctx = TestCtx::new();
@@ -284,6 +292,7 @@ fn key_report_rejected_on_default_psk() {
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
 }
 
+/// Verifies report-data binding across patterns and repeated requests.
 #[test]
 fn key_report_report_data_patterns() {
     let ctx = TestCtx::new();
@@ -309,6 +318,7 @@ fn key_report_report_data_patterns() {
     }
 }
 
+/// Attests generated ECC keys on all supported curves and persistent scopes.
 #[test]
 fn key_report_generated_ecc_all_curves() {
     use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
@@ -382,14 +392,16 @@ fn key_report_rejects_all_symmetric_key_classes_emu() {
     }
 }
 
+/// Verifies a signed key report for a session-scoped P-384 ECC key.
 #[test]
-fn key_report_rejects_session_scope() {
+fn key_report_session_scope_roundtrip() {
     use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
     use azihsm_ddi_tbor_types::ECC_CURVE_P384;
     use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
+
     let key = ctx
         .tbor(&TborEccGenerateKeyReq {
             session_id: session.session_id,
@@ -399,16 +411,24 @@ fn key_report_rejects_session_scope() {
             key_label: Vec::new(),
         })
         .expect("generate session-scoped ECC key");
-    ctx.expect_fw_reject(
-        &TborKeyReportReq {
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
             session_id: session.session_id,
             masked_key: key.masked_key,
-            report_data: sample_report_data(),
-        },
-        TborStatus::UnsupportedKeyScope,
-    );
+            report_data,
+        })
+        .expect("KeyReport accepts session-scoped ECC key");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    // Generated + sign.
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
 }
 
+/// Rejects masked keys exceeding the KeyReport maximum length.
 #[test]
 fn key_report_rejects_oversized_masked_key() {
     let ctx = TestCtx::new();
@@ -423,6 +443,7 @@ fn key_report_rejects_oversized_masked_key() {
     );
 }
 
+/// Rejects KeyReport requests with an invalid session ID.
 #[test]
 fn key_report_rejects_invalid_session() {
     let ctx = TestCtx::new();
@@ -438,6 +459,7 @@ fn key_report_rejects_invalid_session() {
     );
 }
 
+/// Rejects tampered IVs and ciphertext while preserving the original key.
 #[test]
 fn key_report_rejects_tampered_iv_and_ciphertext() {
     let ctx = TestCtx::new();
@@ -448,7 +470,10 @@ fn key_report_rejects_tampered_iv_and_ciphertext() {
     // The IV begins at offset 8, while ciphertext begins after the
     // 8-byte header, 12-byte IV, and 192-byte metadata/AAD region.
     // Tampering either encrypted field must fail GCM authentication.
-    for offset in [8, 8 + 12 + 192] {
+    for offset in [
+        ENVELOPE_HEADER_LEN,
+        ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + ENVELOPE_AAD_LEN,
+    ] {
         let mut tampered = masked_key.clone();
         tampered[offset] ^= 1;
 
@@ -473,6 +498,7 @@ fn key_report_rejects_tampered_iv_and_ciphertext() {
     }
 }
 
+/// Attests imported ECC keys on all supported curves in the emulator.
 #[test]
 #[cfg(feature = "emu")]
 fn key_report_imported_ecc_all_curves_emu() {
@@ -508,6 +534,7 @@ fn key_report_imported_ecc_all_curves_emu() {
     }
 }
 
+/// Rejects a CU request even with a valid key after partition finalization.
 #[test]
 fn key_report_rejects_cu_with_valid_key_after_finalize() {
     let ctx = TestCtx::new();

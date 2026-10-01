@@ -3,6 +3,9 @@
 
 //! Common constants and helpers for TBOR command tests.
 
+#![allow(unused_imports)]
+#![allow(dead_code)]
+
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
@@ -18,12 +21,15 @@ pub(crate) const SCOPE_EPHEMERAL: u8 = 0b010;
 /// `KeyScope::Local` discriminant.
 pub(crate) const SCOPE_LOCAL: u8 = 0b011;
 
+#[cfg(feature = "emu")]
 /// `KeyScope::SecurityDomain` discriminant.
 pub(crate) const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 
+#[cfg(feature = "emu")]
 /// `SessionType` role identifier for Crypto-Officer sessions.
 pub(crate) const CO: u8 = 0;
 
+#[cfg(feature = "emu")]
 /// `SessionType` role identifier for Crypto-User sessions.
 pub(crate) const CU: u8 = 1;
 
@@ -39,6 +45,7 @@ pub(crate) const ENVELOPE_AAD_LEN: usize = 192;
 /// Length in bytes of the masked-key envelope authentication tag.
 pub(crate) const ENVELOPE_TAG_LEN: usize = 16;
 
+#[cfg(feature = "emu")]
 /// Creates a Crypto-Officer session, generates a session-scoped ECC signing key,
 /// and keeps the session alive while `test` runs.
 pub(crate) fn with_generated_ecc_key(
