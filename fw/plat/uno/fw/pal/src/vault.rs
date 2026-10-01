@@ -21,7 +21,9 @@
 
 #![allow(unsafe_code)]
 
+use azihsm_fw_hsm_io::Sqe;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -40,6 +42,24 @@ pub(crate) fn vault(io: &impl HsmIo) -> KeyVault<VaultStorage> {
     // Out-of-range partitions own no tables (empty mask → no storage).
     let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
     KeyVault::new(VaultStorage::new(res_mask))
+}
+
+impl UnoHsmPal {
+    /// Reject cross-session access to a `Session`-scoped key with
+    /// [`HsmError::KeyNotFound`]; partition-scoped keys are unaffected.
+    fn enforce_session_key_isolation(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let Some(bound) = vault(io).key_session(key_id)? else {
+            return Ok(());
+        };
+
+        let sqe = Sqe::from(io.sqe());
+        let current = sqe.session_flags().id_valid().then(|| sqe.session_id());
+        if current == Some(bound) {
+            Ok(())
+        } else {
+            Err(HsmError::KeyNotFound)
+        }
+    }
 }
 
 impl HsmVault for UnoHsmPal {
@@ -87,6 +107,7 @@ impl HsmVault for UnoHsmPal {
     }
 
     fn vault_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&DmaBuf> {
+        self.enforce_session_key_isolation(io, key_id)?;
         let (table, off, len) = vault(io).key_location(key_id)?;
         let addr = VaultStorage::blob_addr(table) + off;
         // SAFETY: `key_location` validated the key is live; `addr..addr+len`
@@ -99,10 +120,12 @@ impl HsmVault for UnoHsmPal {
     }
 
     fn vault_key_kind(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyKind> {
+        self.enforce_session_key_isolation(io, key_id)?;
         vault(io).key_kind(key_id)
     }
 
     fn vault_key_attrs(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
+        self.enforce_session_key_isolation(io, key_id)?;
         vault(io).key_attrs(key_id)
     }
 }
