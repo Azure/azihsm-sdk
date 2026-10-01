@@ -23,6 +23,8 @@ fn import_rsa_key(
 }
 
 /// Verify labeled, session-scoped RSA-CRT keys through OAEP for every key size.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
 #[session_test]
 fn test_rsa_crt_enc_dec_labeled_session_keys(session: HsmSession) {
     for (bits, modulus_bytes) in [(2048, 256), (3072, 384), (4096, 512)] {

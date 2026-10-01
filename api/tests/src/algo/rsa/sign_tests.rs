@@ -25,6 +25,8 @@ fn import_rsa_key(
 // ============================================================
 
 /// Verify labeled, session-scoped RSA keys through PKCS#1 signing for every key size.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
 #[session_test]
 fn test_rsa_sign_verify_labeled_session_keys(session: HsmSession) {
     for (bits, modulus_bytes, hash_algo) in [

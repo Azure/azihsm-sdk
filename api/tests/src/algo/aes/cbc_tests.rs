@@ -448,6 +448,8 @@ fn test_cbc_crypt_basic_no_pad_256(session: HsmSession) {
 
 /// Verify AES key labels round-trip and labeled keys remain usable for CBC.
 /// Unlabeled keys must report an empty label.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
 #[session_test]
 fn test_aes_generate_key_label_roundtrip(session: HsmSession) {
     let iv = test_iv();

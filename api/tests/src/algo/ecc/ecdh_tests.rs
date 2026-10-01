@@ -553,6 +553,8 @@ fn run_ecdh_with_signature_verification(session: &HsmSession, curve: HsmEccCurve
 // ============================================================
 
 /// Derive labeled, session-scoped ECDH shared secrets for every supported curve.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
 #[session_test]
 fn test_ecdh_derive_labeled_session_secret_all_curves(session: HsmSession) {
     for curve in [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521] {
