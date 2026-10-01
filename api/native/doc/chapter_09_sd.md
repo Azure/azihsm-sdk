@@ -136,7 +136,7 @@ struct azihsm_sess_ex_part_init_params {
 
  | Field             | Name                             | Description                              |
  | ----------------- | -------------------------------- | ---------------------------------------- |
- | part_policy       | [azihsm_buffer*](#azihsm_buffer) | unified partition policy image           |
+ | part_policy       | [azihsm_buffer*](#azihsm_buffer) | unified partition policy image (see [Partition policy builder](#partition-policy-builder)) |
  | mach_seed         | [azihsm_buffer*](#azihsm_buffer) | machine seed plaintext                   |
  | pota_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | POTA public-key thumbprint               |
  | sata_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | SATA public-key thumbprint               |
@@ -205,6 +205,103 @@ struct azihsm_sess_ex_part_final_params {
  | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (root to leaf)    |
  | pta_cert_chain_len   | uint32_t                         | number of certificates in the chain             |
  | prev_local_mk_backup | [azihsm_buffer*](#azihsm_buffer) | optional prior local_mk backup (may be NULL)    |
+
+## Partition policy builder
+
+The `part_policy` image consumed by
+[`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init) and
+[`azihsm_sess_ex_part_final`](#azihsm_sess_ex_part_final) is a fixed-size
+binary layout. Rather than assemble it by hand, callers may use the
+opaque partition-policy builder to set named, typed fields and then
+serialize the canonical image. The on-wire format is unchanged — the
+builder is a pure convenience that emits exactly the bytes the init /
+final entry points already accept.
+
+Typical use:
+
+1. [`azihsm_part_policy_builder_new`](#azihsm_part_policy_builder_new)
+   allocates a builder (starting from an all-zero policy).
+2. Populate the fields with the `azihsm_part_policy_builder_set_*`
+   setters.
+3. [`azihsm_part_policy_build`](#azihsm_part_policy_build) serializes the
+   image into a caller-provided [azihsm_buffer](#azihsm_buffer); it
+   follows the same two-call size-probe contract as other output buffers
+   (an undersized buffer is rejected with
+   `AZIHSM_STATUS_BUFFER_TOO_SMALL` and `len` set to the required size).
+4. [`azihsm_part_policy_builder_free`](#azihsm_part_policy_builder_free)
+   releases the builder.
+
+The serialized image may then be passed as the `part_policy` buffer to
+`azihsm_sess_ex_part_init` / `azihsm_sess_ex_part_final`.
+
+### azihsm_part_policy_builder_new
+
+Allocate a new partition-policy builder.
+
+```cpp
+struct AzihsmPartPolicyBuilder *azihsm_part_policy_builder_new(void);
+```
+
+**Returns**
+
+A non-NULL opaque builder handle on success, or NULL on allocation
+failure.
+
+### azihsm_part_policy_builder_free
+
+Release a builder handle. Passing NULL is a no-op.
+
+```cpp
+void azihsm_part_policy_builder_free(
+    struct AzihsmPartPolicyBuilder *builder
+    );
+```
+
+### azihsm_part_policy_builder_set_* 
+
+Set individual policy fields. Each returns `AZIHSM_STATUS_SUCCESS`, or
+`AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle or buffer. `kind` is the
+public-key kind discriminant (`0` = ECC P-384).
+
+```cpp
+azihsm_status azihsm_part_policy_builder_set_version(
+    struct AzihsmPartPolicyBuilder *builder, uint8_t major, uint8_t minor);
+azihsm_status azihsm_part_policy_builder_set_pota_key(
+    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_sata_key(
+    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_sapota_key(
+    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_backup_part_id(
+    struct AzihsmPartPolicyBuilder *builder, const struct azihsm_buffer *id);
+azihsm_status azihsm_part_policy_builder_set_backup_part_pub_key(
+    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_info(
+    struct AzihsmPartPolicyBuilder *builder, const struct azihsm_buffer *info);
+azihsm_status azihsm_part_policy_builder_set_flags(
+    struct AzihsmPartPolicyBuilder *builder, uint8_t flags);
+```
+
+### azihsm_part_policy_build
+
+Serialize the policy into its canonical wire image.
+
+```cpp
+azihsm_status azihsm_part_policy_build(
+    struct AzihsmPartPolicyBuilder *builder,
+    struct azihsm_buffer *out
+    );
+```
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_INVALID_ARGUMENT` on a
+NULL handle or buffer, or `AZIHSM_STATUS_BUFFER_TOO_SMALL` if `out` is too
+small (with `out.len` set to the required size).
 
 ## azihsm_sess_ex_psk_change
 

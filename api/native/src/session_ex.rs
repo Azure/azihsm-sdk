@@ -223,6 +223,12 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         csr_check?;
         report_check?;
 
+        // Parse the opaque policy image into a typed `PartPolicy`. This
+        // runs after the output-buffer probe so a size probe still reports
+        // `BUFFER_TOO_SMALL`; a wrong-length policy is rejected here.
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+
         let result = session.part_init_ex(
             part_policy,
             mach_seed,
@@ -305,6 +311,10 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         let params = deref_ptr(params)?;
 
         let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
+        // Parse the opaque policy image into a typed `PartPolicy` at the
+        // untrusted C boundary; a wrong-length buffer is rejected here.
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let prev_local_mk_backup = buffer_to_optional_slice(params.prev_local_mk_backup)?;
 
         // Build the PTA cert chain (borrowing, not copying) from the C

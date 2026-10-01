@@ -215,6 +215,7 @@ impl PolicyFlags {
     Debug, Clone, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
 )]
 #[repr(C)]
+#[non_exhaustive]
 pub struct PartPolicy {
     /// Policy version (major.minor).
     pub version: PolicyVer,
@@ -270,11 +271,137 @@ impl PartPolicy {
             _reserved: 0,
         }
     }
+
+    /// Start building a [`PartPolicy`] with typed, named setters instead
+    /// of hand-assembling the 484-byte wire image.  The builder seeds
+    /// [`version`](Self::version) to `major = `[`POLICY_VERSION_MAJOR`]`,
+    /// `minor = 0` and leaves every other field zeroed.
+    pub fn builder() -> PartPolicyBuilder {
+        let mut policy = Self::zeroed();
+        policy.version = PolicyVer {
+            major: POLICY_VERSION_MAJOR,
+            minor: 0,
+        };
+        PartPolicyBuilder { policy }
+    }
+
+    /// Borrow a [`PART_POLICY_LEN`]-byte wire image as a [`PartPolicy`]
+    /// **zero-copy**.
+    ///
+    /// Returns `None` when `bytes` is not exactly [`PART_POLICY_LEN`]
+    /// bytes (the struct is [`Unaligned`], so alignment never fails).
+    /// Intended for boundary layers (e.g. the native C API) that receive
+    /// an opaque policy buffer and need a typed view to hand to the
+    /// `PartPolicy`-typed Rust API.
+    pub fn ref_from_wire(bytes: &[u8]) -> Option<&Self> {
+        Self::try_ref_from_bytes(bytes).ok()
+    }
 }
 
 impl Default for PartPolicy {
     fn default() -> Self {
         Self::zeroed()
+    }
+}
+
+/// Fluent builder for [`PartPolicy`].
+///
+/// Lets callers construct a policy by setting named, typed fields and
+/// then [`build`](Self::build)ing the owned [`PartPolicy`], instead of
+/// materializing the fixed byte image and poking raw offsets.  Public
+/// key setters pad the supplied raw bytes into the fixed
+/// [`POLICY_MAX_KEY_LEN`] slot and record the active length.
+#[derive(Debug, Clone)]
+pub struct PartPolicyBuilder {
+    policy: PartPolicy,
+}
+
+impl PartPolicyBuilder {
+    /// Build a [`PolicyPubKey`] slot from a discriminant and raw key
+    /// bytes, padding into the fixed [`POLICY_MAX_KEY_LEN`] slot and
+    /// recording the active length (truncated to the slot size).
+    fn make_key(kind: PolicyKeyKind, raw: &[u8]) -> PolicyPubKey {
+        let n = raw.len().min(POLICY_MAX_KEY_LEN);
+        let mut data = [0u8; POLICY_MAX_KEY_LEN];
+        data[..n].copy_from_slice(&raw[..n]);
+        PolicyPubKey::new(kind, n as u16, data)
+    }
+
+    /// Set the policy version (`major.minor`).
+    pub fn version(mut self, major: u8, minor: u8) -> Self {
+        self.policy.version = PolicyVer { major, minor };
+        self
+    }
+
+    /// Set the POTA (Partition Owner Trust Anchor) public key.
+    pub fn pota_key(mut self, kind: PolicyKeyKind, raw: &[u8]) -> Self {
+        self.policy.pota_pub_key = Self::make_key(kind, raw);
+        self
+    }
+
+    /// Set the SATA (Sealing Authority Trust Anchor) public key.
+    pub fn sata_key(mut self, kind: PolicyKeyKind, raw: &[u8]) -> Self {
+        self.policy.sata_pub_key = Self::make_key(kind, raw);
+        self
+    }
+
+    /// Set the SAPOTA (Sealing Authority's POTA) public key.
+    pub fn sapota_key(mut self, kind: PolicyKeyKind, raw: &[u8]) -> Self {
+        self.policy.sapota_pub_key = Self::make_key(kind, raw);
+        self
+    }
+
+    /// Set the backing-partition identifier (truncated / zero-padded to
+    /// [`POLICY_BACKUP_PART_ID_LEN`]).
+    pub fn backup_part_id(mut self, id: &[u8]) -> Self {
+        let n = id.len().min(POLICY_BACKUP_PART_ID_LEN);
+        self.policy.backup_part_id = [0; POLICY_BACKUP_PART_ID_LEN];
+        self.policy.backup_part_id[..n].copy_from_slice(&id[..n]);
+        self
+    }
+
+    /// Set the backing-partition public key.
+    pub fn backup_part_pub_key(mut self, kind: PolicyKeyKind, raw: &[u8]) -> Self {
+        self.policy.backup_part_pub_key = Self::make_key(kind, raw);
+        self
+    }
+
+    /// Set the caller-provided opaque `info` (truncated / zero-padded to
+    /// [`POLICY_INFO_LEN`]).
+    pub fn info(mut self, info: &[u8]) -> Self {
+        let n = info.len().min(POLICY_INFO_LEN);
+        self.policy.info = [0; POLICY_INFO_LEN];
+        self.policy.info[..n].copy_from_slice(&info[..n]);
+        self
+    }
+
+    /// Replace the policy flags wholesale.
+    pub fn flags(mut self, flags: PolicyFlags) -> Self {
+        self.policy.flags = flags;
+        self
+    }
+
+    /// Set the `include_fmc_cdi` flag.
+    pub fn include_fmc_cdi(mut self, value: bool) -> Self {
+        self.policy.flags = self.policy.flags.with_include_fmc_cdi(value);
+        self
+    }
+
+    /// Set the `require_trusted_sa_key` flag.
+    pub fn require_trusted_sa_key(mut self, value: bool) -> Self {
+        self.policy.flags = self.policy.flags.with_require_trusted_sa_key(value);
+        self
+    }
+
+    /// Set the `allow_peer_cloning` flag.
+    pub fn allow_peer_cloning(mut self, value: bool) -> Self {
+        self.policy.flags = self.policy.flags.with_allow_peer_cloning(value);
+        self
+    }
+
+    /// Finish building and return the owned [`PartPolicy`].
+    pub fn build(self) -> PartPolicy {
+        self.policy
     }
 }
 
@@ -302,6 +429,37 @@ mod tests {
     fn zeroed_round_trips_through_bytes() {
         let policy = PartPolicy::zeroed();
         assert_eq!(IntoBytes::as_bytes(&policy), &[0u8; PART_POLICY_LEN][..]);
+    }
+
+    #[test]
+    fn builder_sets_typed_fields() {
+        let pota = [0x11u8; POLICY_MAX_KEY_LEN];
+        let policy = PartPolicy::builder()
+            .version(POLICY_VERSION_MAJOR, 0)
+            .pota_key(PolicyKeyKind::Ecc384, &pota)
+            .backup_part_id(&[0xCD; POLICY_BACKUP_PART_ID_LEN])
+            .info(&[0xAB; POLICY_INFO_LEN])
+            .allow_peer_cloning(true)
+            .build();
+
+        assert_eq!(policy.version.major, POLICY_VERSION_MAJOR);
+        assert_eq!(policy.pota_pub_key.kind(), PolicyKeyKind::Ecc384);
+        assert_eq!(policy.pota_pub_key.len(), POLICY_MAX_KEY_LEN);
+        assert_eq!(policy.pota_pub_key.data, pota);
+        assert!(policy.backup_part_id.iter().all(|&b| b == 0xCD));
+        assert!(policy.info.iter().all(|&b| b == 0xAB));
+        assert!(policy.flags.allow_peer_cloning());
+
+        // Round-trips back through a zero-copy wire view.
+        let bytes = IntoBytes::as_bytes(&policy);
+        let view = PartPolicy::ref_from_wire(bytes).expect("ref_from_wire");
+        assert_eq!(view.pota_pub_key.data, pota);
+    }
+
+    #[test]
+    fn ref_from_wire_rejects_wrong_len() {
+        assert!(PartPolicy::ref_from_wire(&[0u8; PART_POLICY_LEN - 1]).is_none());
+        assert!(PartPolicy::ref_from_wire(&[0u8; PART_POLICY_LEN]).is_some());
     }
 
     #[test]

@@ -227,24 +227,12 @@ pub fn fill_ecc384_pubkey_pattern(fill: u8) -> [u8; POLICY_MAX_KEY_LEN] {
 pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PART_POLICY_LEN] {
     use zerocopy::IntoBytes;
 
-    let policy = PartPolicy {
-        version: PolicyVer {
-            major: POLICY_VERSION_MAJOR,
-            minor: 0,
-        },
-        pota_pub_key: PolicyPubKey::new(
-            PolicyKeyKind::Ecc384,
-            POLICY_MAX_KEY_LEN as u16,
-            pota_pub_key,
-        ),
-        sata_pub_key: PolicyPubKey::new(
-            PolicyKeyKind::Ecc384,
-            POLICY_MAX_KEY_LEN as u16,
-            fill_ecc384_pubkey_pattern(0x20),
-        ),
-        info: [0xAB; POLICY_INFO_LEN],
-        ..PartPolicy::zeroed()
-    };
+    let policy = PartPolicy::builder()
+        .version(POLICY_VERSION_MAJOR, 0)
+        .pota_key(PolicyKeyKind::Ecc384, &pota_pub_key)
+        .sata_key(PolicyKeyKind::Ecc384, &fill_ecc384_pubkey_pattern(0x20))
+        .info(&[0xAB; POLICY_INFO_LEN])
+        .build();
 
     let mut bytes = [0u8; PART_POLICY_LEN];
     bytes.copy_from_slice(policy.as_bytes());

@@ -415,6 +415,45 @@ TEST_F(azihsm_sess_ex, part_init_null_output_probe)
     });
 }
 
+// A wrong-length `part_policy` buffer is rejected with INVALID_ARGUMENT at
+// the native boundary, before the partition is provisioned. The output
+// buffers are sized to clear the buffer-capacity probe so the failure is
+// attributable to the policy-length guard (the typed Rust API accepts only
+// a `&PartPolicy`, so this length check now lives at the FFI boundary where
+// the opaque image is parsed back into a `PartPolicy`).
+TEST_F(azihsm_sess_ex, part_init_rejects_bad_part_policy_len)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        // `PartInitInputs` carries a deliberately wrong-length (32-byte)
+        // policy image; `PART_POLICY_LEN` is 484.
+        PartInitInputs in;
+        std::vector<uint8_t> csr(512, 0);
+        std::vector<uint8_t> report(1024, 0);
+        azihsm_buffer pta_csr{ csr.data(), static_cast<uint32_t>(csr.size()) };
+        azihsm_buffer pta_report{ report.data(), static_cast<uint32_t>(report.size()) };
+
+        auto err = azihsm_sess_ex_part_init(sess_handle, &in.params, &pta_csr, &pta_report);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_INVALID_ARGUMENT);
+    });
+}
+
 // A NULL `new_psk` buffer is rejected once the session is resolved.
 TEST_F(azihsm_sess_ex, psk_change_null_new_psk)
 {

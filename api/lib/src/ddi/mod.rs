@@ -39,12 +39,52 @@ pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 pub use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 /// Maximum number of certificates in a `part_final` PTA chain.
 pub use azihsm_ddi_tbor_types::MAX_CERTS;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 /// Exact length of the remote partition-owner-key backup (`SdCreate`/`SdReseal`).
 pub use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::POLICY_BACKUP_PART_ID_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
 pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
 pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PartPolicy;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PartPolicyBuilder;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyFlags;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyKeyKind;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyPubKey;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyVer;
 /// Exact length of the security-domain masking-key backup envelope.
 pub use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::TborStatus;
