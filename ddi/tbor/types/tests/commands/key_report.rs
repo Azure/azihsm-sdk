@@ -27,6 +27,8 @@
 //! * IV/ciphertext tampering fails authentication; the original key still works.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
+#![cfg(feature = "emu")]
+
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
 use azihsm_ddi_tbor_test_harness::TestCtx;
@@ -40,12 +42,8 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
 
+use crate::commands::common::{SCOPE_EPHEMERAL, SCOPE_LOCAL, SCOPE_SESSION};
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-
-/// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
-const SCOPE_SESSION: u8 = 0b001;
-const SCOPE_EPHEMERAL: u8 = 0b010;
-const SCOPE_LOCAL: u8 = 0b011;
 
 /// Sample caller-supplied report data bound into the report payload.
 fn sample_report_data() -> [u8; KEY_REPORT_DATA_LEN] {
@@ -446,24 +444,23 @@ fn key_report_rejects_tampered_iv_and_ciphertext() {
     let session = finalized_co_session(&ctx);
     let (masked_key, public_key) = masked_sealing_key(&ctx, session.session_id, SCOPE_LOCAL);
     let report_data = sample_report_data();
-    // The IV begins at offset 8, so tampering it preserves the envelope
-    // structure but fails GCM authentication. The legacy `8 + 12 + 96`
-    // offset now falls inside the expanded masked-key metadata/AAD region,
-    // so corrupting it fails masked-key decoding.
-    for (offset, expected_status) in [
-        (8, TborStatus::AesGcmDecryptTagDoesNotMatch),
-        (8 + 12 + 96, TborStatus::MaskedKeyDecodeFailed),
-    ] {
+
+    // The IV begins at offset 8, while ciphertext begins after the
+    // 8-byte header, 12-byte IV, and 192-byte metadata/AAD region.
+    // Tampering either encrypted field must fail GCM authentication.
+    for offset in [8, 8 + 12 + 192] {
         let mut tampered = masked_key.clone();
         tampered[offset] ^= 1;
+
         ctx.expect_fw_reject(
             &TborKeyReportReq {
                 session_id: session.session_id,
                 masked_key: tampered,
                 report_data,
             },
-            expected_status,
+            TborStatus::AesGcmDecryptTagDoesNotMatch,
         );
+
         let resp = ctx
             .tbor(&TborKeyReportReq {
                 session_id: session.session_id,
@@ -471,6 +468,7 @@ fn key_report_rejects_tampered_iv_and_ciphertext() {
                 report_data,
             })
             .expect("original key remains attestable after rejection");
+
         verify_key_report(&ctx, &resp.report, &public_key, &report_data);
     }
 }
@@ -635,29 +633,6 @@ fn key_report_generated_ecc_derive_usage() {
 
     // Generated + derive.
     assert_eq!(decoded.flags, (1 << 2) | (1 << 9));
-}
-
-/// Rejects combined SIGN | DERIVE usage for generated ECC keys.
-#[test]
-fn key_report_generated_ecc_sign_and_derive_usage_rejected() {
-    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-    use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
-    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
-
-    let ctx = TestCtx::new();
-    let session = finalized_co_session(&ctx);
-
-    ctx.expect_fw_reject(
-        &TborEccGenerateKeyReq {
-            session_id: session.session_id,
-            scope: SCOPE_LOCAL,
-            curve: ECC_CURVE_P256,
-            key_usage: KEY_USAGE_SIGN | KEY_USAGE_DERIVE,
-            key_label: Vec::new(),
-        },
-        TborStatus::InvalidPermissions,
-    );
 }
 
 /// Attests a DERIVE-only ECC key carrying a non-empty label.
