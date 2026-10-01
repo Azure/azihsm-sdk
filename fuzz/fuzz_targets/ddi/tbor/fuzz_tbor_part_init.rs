@@ -13,10 +13,14 @@ use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
+use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
+use azihsm_ddi_tbor_types::PolicyPubKey;
+use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::TborPartInitReq;
@@ -115,29 +119,42 @@ struct FuzzInput {
 ///
 /// Mirrors `known_good_part_policy` in the integration test suite; kept
 /// in-lined here because that helper is `pub(crate)` to the tests module.
+///
+/// Uses the shared [`PartPolicy`] struct + typed [`PolicyPubKey`] /
+/// [`PolicyVer`] constructors so the on-wire byte layout tracks whatever
+/// the policy crate declares (no hand-computed field offsets here).
 fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
-    const OFF_POTA: usize = 2;
-    const OFF_SATA: usize = 102;
-    const OFF_FLAGS: usize = 418;
-    const OFF_INFO: usize = 419;
+    use zerocopy::IntoBytes;
 
-    fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
-        bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
-        for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
+    fn fill_pubkey(fill: u8) -> [u8; POLICY_MAX_KEY_LEN] {
+        let mut data = [0u8; POLICY_MAX_KEY_LEN];
+        for (i, b) in data.iter_mut().enumerate() {
             *b = (fill.wrapping_add(i as u8)) | 0x80;
         }
+        data
     }
 
+    let policy = PartPolicy {
+        version: PolicyVer {
+            major: POLICY_VERSION_MAJOR,
+            minor: 0,
+        },
+        pota_pub_key: PolicyPubKey::new(
+            PolicyKeyKind::Ecc384,
+            POLICY_MAX_KEY_LEN as u16,
+            fill_pubkey(0x10),
+        ),
+        sata_pub_key: PolicyPubKey::new(
+            PolicyKeyKind::Ecc384,
+            POLICY_MAX_KEY_LEN as u16,
+            fill_pubkey(0x20),
+        ),
+        info: [0xAB; POLICY_INFO_LEN],
+        ..PartPolicy::zeroed()
+    };
+
     let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes[0] = POLICY_VERSION_MAJOR;
-    bytes[1] = 0;
-    write_pubkey(&mut bytes, OFF_POTA, 0x10);
-    write_pubkey(&mut bytes, OFF_SATA, 0x20);
-    bytes[OFF_FLAGS] = 0;
-    for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
-        *b = 0xAB;
-    }
+    bytes.copy_from_slice(policy.as_bytes());
     bytes
 }
 
