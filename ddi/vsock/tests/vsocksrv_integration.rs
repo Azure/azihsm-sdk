@@ -36,6 +36,8 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -154,6 +156,16 @@ struct TestEndpoints {
     ch_owned: bool,
 }
 
+/// Monotonic in-process counter disambiguating `vsock_port` between
+/// tests that end up sharing a process id. `cargo nextest` (this repo's
+/// preferred runner) already gives every test its own process, so this
+/// only matters for a plain, multi-threaded `cargo test` run — but since
+/// `DdiVsock::open_dev` caches listeners in a process-global registry
+/// keyed solely by port, two same-process tests picking the same port
+/// would otherwise silently cross-accept each other's bridge connections
+/// instead of failing loudly.
+static NEXT_PORT_OFFSET: AtomicU32 = AtomicU32::new(0);
+
 impl TestEndpoints {
     fn new(tag: &str) -> Self {
         let dir = std::env::temp_dir();
@@ -162,11 +174,15 @@ impl TestEndpoints {
             std::process::id(),
             Instant::now().elapsed()
         );
-        // Spread out from the crate's documented default port (and other
-        // tests in this binary, each of which binds its own
-        // `DdiVsockDev` listener port) by mixing in the low bits of the
-        // process id.
-        let vsock_port = 52000 + (std::process::id() % 1000);
+        // Spread out from the crate's documented default port, other
+        // tests in this binary (each of which binds its own
+        // `DdiVsockDev` listener port), and other test *processes* on the
+        // same host by mixing in the low bits of the process id *and* a
+        // monotonic in-process counter: the counter is what actually
+        // guarantees uniqueness between tests sharing a PID (see
+        // `NEXT_PORT_OFFSET`'s doc comment).
+        let offset = NEXT_PORT_OFFSET.fetch_add(1, Ordering::Relaxed) % 100;
+        let vsock_port = 52000 + (std::process::id() % 1000) * 100 + offset;
         Self {
             ch: dir.join(format!("azihsm-ddi-vsock-test-ch-{unique}.sock")),
             vsock_port,

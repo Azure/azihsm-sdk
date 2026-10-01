@@ -309,7 +309,33 @@ impl DdiVsockDev {
         session_id: Option<u16>,
         payload: Vec<u8>,
     ) -> DdiResult<Vec<u8>> {
-        let cmd_id = self.next_cmd_id();
+        let mut stream = self.stream.lock();
+        Self::submit_locked(
+            &mut stream,
+            self.next_cmd_id(),
+            op,
+            session_ctrl,
+            session_id,
+            payload,
+        )
+    }
+
+    /// The I/O-only half of [`submit`](Self::submit): write the request and
+    /// read the response over an already-locked `stream`.
+    ///
+    /// Split out so [`exec_op_mbor`](DdiDev::exec_op_mbor) can hold
+    /// `self.stream`'s lock across its session-generation check, this
+    /// exchange, *and* the resulting bookkeeping update — see that method
+    /// for why those three steps must not be interleaved with
+    /// [`erase`](DdiDev::erase).
+    fn submit_locked(
+        stream: &mut VsockStream,
+        cmd_id: u16,
+        op: u16,
+        session_ctrl: u8,
+        session_id: Option<u16>,
+        payload: Vec<u8>,
+    ) -> DdiResult<Vec<u8>> {
         let sqe = SqeBuilder::new()
             .cmd(CmdDword::new().with_op(op).with_id(cmd_id))
             .buf_lens(payload.len() as u32, DST_CAP)
@@ -327,11 +353,8 @@ impl DdiVsockDev {
             oob: Vec::new(),
         };
 
-        let resp: Response = {
-            let mut stream = self.stream.lock();
-            req.write_to(&mut *stream).map_err(map_proto_err)?;
-            Response::read_from(&mut *stream).map_err(map_proto_err)?
-        };
+        req.write_to(&mut *stream).map_err(map_proto_err)?;
+        let resp = Response::read_from(&mut *stream).map_err(map_proto_err)?;
 
         // Transport-level status (e.g. host DMA allocation failure).
         if resp.status != 0 {
@@ -405,34 +428,57 @@ impl DdiDev for DdiVsockDev {
         };
         buf.truncate(req_len);
 
-        // Reject a `Close`/`InSession` request against a session id that
-        // doesn't belong to the current connection generation *before*
-        // sending anything: see `SessionGenerationTracker::check` for why
-        // this must happen ahead of `submit`, not merely be checked
-        // against the response.
-        self.sessions.check(session_ctrl, session_id)?;
+        // ── 2. Check the session generation, exchange the SQE/CQE, and
+        //    record the resulting bookkeeping update, all while holding
+        //    `self.stream`'s lock.
+        //
+        //    Holding one lock across all three steps (rather than just
+        //    around the I/O, as `submit` does) is what makes them atomic
+        //    with respect to a concurrent `erase()`, which holds the same
+        //    lock across its own stream swap *and* `sessions.reset()`
+        //    (see that method). Without this, either boundary could be
+        //    sliced by an interleaved `erase()`: a stale `Close` could
+        //    pass `check` just before `erase()` resets the generation and
+        //    then be sent on the replacement connection, or a successful
+        //    `Open`/`Close` could have its generation transition recorded
+        //    *after* `erase()` already reset it, silently attributing the
+        //    old connection's session id to the new generation. Either
+        //    way reopens the stale-session-close bug `check`/`record`
+        //    exist to close.
+        let cmd_id = self.next_cmd_id();
+        let resp_buf = {
+            let mut stream = self.stream.lock();
+            self.sessions.check(session_ctrl, session_id)?;
+            let resp_buf = Self::submit_locked(
+                &mut stream,
+                cmd_id,
+                OP_MBOR,
+                u8::from(session_ctrl),
+                session_id,
+                buf,
+            )?;
+            if resp_buf.is_empty() {
+                return Err(DdiError::DdiError(0));
+            }
 
-        // ── 2. Build the SQE and exchange it over the vsock connection.
-        let resp_buf = self.submit(OP_MBOR, u8::from(session_ctrl), session_id, buf)?;
-        if resp_buf.is_empty() {
-            return Err(DdiError::DdiError(0));
-        }
+            // Decode the response header and check device status.
+            let mut hdr_dec = DdiDecoder::new(&resp_buf, post_decode);
+            let hdr: DdiRespHdr = hdr_dec
+                .decode_hdr()
+                .map_err(|_| DdiError::MborError(MborError::DecodeError))?;
+            if hdr.status != DdiStatus::Success {
+                return Err(DdiError::DdiStatus(hdr.status));
+            }
 
-        // ── 3. Decode the response header and check device status.
-        let mut hdr_dec = DdiDecoder::new(&resp_buf, post_decode);
-        let hdr: DdiRespHdr = hdr_dec
-            .decode_hdr()
-            .map_err(|_| DdiError::MborError(MborError::DecodeError))?;
-        if hdr.status != DdiStatus::Success {
-            return Err(DdiError::DdiStatus(hdr.status));
-        }
-
-        // `Open` responses carry the firmware-assigned session id in the
-        // header; `Close` requests already know the id being torn down
-        // ahead of time. Record the generation transition now that the
-        // exchange is confirmed successful.
-        let recorded_session_id = session_id.or(hdr.sess_id);
-        self.sessions.record(session_ctrl, recorded_session_id);
+            // `Open` responses carry the firmware-assigned session id in
+            // the header; `Close` requests already know the id being
+            // torn down ahead of time. Record the generation transition
+            // now that the exchange is confirmed successful, still under
+            // the same lock `erase()` uses.
+            let recorded_session_id = session_id.or(hdr.sess_id);
+            self.sessions.record(session_ctrl, recorded_session_id);
+            resp_buf
+        };
 
         // ── 4. Decode the typed response (header + body).
         let mut body_dec = MborDecoder::new(&resp_buf, post_decode);
@@ -530,7 +576,6 @@ impl DdiDev for DdiVsockDev {
         let mut stream = self.stream.lock();
         stream.shutdown().map_err(DdiError::IoError)?;
         *stream = listener.accept().map_err(DdiError::IoError)?;
-        drop(stream);
 
         // The replacement connection's firmware starts with a clean
         // session table, so every session id this client previously
@@ -541,7 +586,16 @@ impl DdiDev for DdiVsockDev {
         // subsequently-dropped stale `HsmSession` (see
         // `SessionGenerationTracker::check`) is rejected instead of
         // closing whatever live session now holds that id.
+        //
+        // Must happen *before* `stream` is unlocked (not after, as a
+        // separate step): `exec_op_mbor` holds this same lock across its
+        // own check/submit/record sequence, so resetting only once both
+        // are released would still leave a window where a concurrent
+        // `exec_op_mbor` call's check or record interleaves between this
+        // swap and the reset, reintroducing the stale-session-close bug
+        // this tracker exists to close.
         self.sessions.reset();
+        drop(stream);
         Ok(())
     }
 }
