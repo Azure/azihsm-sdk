@@ -68,3 +68,10 @@ doc = false
 name = "fuzz_tbor_psk_change"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_psk_change.rs"
 test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_aes_encrypt_decrypt"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_encrypt_decrypt.rs"
+test = false
