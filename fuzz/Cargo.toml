@@ -19,6 +19,7 @@ azihsm_ddi_tbor_test_harness = { path = "../crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
 azihsm_session_ex_crypto = { path = "../crates/session_ex_crypto" }
 x509 = { path = "../crates/x509" }
+zerocopy = { version = "0.8.17" }
 
 # dependencies for fuzzing
 libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
@@ -67,4 +68,18 @@ bench = false
 doc = false
 name = "fuzz_tbor_psk_change"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_psk_change.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_part_init"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_init.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_part_final"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_final.rs"
 test = false
