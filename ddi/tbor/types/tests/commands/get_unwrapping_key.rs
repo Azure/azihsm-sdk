@@ -256,9 +256,21 @@ fn get_unwrapping_key_default_cu_psk_rejected() {
 }
 
 /// Rejects a request that references an unknown session ID.
+/// Rejects a request that references an unknown session ID.
 #[test]
 fn get_unwrapping_key_unknown_session_rejected() {
     let ctx = TestCtx::new();
+
+    // Rotate the CU PSK so the dispatcher reaches session lookup instead of
+    // rejecting the request first with DefaultPskMustRotate.
+    let bootstrap = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open bootstrap CU session");
+
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
+        .expect("rotate CU PSK");
+
+    bootstrap.close().expect("close bootstrap CU session");
 
     ctx.expect_fw_reject(
         &TborGetUnwrappingKeyReq {
