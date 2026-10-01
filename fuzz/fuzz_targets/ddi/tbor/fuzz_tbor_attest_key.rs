@@ -6,6 +6,16 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_crypto::AesKey;
+use azihsm_crypto::AesKeyWrapPadAlgo;
+use azihsm_crypto::Encrypter;
+use azihsm_crypto::ExportableKey;
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::KeyGenerationOp;
+use azihsm_crypto::RsaEncryptAlgo;
+use azihsm_crypto::RsaPrivateKey;
+use azihsm_crypto::RsaPublicKey;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
@@ -19,8 +29,11 @@ use libfuzzer_sys::fuzz_target;
 #[derive(Arbitrary, Debug)]
 enum KeySource {
     EccGenerated(EccCurve),
+    BuiltInUnwrappingKey,
+    ImportedRsaKey,
     GeneratedAesKey(AesKeySize),
     HmacKey(HmacHash),
+    GeneratedSecretKey(EccCurve),
 }
 
 #[derive(Arbitrary, Debug)]
@@ -103,6 +116,7 @@ struct FuzzKeyReportData {
 }
 
 const KEY_SCOPE_SESSION: u8 = 0b001;
+const RSA_OAEP_SHA256: u8 = 1;
 
 fn generate_masked_key(ctx: &TestCtx, session_id: u16, input: &FuzzInput) -> Vec<u8> {
     match &input.key_source {
@@ -117,6 +131,12 @@ fn generate_masked_key(ctx: &TestCtx, session_id: u16, input: &FuzzInput) -> Vec
             .expect("session-scoped ECC key generation should succeed")
             .masked_key
         }
+        KeySource::BuiltInUnwrappingKey => ctx
+            .tbor(&TborGetUnwrappingKeyReq { session_id })
+            .expect("get built-in unwrapping public key")
+            .pub_key
+            .to_vec(),
+        KeySource::ImportedRsaKey => import_rsa_key(ctx, session_id),
         KeySource::GeneratedAesKey(key_size) => {
             ctx.tbor(&TborAesGenerateKeyReq {
                 session_id,
@@ -139,7 +159,80 @@ fn generate_masked_key(ctx: &TestCtx, session_id: u16, input: &FuzzInput) -> Vec
             .expect("session-scoped HMAC key generation should succeed")
             .masked_key
         }
+        KeySource::GeneratedSecretKey(curve) => {
+            let private_key = ctx
+                .tbor(&TborEccGenerateKeyReq {
+                    session_id,
+                    scope: KEY_SCOPE_SESSION,
+                    curve: curve.to_tbor(),
+                    key_usage: KEY_USAGE_DERIVE,
+                    key_label: Vec::new(),
+                })
+                .expect("session-scoped ECDH key generation should succeed");
+            let peer_key = ctx
+                .tbor(&TborEccGenerateKeyReq {
+                    session_id,
+                    scope: KEY_SCOPE_SESSION,
+                    curve: curve.to_tbor(),
+                    key_usage: KEY_USAGE_DERIVE,
+                    key_label: Vec::new(),
+                })
+                .expect("session-scoped ECDH peer-key generation should succeed");
+            ctx.tbor(&TborEcdhDeriveReq {
+                session_id,
+                scope: KEY_SCOPE_SESSION,
+                masked_key: private_key.masked_key,
+                peer_pub_key: peer_key.pub_key,
+                key_label: Vec::new(),
+            })
+            .expect("session-scoped ECDH secret derivation should succeed")
+            .masked_secret
+        }
     }
+}
+
+fn import_rsa_key(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
+    let key = RsaPrivateKey::generate(256).expect("generate host RSA-2048 key");
+    let private_der = key.to_vec().expect("export host RSA private key");
+    let unwrapping_key = ctx
+        .tbor(&TborGetUnwrappingKeyReq { session_id })
+        .expect("get built-in unwrapping public key")
+        .pub_key;
+
+    // Convert HSM little-endian (n ‖ e) to the crypto crate's big-endian form.
+    let mut public_key_be = Vec::with_capacity(unwrapping_key.len());
+    public_key_be.extend(unwrapping_key[..256].iter().rev());
+    public_key_be.extend(unwrapping_key[256..].iter().rev());
+    let public_key =
+        RsaPublicKey::from_hsm_bytes(&public_key_be).expect("parse unwrapping public key");
+
+    let kek = [0xA7; 32];
+    let mut encrypted_kek = Encrypter::encrypt_vec(
+        &mut RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None),
+        &public_key,
+        &kek,
+    )
+    .expect("RSA-OAEP wrap AES key");
+    encrypted_kek.reverse();
+
+    let kek = AesKey::from_bytes(&kek).expect("construct AES key-encryption key");
+    let encrypted_private_key =
+        Encrypter::encrypt_vec(&mut AesKeyWrapPadAlgo::default(), &kek, &private_der)
+            .expect("AES-KWP wrap RSA private key");
+    let mut wrapped_blob = encrypted_kek;
+    wrapped_blob.extend(encrypted_private_key);
+
+    ctx.tbor(&TborUnwrapKeyReq {
+        session_id,
+        scope: KEY_SCOPE_SESSION,
+        key_class: KEY_CLASS_RSA,
+        key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
+        oaep_hash_algo: RSA_OAEP_SHA256,
+        wrapped_blob,
+        key_label: Vec::new(),
+    })
+    .expect("import host RSA key through UnwrapKey")
+    .masked_key
 }
 
 fuzz_target!(|input: FuzzInput| {
