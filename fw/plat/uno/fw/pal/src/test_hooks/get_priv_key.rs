@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! DDI `GetPrivKey` command handler (validation hook, op 2005).
+//! `TestAction::GetPrivKey` validation handler.
 //!
 //! Within an open session, read back the raw plaintext material of a
 //! previously created or imported key and return it alongside the key's
@@ -66,7 +66,7 @@ struct DdiGetPrivKeyResp<'a> {
     key_data: &'a [u8],
 }
 
-/// Handle `DdiGetPrivKeyCmd`.
+/// Handle the nested `GetPrivKey` TestAction payload.
 ///
 /// The envelope map, header, and data field ID have already been consumed
 /// by the caller; `decoder` is positioned at the request data map.

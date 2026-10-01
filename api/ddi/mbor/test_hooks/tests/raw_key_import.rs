@@ -1,8 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Integration tests for the `RawKeyImport` FIPS-validation hook
-//! (`DdiOp` 2008).
+//! Integration tests for the `TestAction::RawKeyImport` FIPS-validation hook.
 //!
 //! These drive raw key material into the device and read it back with
 //! `GetPrivKey`. They only run on a physical device whose firmware is

@@ -10,6 +10,7 @@ use azihsm_ddi_mbor_derive::Ddi;
 use azihsm_ddi_mbor_types::*;
 use open_enum::open_enum;
 use pastey::paste;
+use zeroize::Zeroize;
 
 /// `DdiOp::TestAction` — not a core opcode; claimed only by the platform
 /// test-hook dispatch below the PAL.
@@ -93,6 +94,12 @@ pub enum DdiTestAction {
 
     /// Trigger UCD Error
     TriggerUcdError = 24,
+
+    /// Read back private key material.
+    GetPrivKey = 25,
+
+    /// Import raw key material.
+    RawKeyImport = 26,
 }
 
 /// Test action crash type.
@@ -382,13 +389,10 @@ pub struct DdiTestActionUcdErrorReqInfo {
 /// Maximum size, in bytes, of a `TestAction` opaque payload — the MBOR
 /// encoding of an action's own request-info map.
 ///
-/// Sized with generous headroom over the current largest request-info map
-/// ([`DdiTestActionPinPolicyConfig`]); this is only the buffer capacity,
-/// and just the significant bytes travel on the wire, so the ceiling is
-/// free. Because every action shares this one container, growing it here
-/// is the only change a larger action needs — the opcode's wire schema is
-/// unaffected.
-pub const TEST_ACTION_PAYLOAD_MAX: usize = 64;
+/// Sized for a maximum RawKeyImport request (3252 encoded bytes) plus
+/// headroom. This is only the host-side buffer capacity; only significant
+/// bytes travel on the wire.
+pub const TEST_ACTION_PAYLOAD_MAX: usize = 3584;
 
 /// Opaque, action-specific `TestAction` payload.
 ///
@@ -420,15 +424,26 @@ impl TestActionPayload for DdiTestActionUcdErrorReqInfo {}
 fn encode_test_action_payload<T: TestActionPayload>(
     request_info: &T,
 ) -> Result<DdiTestActionPayload, MborEncodeError> {
+    encode_action_payload(request_info)
+}
+
+pub(crate) fn encode_action_payload<T: MborEncode>(
+    request_info: &T,
+) -> Result<DdiTestActionPayload, MborEncodeError> {
     let mut buf = [0u8; TEST_ACTION_PAYLOAD_MAX];
     // The workspace pins `azihsm_ddi_mbor_types` (hence the codec) with
     // `pre_encode` on, so `MborEncoder::new` always takes this flag here.
     // `false`: an opaque payload is plain bytes and needs no pre-encode
     // transform.
     let mut encoder = MborEncoder::new(&mut buf, false);
-    request_info.mbor_encode(&mut encoder)?;
+    if let Err(err) = request_info.mbor_encode(&mut encoder) {
+        buf.zeroize();
+        return Err(err);
+    }
     let len = encoder.position();
-    DdiTestActionPayload::from_slice(&buf[..len]).map_err(|_| MborEncodeError::BufferOverflow)
+    let payload = DdiTestActionPayload::new(buf, len).map_err(|_| MborEncodeError::BufferOverflow);
+    buf.zeroize();
+    payload
 }
 
 /// A typed `TestAction` request that keeps the action and payload together.

@@ -6,10 +6,7 @@
 use azihsm_ddi_mbor_codec::*;
 use azihsm_ddi_mbor_derive::Ddi;
 use azihsm_ddi_mbor_types::*;
-use pastey::paste;
-
-/// FIPS-validation import of raw key material.
-pub const DDI_OP_RAW_KEY_IMPORT: DdiOp = DdiOp(2008);
+use zeroize::Zeroize;
 
 #[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Ddi)]
@@ -37,7 +34,41 @@ pub struct DdiRawKeyImportResp {
     pub masked_key: MborByteArray<3072>,
 }
 
-ddi_op_req_resp!(DdiRawKeyImport);
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiRawKeyImportCmdReq {
+    #[ddi(id = 0)]
+    pub hdr: DdiReqHdr,
+    #[ddi(id = 1)]
+    pub data: crate::DdiTestActionReq,
+    #[ddi(id = 2)]
+    pub ext: Option<DdiReqExt>,
+}
+
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiRawKeyImportCmdResp {
+    #[ddi(id = 0)]
+    pub hdr: DdiRespHdr,
+    #[ddi(id = 1)]
+    pub data: DdiRawKeyImportResp,
+    #[ddi(id = 2)]
+    pub ext: Option<DdiRespExt>,
+}
+
+impl DdiOpReq for DdiRawKeyImportCmdReq {
+    type OpResp = DdiRawKeyImportCmdResp;
+
+    fn get_opcode(&self) -> DdiOp {
+        self.hdr.op
+    }
+
+    fn get_session_id(&self) -> Option<u16> {
+        self.hdr.sess_id
+    }
+}
 
 /// Import raw key material into validation firmware.
 #[allow(clippy::too_many_arguments)]
@@ -52,23 +83,35 @@ pub fn helper_raw_key_import(
     use azihsm_ddi::DdiDev;
     use azihsm_ddi::DdiError;
 
-    let req = DdiRawKeyImportCmdReq {
+    let key_properties = key_properties
+        .try_into()
+        .map_err(|_| DdiError::InvalidParameter)?;
+    let mut action_req = DdiRawKeyImportReq {
+        raw: MborByteArray::from_slice(raw_key).map_err(|_| DdiError::InvalidParameter)?,
+        key_kind,
+        key_tag,
+        key_properties,
+    };
+    let payload = crate::test_action::encode_action_payload(&action_req);
+    action_req.raw.data_mut().zeroize();
+    let mut payload = payload.map_err(|_| DdiError::InvalidParameter)?;
+
+    let mut req = DdiRawKeyImportCmdReq {
         hdr: DdiReqHdr {
-            op: DDI_OP_RAW_KEY_IMPORT,
+            op: crate::DDI_OP_TEST_ACTION,
             sess_id: session_id,
             rev: Some(DdiApiRev { major: 1, minor: 0 }),
         },
-        data: DdiRawKeyImportReq {
-            raw: MborByteArray::from_slice(raw_key).map_err(|_| DdiError::InvalidParameter)?,
-            key_kind,
-            key_tag,
-            key_properties: key_properties
-                .try_into()
-                .map_err(|_| DdiError::InvalidParameter)?,
+        data: crate::DdiTestActionReq {
+            action: crate::DdiTestAction::RawKeyImport,
+            payload,
         },
         ext: None,
     };
-    dev.exec_op_mbor(&req, &mut None)
+    payload.data_mut().zeroize();
+    let result = dev.exec_op_mbor(&req, &mut None);
+    req.data.payload.data_mut().zeroize();
+    result
 }
 
 /// Read back a fixed-length raw secret and validate its length.
@@ -105,4 +148,34 @@ pub fn retrieve_shared_raw_key_var(
         return Err(DdiError::InvalidParameter);
     }
     Ok(key_data.to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maximum_request_fits_test_action_payload() {
+        let req = DdiRawKeyImportReq {
+            raw: MborByteArray::from_slice(&[0xa5; 3072])
+                .expect("maximum raw key must fit its wire field"),
+            key_kind: DdiKeyType::VarHmac512,
+            key_tag: Some(u16::MAX),
+            key_properties: DdiKeyProperties {
+                key_usage: DdiKeyUsage::SignVerify,
+                key_availability: DdiKeyAvailability::App,
+                key_label: MborByteArray::from_slice(&[0x5a; DDI_MAX_KEY_LABEL_LENGTH])
+                    .expect("maximum key label must fit its wire field"),
+            }
+            .try_into()
+            .expect("valid key properties must convert"),
+        };
+
+        let payload = crate::test_action::encode_action_payload(&req)
+            .expect("maximum request must fit the TestAction payload");
+        assert!(
+            payload.len() <= crate::TEST_ACTION_PAYLOAD_MAX,
+            "encoded payload exceeds TestAction capacity"
+        );
+    }
 }

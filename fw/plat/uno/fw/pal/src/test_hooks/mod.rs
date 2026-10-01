@@ -14,8 +14,8 @@
 //! commands that exist purely to drive testing.
 //!
 //! Nothing above the PAL knows any of this exists: the opcode is in no
-//! core table and the wire types are in no core crate. `TestAction` is
-//! gated by `azihsm_test_hooks`; `GetPrivKey` and `RawKeyImport` are gated by
+//! core table and the wire types are in no core crate. Test actions are
+//! enabled independently by `azihsm_test_hooks` and
 //! `fips_validation_hooks`. With neither feature this module is compiled
 //! out and uno rejects every custom opcode.
 //!
@@ -25,7 +25,7 @@
 //! - [`mbor_dispatch`] — the router: it decodes the envelope once, checks
 //!   the opcode, and hands the request data to the matching handler.
 //! - [`test_action`] — the `TestAction` (`DdiOp` 2004) handler.
-//! - [`get_priv_key`] / [`raw_key_import`] — FIPS-validation handlers.
+//! - [`get_priv_key`] / [`raw_key_import`] — FIPS-validation action handlers.
 //!
 //! # `TestAction` is an in-session command
 //!
@@ -48,7 +48,12 @@
 //! map entries: the two firmwares are no longer wire-compatible for
 //! `TestAction`. This firmware is driven by the refactor's own
 //! `azihsm_ddi_mbor_test_hooks` host crate, which encodes the matching opaque
-//! request; the response stays `{1: result?}`.
+//! request. Each action retains its existing typed response.
+//!
+//! The refactor also routes `GetPrivKey` and `RawKeyImport` as TestAction
+//! values 25 and 26. It does not accept their legacy standalone opcodes 2005
+//! and 2008, so the refactor host package and firmware must be updated
+//! together.
 
 #[cfg(feature = "azihsm_test_hooks")]
 mod clear_user_credentials;
@@ -57,7 +62,7 @@ mod common;
 mod get_priv_key;
 #[cfg(feature = "fips_validation_hooks")]
 mod raw_key_import;
-#[cfg(feature = "azihsm_test_hooks")]
+#[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
 mod test_action;
 #[cfg(feature = "azihsm_test_hooks")]
 mod trigger_crash;
@@ -75,21 +80,13 @@ use crate::pal::UnoHsmPal;
 
 /// `DdiOp::TestAction` — matches `mcr-hsm`'s discriminant so the same
 /// host tooling drives both firmwares.
-#[cfg(feature = "azihsm_test_hooks")]
+#[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
 const DDI_OP_TEST_ACTION: u32 = 2004;
-/// `DdiOp::GetPrivKey`.
-#[cfg(feature = "fips_validation_hooks")]
-const DDI_OP_GET_PRIV_KEY: u32 = 2005;
-/// `DdiOp::RawKeyImport`.
-#[cfg(feature = "fips_validation_hooks")]
-const DDI_OP_RAW_KEY_IMPORT: u32 = 2008;
 
 fn handles_opcode(opcode: u32) -> bool {
     match opcode {
-        #[cfg(feature = "azihsm_test_hooks")]
+        #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
         DDI_OP_TEST_ACTION => true,
-        #[cfg(feature = "fips_validation_hooks")]
-        DDI_OP_GET_PRIV_KEY | DDI_OP_RAW_KEY_IMPORT => true,
         _ => false,
     }
 }
@@ -153,13 +150,9 @@ pub(crate) async fn mbor_dispatch<'p>(
         // The decoder is now positioned at the request data map; the selected
         // handler owns it from here.
         match hdr.op {
-            #[cfg(feature = "azihsm_test_hooks")]
-            DDI_OP_TEST_ACTION => test_action::dispatch(pal, io, &hdr, &mut decoder, request_len),
-            #[cfg(feature = "fips_validation_hooks")]
-            DDI_OP_GET_PRIV_KEY => get_priv_key::dispatch(pal, io, &hdr, &mut decoder, request_len),
-            #[cfg(feature = "fips_validation_hooks")]
-            DDI_OP_RAW_KEY_IMPORT => {
-                raw_key_import::dispatch(pal, io, &hdr, &mut decoder, request_len).await
+            #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
+            DDI_OP_TEST_ACTION => {
+                test_action::dispatch(pal, io, &hdr, &mut decoder, request_len).await
             }
             _ => Err(HsmError::UnsupportedCmd),
         }
@@ -167,10 +160,9 @@ pub(crate) async fn mbor_dispatch<'p>(
     .await;
 
     #[cfg(feature = "fips_validation_hooks")]
-    if hdr.op == DDI_OP_RAW_KEY_IMPORT {
-        // Once the header identifies RawKeyImport, wipe the complete inbound
-        // request on every later exit. This includes malformed or truncated
-        // data-field IDs as well as request-body decode and dispatch failures.
+    if hdr.op == DDI_OP_TEST_ACTION {
+        // FIPS TestAction payloads can contain plaintext key material.
+        // Scrub the complete request on success and every post-header error.
         req.zeroize();
     }
 

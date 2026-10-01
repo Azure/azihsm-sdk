@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! DDI `RawKeyImport` command handler (validation hook, op 2008).
+//! `TestAction::RawKeyImport` validation handler.
 //!
 //! Within an open session, import host-supplied **plaintext** key
 //! material directly into the partition vault — bypassing the wrap /
@@ -93,7 +93,7 @@ struct DdiRawKeyImportResp<'a> {
     masked_key: &'a [u8],
 }
 
-/// Handle `DdiRawKeyImportCmd`.
+/// Handle the nested `RawKeyImport` TestAction payload.
 ///
 /// The envelope map, header, and data field ID have already been consumed
 /// by the caller; `decoder` is positioned at the request data map.

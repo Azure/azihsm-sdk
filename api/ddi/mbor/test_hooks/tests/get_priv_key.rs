@@ -1,8 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Integration tests for the `GetPrivKey` FIPS-validation hook
-//! (`DdiOp` 2005).
+//! Integration tests for the `TestAction::GetPrivKey` FIPS-validation hook.
 //!
 //! These generate a key on the device and read its private material back
 //! with `GetPrivKey`. They only run on a physical device whose firmware

@@ -17,6 +17,7 @@ azihsm_ddi_mbor_derive.workspace = true
 azihsm_ddi_mbor_types.workspace = true
 open-enum.workspace = true
 pastey.workspace = true
+zeroize.workspace = true
 
 # dependencies for fuzzing
 arbitrary = { optional = true, workspace = true }

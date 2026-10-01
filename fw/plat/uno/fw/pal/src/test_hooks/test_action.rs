@@ -12,26 +12,37 @@
 use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;
 use azihsm_fw_ddi_mbor::MborMap;
+#[cfg(feature = "azihsm_test_hooks")]
 use azihsm_fw_ddi_mbor_derive::Ddi;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+#[cfg(feature = "azihsm_test_hooks")]
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
+#[cfg(feature = "azihsm_test_hooks")]
 use super::clear_user_credentials;
 use super::common::ReqHdr;
+#[cfg(feature = "azihsm_test_hooks")]
 use super::common::encode_resp;
+#[cfg(feature = "azihsm_test_hooks")]
 use super::common::success_hdr;
+#[cfg(feature = "fips_validation_hooks")]
+use super::get_priv_key;
+#[cfg(feature = "fips_validation_hooks")]
+use super::raw_key_import;
+#[cfg(feature = "azihsm_test_hooks")]
 use super::trigger_crash;
 use crate::pal::UnoHsmPal;
 
 /// Maximum encoded size of one action-specific opaque payload.
 ///
 /// This must match the host test-hooks `TEST_ACTION_PAYLOAD_MAX`.
-pub(super) const TEST_ACTION_PAYLOAD_MAX: usize = 64;
+pub(super) const TEST_ACTION_PAYLOAD_MAX: usize = 3584;
 
 /// The response data shared by `TestAction` variants.
+#[cfg(feature = "azihsm_test_hooks")]
 #[derive(Debug, Ddi)]
 #[ddi(map)]
 struct DdiTestActionResp {
@@ -49,9 +60,17 @@ struct DdiTestActionResp {
 #[repr(u32)]
 enum SupportedTestAction {
     /// Inject a crash into the CP1 HSM core.
+    #[cfg(feature = "azihsm_test_hooks")]
     TriggerCrash = 8,
     /// Clear the partition's stored user credential.
+    #[cfg(feature = "azihsm_test_hooks")]
     ClearUserCredentials = 18,
+    /// Read back private key material.
+    #[cfg(feature = "fips_validation_hooks")]
+    GetPrivKey = 25,
+    /// Import raw key material.
+    #[cfg(feature = "fips_validation_hooks")]
+    RawKeyImport = 26,
 }
 
 /// Decoded action and field count from the outer TestAction request map.
@@ -67,27 +86,38 @@ impl TryFrom<u32> for SupportedTestAction {
     type Error = HsmError;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
+        #[cfg(feature = "azihsm_test_hooks")]
         if value == Self::TriggerCrash as u32 {
-            Ok(Self::TriggerCrash)
-        } else if value == Self::ClearUserCredentials as u32 {
-            Ok(Self::ClearUserCredentials)
-        } else {
-            Err(HsmError::UnsupportedCmd)
+            return Ok(Self::TriggerCrash);
         }
+        #[cfg(feature = "azihsm_test_hooks")]
+        if value == Self::ClearUserCredentials as u32 {
+            return Ok(Self::ClearUserCredentials);
+        }
+        #[cfg(feature = "fips_validation_hooks")]
+        if value == Self::GetPrivKey as u32 {
+            return Ok(Self::GetPrivKey);
+        }
+        #[cfg(feature = "fips_validation_hooks")]
+        if value == Self::RawKeyImport as u32 {
+            return Ok(Self::RawKeyImport);
+        }
+        Err(HsmError::UnsupportedCmd)
     }
 }
 
 /// Decode the action selector and route the action-specific request.
-pub(super) fn dispatch<'p>(
+pub(super) async fn dispatch<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
     hdr: &ReqHdr,
-    decoder: &mut MborDecoder,
+    decoder: &mut MborDecoder<'_>,
     request_len: usize,
 ) -> HsmResult<&'p DmaBuf> {
     let selector = decode_action_selector(decoder)?;
 
     match selector.action {
+        #[cfg(feature = "azihsm_test_hooks")]
         SupportedTestAction::ClearUserCredentials => clear_user_credentials::dispatch(
             pal,
             io,
@@ -96,9 +126,24 @@ pub(super) fn dispatch<'p>(
             selector.request_field_count,
             request_len,
         ),
+        #[cfg(feature = "azihsm_test_hooks")]
         SupportedTestAction::TriggerCrash => {
             trigger_crash::dispatch(decoder, selector.request_field_count, request_len)
                 .map(|never| match never {})
+        }
+        #[cfg(feature = "fips_validation_hooks")]
+        SupportedTestAction::GetPrivKey => {
+            let payload = decode_payload_bytes(decoder, selector.request_field_count, request_len)?;
+            let payload_len = payload.len();
+            let mut payload_decoder = MborDecoder::new(payload);
+            get_priv_key::dispatch(pal, io, hdr, &mut payload_decoder, payload_len)
+        }
+        #[cfg(feature = "fips_validation_hooks")]
+        SupportedTestAction::RawKeyImport => {
+            let payload = decode_payload_bytes(decoder, selector.request_field_count, request_len)?;
+            let payload_len = payload.len();
+            let mut payload_decoder = MborDecoder::new(payload);
+            raw_key_import::dispatch(pal, io, hdr, &mut payload_decoder, payload_len).await
         }
     }
 }
@@ -127,6 +172,7 @@ fn decode_action_selector(decoder: &mut MborDecoder) -> HsmResult<TestActionSele
 /// Validates the shared outer `{1: action, 2: payload}` request shape,
 /// enforces the payload bound, and requires complete consumption of both
 /// the outer request and the nested MBOR payload.
+#[cfg(feature = "azihsm_test_hooks")]
 pub(super) fn decode_payload<'a, T>(
     decoder: &mut MborDecoder<'a>,
     request_field_count: u8,
@@ -151,6 +197,7 @@ where
 ///
 /// Parameterless actions contain `{1: action, 2: bytes()}` and must carry an
 /// empty payload with no trailing outer bytes.
+#[cfg(feature = "azihsm_test_hooks")]
 pub(super) fn expect_empty_payload(
     decoder: &mut MborDecoder<'_>,
     request_field_count: u8,
@@ -189,6 +236,7 @@ fn decode_payload_bytes<'a>(
 }
 
 /// Encode a successful action response with no action-specific result.
+#[cfg(feature = "azihsm_test_hooks")]
 pub(super) fn encode_success<'p>(
     pal: &'p UnoHsmPal,
     io: &impl HsmIo,
