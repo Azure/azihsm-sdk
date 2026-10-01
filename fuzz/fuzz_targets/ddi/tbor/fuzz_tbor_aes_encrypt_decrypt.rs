@@ -7,9 +7,10 @@
 mod common;
 
 use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
-use common::FuzzRole;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -17,8 +18,6 @@ use libfuzzer_sys::fuzz_target;
 /// Fuzz input for the TBOR `AesEncryptDecrypt` command.
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
-    /// Session role used for the AES operation.
-    role: FuzzRole,
     /// Generate a valid masked AES key instead of using fuzzed bytes.
     use_valid_key: bool,
     /// AES key size for a generated key.
@@ -54,13 +53,11 @@ struct FuzzAesEncryptDecryptReq {
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        let session = ctx
-            .open_session(input.role.psk_id(), input.role.session_type())
-            .expect("session open should succeed");
+        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
         let masked_key = if input.use_valid_key {
             let key_req = TborAesGenerateKeyReq {
-                session_id: session.session_id(),
+                session_id: session.session_id,
                 scope: AES_KEY_SCOPE_SESSION,
                 key_size: input.key_size.to_tbor(),
                 key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
@@ -74,7 +71,7 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let req = TborAesEncryptDecryptReq {
-            session_id: session.session_id(),
+            session_id: session.session_id,
             masked_key,
             op: input.cmdreq_data.op,
             msg: input.cmdreq_data.msg.clone(),
@@ -88,7 +85,8 @@ fuzz_target!(|input: FuzzInput| {
             }
         }
 
-        session.close().expect("session close should succeed");
+        ctx.session_close(session.session_id)
+            .expect("session close should succeed");
     });
 });
 
