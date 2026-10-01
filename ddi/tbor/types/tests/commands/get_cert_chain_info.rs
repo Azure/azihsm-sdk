@@ -185,6 +185,11 @@ fn certificate_indices_do_not_alias() {
         .tbor(&TborGetCertChainInfoReq::new(VALID_SLOT))
         .expect("GetCertChainInfo");
 
+    assert!(
+        info.num_certs >= 2,
+        "alias check requires at least two certificates",
+    );
+
     let mut certificates = Vec::new();
 
     for cert_id in 0..info.num_certs {
