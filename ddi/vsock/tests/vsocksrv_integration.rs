@@ -280,9 +280,16 @@ fn spawn_bridge(endpoints: &mut TestEndpoints) -> io::Result<Option<thread::Join
 /// Locates the `vsocksrv` binary built alongside this test (see the
 /// identical helper in `ddi/sock/tests/vsocksrv_integration.rs` for why
 /// this can't just be a normal dev-dependency).
-fn locate_vsocksrv_bin() -> PathBuf {
+/// Returns `None` (rather than panicking) when `vsocksrv` hasn't been
+/// built: unlike `ddi/sock`'s equivalent test, which only runs in a CI
+/// job that explicitly builds `vsocksrv` first
+/// (`test_ubuntu_sock_ddi`), this crate's tests are also swept up by the
+/// generic `cargo nextest run --workspace` used by other CI jobs (e.g.
+/// `test_ubuntu_mock`), which never build `vsocksrv` at all. Missing the
+/// binary there is expected, not a failure.
+fn locate_vsocksrv_bin() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("VSOCKSRV_BIN") {
-        return PathBuf::from(path);
+        return Some(PathBuf::from(path));
     }
 
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -299,19 +306,19 @@ fn locate_vsocksrv_bin() -> PathBuf {
         "release"
     };
     let bin = target_dir.join(profile).join("vsocksrv");
-    assert!(
-        bin.exists(),
-        "vsocksrv binary not found at {bin:?}; build it first with \
-         `cargo build -p vsocksrv` (or set VSOCKSRV_BIN)"
-    );
-    bin
+    bin.exists().then_some(bin)
 }
 
 /// Starts `vsocksrv` in `--socket-type unix` mode, dialing out to
 /// `endpoints.ch`. `vsocksrv` retries the connection until the listener
 /// exists, so start order relative to [`spawn_bridge`] does not matter.
-fn spawn_vsocksrv(endpoints: &TestEndpoints) -> io::Result<VsocksrvGuard> {
-    let child = Command::new(locate_vsocksrv_bin())
+/// Returns `Ok(None)` (rather than an error) when `vsocksrv` hasn't been
+/// built, so callers can skip gracefully; see [`locate_vsocksrv_bin`].
+fn spawn_vsocksrv(endpoints: &TestEndpoints) -> io::Result<Option<VsocksrvGuard>> {
+    let Some(bin) = locate_vsocksrv_bin() else {
+        return Ok(None);
+    };
+    let child = Command::new(bin)
         .args([
             "--socket-type",
             "unix",
@@ -326,7 +333,7 @@ fn spawn_vsocksrv(endpoints: &TestEndpoints) -> io::Result<VsocksrvGuard> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    Ok(VsocksrvGuard(child))
+    Ok(Some(VsocksrvGuard(child)))
 }
 
 /// Issues a `GetApiRev` request over `dev` and asserts it succeeds against
@@ -378,6 +385,25 @@ macro_rules! bridge_or_skip {
     };
 }
 
+/// Skips the running test with a clear message if `vsocksrv` is `None`
+/// (i.e. the binary hasn't been built in this environment); see
+/// [`locate_vsocksrv_bin`].
+macro_rules! vsocksrv_or_skip {
+    ($vsocksrv:expr) => {
+        match $vsocksrv {
+            Some(vsocksrv) => vsocksrv,
+            None => {
+                eprintln!(
+                    "SKIP: vsocksrv binary not found; run `cargo build -p \
+                     vsocksrv` (or set VSOCKSRV_BIN) to exercise this test \
+                     for real."
+                );
+                return;
+            }
+        }
+    };
+}
+
 #[test]
 fn get_api_rev_round_trips_through_vsocksrv_over_real_vsock() {
     let mut endpoints = TestEndpoints::new("get-api-rev");
@@ -388,7 +414,8 @@ fn get_api_rev_round_trips_through_vsocksrv_over_real_vsock() {
     // was spawned.
     let _bridge =
         bridge_or_skip!(spawn_bridge(&mut endpoints).expect("failed to probe/start test bridge"));
-    let _vsocksrv = spawn_vsocksrv(&endpoints).expect("failed to start vsocksrv");
+    let _vsocksrv =
+        vsocksrv_or_skip!(spawn_vsocksrv(&endpoints).expect("failed to start vsocksrv"));
 
     let ddi = DdiVsock::default();
     let dev = ddi
@@ -419,7 +446,8 @@ fn unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock() 
     let mut endpoints = TestEndpoints::new("stale-session-erase");
     let _bridge =
         bridge_or_skip!(spawn_bridge(&mut endpoints).expect("failed to probe/start test bridge"));
-    let _vsocksrv = spawn_vsocksrv(&endpoints).expect("failed to start vsocksrv");
+    let _vsocksrv =
+        vsocksrv_or_skip!(spawn_vsocksrv(&endpoints).expect("failed to start vsocksrv"));
 
     let ddi = DdiVsock::default();
     let dev = ddi
