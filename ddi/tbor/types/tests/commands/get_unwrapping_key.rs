@@ -73,6 +73,11 @@ fn get_unwrapping_key_is_stable() {
 fn get_unwrapping_key_available_to_crypto_user() {
     let ctx = TestCtx::new();
 
+    // Provision/finalize the partition so the unwrapping key exists.
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close finalized CO session");
+
     // Rotate the CU PSK so GetUnwrappingKey reaches its handler instead of
     // being rejected by the dispatcher's default-PSK gate.
     let bootstrap = ctx
@@ -98,7 +103,32 @@ fn get_unwrapping_key_available_to_crypto_user() {
         })
         .expect("GetUnwrappingKey must be available to Crypto-User sessions");
 
-    assert_valid_unwrapping_pub_key(&resp.pub_key);
+    assert_eq!(
+        resp.pub_key.len(),
+        UNWRAPPING_PUB_KEY_LEN,
+        "unwrapping pub key must be the pinned length",
+    );
+
+    let (modulus, exponent) = resp.pub_key.split_at(RSA_2048_MODULUS_LEN);
+
+    assert!(
+        modulus.iter().any(|&byte| byte != 0),
+        "RSA modulus must not be all zero",
+    );
+
+    assert!(
+        modulus[RSA_2048_MODULUS_LEN - 1] & 0x80 != 0,
+        "RSA modulus must have exactly 2048 significant bits",
+    );
+
+    assert!(modulus[0] & 1 != 0, "RSA modulus must be odd");
+
+    let exponent = u32::from_le_bytes(exponent.try_into().expect("four-byte RSA exponent"));
+
+    assert_eq!(
+        exponent, RSA_PUBLIC_EXPONENT,
+        "unwrapping key must use the standard RSA public exponent",
+    );
 }
 
 /// Rejects a request that references a closed session.
@@ -243,6 +273,11 @@ fn get_unwrapping_key_unknown_session_rejected() {
 fn get_unwrapping_key_stable_across_cu_sessions() {
     let ctx = TestCtx::new();
 
+    // Provision/finalize the partition so the unwrapping key exists.
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close finalized CO session");
+
     // Rotate the CU PSK.
     let bootstrap = ctx
         .open_session(CU, SessionType::PlainText)
@@ -328,6 +363,11 @@ fn get_unwrapping_key_stable_across_co_psk_rotation() {
 #[test]
 fn get_unwrapping_key_stable_across_cu_psk_rotation() {
     let ctx = TestCtx::new();
+
+    // Provision/finalize the partition so the unwrapping key exists.
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close finalized CO session");
 
     // Rotate away from the default CU PSK first.
     let bootstrap = ctx
