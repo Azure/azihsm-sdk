@@ -17,6 +17,14 @@
 //! * Tampered masked key (flipped AEAD tag) → `AesGcmDecryptTagDoesNotMatch`.
 //! * Before finalize (partition not `Initialized`) → `InvalidArg`.
 //! * Crypto-User session → `InvalidPermissions`.
+//! * Report-data patterns and repeated requests preserve signed key binding.
+//! * Ordinary ECC keys on all curves, including P-521 wire padding.
+//! * Imported ECC keys retain their public points and imported/sign/verify
+//!   flags (emu); generated keys carry generated/sign/derive flags.
+//! * CU rejection with a valid key on a finalized partition.
+//! * All supported symmetric key classes are rejected (emu); session-scoped ECC keys are rejected.
+//! * Oversized envelopes and invalid sessions are rejected.
+//! * IV/ciphertext tampering fails authentication; the original key still works.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
 
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
@@ -30,17 +38,14 @@ use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
+use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
+const SCOPE_SESSION: u8 = 0b001;
 const SCOPE_EPHEMERAL: u8 = 0b010;
 const SCOPE_LOCAL: u8 = 0b011;
-
-/// P-384 coordinate length (raw, big-endian) — the sealed key is a P-384
-/// keypair, so each attested COSE_Key coordinate is 48 bytes.
-const P384_COORD_LEN: usize = 48;
 
 /// Sample caller-supplied report data bound into the report payload.
 fn sample_report_data() -> [u8; KEY_REPORT_DATA_LEN] {
@@ -69,7 +74,7 @@ fn verify_key_report(
     report: &[u8],
     sealing_pub_le: &[u8],
     expected_report_data: &[u8; KEY_REPORT_DATA_LEN],
-) {
+) -> azihsm_ddi_mbor_sim::report::KeyAttestationReport {
     use azihsm_ddi_mbor_sim::attestation::KeyAttester;
     use azihsm_ddi_mbor_sim::crypto::ecc::EccOp;
     use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
@@ -116,20 +121,28 @@ fn verify_key_report(
     // The COSE_Key holds big-endian coordinates; the sealing pubkey is
     // little-endian `x_le ‖ y_le`, so reverse each COSE_Key coordinate
     // and compare against the corresponding wire half.
-    assert_eq!(x_be.len(), P384_COORD_LEN, "COSE_Key pk_x is a P-384 coord");
-    assert_eq!(y_be.len(), P384_COORD_LEN, "COSE_Key pk_y is a P-384 coord");
+    let (coord_len, wire_len) = match sealing_pub_le.len() {
+        64 => (32, 32),
+        96 => (48, 48),
+        136 => (66, 68), // P-521 wire coordinates include two padding bytes.
+        other => panic!("unexpected public-key length {other}"),
+    };
+    assert_eq!(x_be.len(), coord_len, "COSE_Key X coordinate length");
+    assert_eq!(y_be.len(), coord_len, "COSE_Key Y coordinate length");
     let x_le: Vec<u8> = x_be.iter().rev().copied().collect();
     let y_le: Vec<u8> = y_be.iter().rev().copied().collect();
     assert_eq!(
         x_le.as_slice(),
-        &sealing_pub_le[..P384_COORD_LEN],
+        &sealing_pub_le[..coord_len],
         "attested COSE_Key pk_x must re-derive the sealed key's X",
     );
     assert_eq!(
         y_le.as_slice(),
-        &sealing_pub_le[P384_COORD_LEN..],
+        &sealing_pub_le[wire_len..wire_len + coord_len],
         "attested COSE_Key pk_y must re-derive the sealed key's Y",
     );
+    assert_eq!(decoded.version, 2, "TBOR reports use version 2");
+    decoded
 }
 
 /// Walk a COSE_Key CBOR map and return its `(x, y)` byte strings
@@ -230,7 +243,7 @@ fn key_report_rejects_before_finalize() {
 
     let req = TborKeyReportReq {
         session_id: session.session_id,
-        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
+        masked_key: vec![0u8; 180],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
@@ -249,7 +262,7 @@ fn key_report_rejected_on_cu_session() {
     // before the state/scope gates) rejects a CU session.
     let req = TborKeyReportReq {
         session_id: session.session_id,
-        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
+        masked_key: vec![0u8; 180],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
@@ -267,8 +280,489 @@ fn key_report_rejected_on_default_psk() {
 
     let req = TborKeyReportReq {
         session_id: session.session_id(),
-        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
+        masked_key: vec![0u8; 180],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
+}
+
+#[test]
+fn key_report_report_data_patterns() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    for scope in [SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+        let (masked_key, public_key) = masked_sealing_key(&ctx, session.session_id, scope);
+        for report_data in [
+            [0; KEY_REPORT_DATA_LEN],
+            [0xFF; KEY_REPORT_DATA_LEN],
+            sample_report_data(),
+            [0; KEY_REPORT_DATA_LEN],
+        ] {
+            let resp = ctx
+                .tbor(&TborKeyReportReq {
+                    session_id: session.session_id,
+                    masked_key: masked_key.clone(),
+                    report_data,
+                })
+                .expect("KeyReport with report-data pattern");
+            // Verify the signed payload, rather than comparing randomized signatures.
+            verify_key_report(&ctx, &resp.report, &public_key, &report_data);
+        }
+    }
+}
+
+#[test]
+fn key_report_generated_ecc_all_curves() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    for curve in [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521] {
+        for scope in [SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            let key = ctx
+                .tbor(&TborEccGenerateKeyReq {
+                    session_id: session.session_id,
+                    scope,
+                    curve,
+                    key_usage: KEY_USAGE_SIGN,
+                    key_label: Vec::new(),
+                })
+                .expect("generate ECC key");
+            let report_data = sample_report_data();
+            let report = ctx
+                .tbor(&TborKeyReportReq {
+                    session_id: session.session_id,
+                    masked_key: key.masked_key,
+                    report_data,
+                })
+                .expect("attest ordinary ECC key");
+            let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+            // Generated (bit 2) + sign (bit 5); no other usages.
+            assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
+        }
+    }
+}
+
+/// Rejects every supported symmetric key class because KeyReport only
+/// attests asymmetric keys that have a public component.
+#[test]
+#[cfg(feature = "emu")]
+fn key_report_rejects_all_symmetric_key_classes_emu() {
+    use azihsm_ddi_tbor_types::KEY_CLASS_AES;
+    use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
+    use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
+    use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
+
+    use crate::commands::unwrap_key::unwrap;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for (class, key_len) in [
+        (KEY_CLASS_AES, 32usize),
+        (KEY_CLASS_HMAC_SHA256, 32usize),
+        (KEY_CLASS_HMAC_SHA384, 48usize),
+        (KEY_CLASS_HMAC_SHA512, 64usize),
+    ] {
+        // Use a valid key length for each class so the key imports
+        // successfully and the test isolates KeyReport's key-type gate.
+        let key_material = vec![0x37; key_len];
+        let key = unwrap(&ctx, session.session_id, class, &key_material);
+
+        ctx.expect_fw_reject(
+            &TborKeyReportReq {
+                session_id: session.session_id,
+                masked_key: key.masked_key,
+                report_data: sample_report_data(),
+            },
+            TborStatus::UnsupportedKeyType,
+        );
+    }
+}
+
+#[test]
+fn key_report_rejects_session_scope() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_SESSION,
+            curve: ECC_CURVE_P384,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: Vec::new(),
+        })
+        .expect("generate session-scoped ECC key");
+    ctx.expect_fw_reject(
+        &TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data: sample_report_data(),
+        },
+        TborStatus::UnsupportedKeyScope,
+    );
+}
+
+#[test]
+fn key_report_rejects_oversized_masked_key() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    ctx.expect_fw_reject(
+        &TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: vec![0; KEY_REPORT_MASKED_KEY_MAX_LEN + 1],
+            report_data: sample_report_data(),
+        },
+        TborStatus::TborInvalidFixedLength,
+    );
+}
+
+#[test]
+fn key_report_rejects_invalid_session() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let (masked_key, _) = masked_sealing_key(&ctx, session.session_id, SCOPE_LOCAL);
+    ctx.expect_fw_reject(
+        &TborKeyReportReq {
+            session_id: u16::MAX,
+            masked_key,
+            report_data: sample_report_data(),
+        },
+        TborStatus::FileHandleSessionIdDoesNotMatch,
+    );
+}
+
+#[test]
+fn key_report_rejects_tampered_iv_and_ciphertext() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let (masked_key, public_key) = masked_sealing_key(&ctx, session.session_id, SCOPE_LOCAL);
+    let report_data = sample_report_data();
+    // The IV begins at offset 8, so tampering it preserves the envelope
+    // structure but fails GCM authentication. The legacy `8 + 12 + 96`
+    // offset now falls inside the expanded masked-key metadata/AAD region,
+    // so corrupting it fails masked-key decoding.
+    for (offset, expected_status) in [
+        (8, TborStatus::AesGcmDecryptTagDoesNotMatch),
+        (8 + 12 + 96, TborStatus::MaskedKeyDecodeFailed),
+    ] {
+        let mut tampered = masked_key.clone();
+        tampered[offset] ^= 1;
+        ctx.expect_fw_reject(
+            &TborKeyReportReq {
+                session_id: session.session_id,
+                masked_key: tampered,
+                report_data,
+            },
+            expected_status,
+        );
+        let resp = ctx
+            .tbor(&TborKeyReportReq {
+                session_id: session.session_id,
+                masked_key: masked_key.clone(),
+                report_data,
+            })
+            .expect("original key remains attestable after rejection");
+        verify_key_report(&ctx, &resp.report, &public_key, &report_data);
+    }
+}
+
+#[test]
+#[cfg(feature = "emu")]
+fn key_report_imported_ecc_all_curves_emu() {
+    use azihsm_crypto::EccPrivateKey;
+    use azihsm_crypto::ExportableKey;
+    use azihsm_crypto::KeyGenerationOp;
+    use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
+
+    use crate::commands::unwrap_key::unwrap;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    for key_len in [32, 48, 66] {
+        let key = EccPrivateKey::generate(key_len).expect("host ECC key generation");
+        let der = key.to_vec().expect("export PKCS#8 key");
+        let imported = unwrap(&ctx, session.session_id, KEY_CLASS_ECC, &der);
+        let report_data = sample_report_data();
+        let report = ctx
+            .tbor(&TborKeyReportReq {
+                session_id: session.session_id,
+                masked_key: imported.masked_key,
+                report_data,
+            })
+            .expect("attest imported ECC key");
+        let decoded = verify_key_report(&ctx, &report.report, &imported.pub_key, &report_data);
+        // Imported (bit 0), sign (bit 5), verify (bit 6). In particular,
+        // an imported key must not claim that it was generated on-device.
+        assert_eq!(
+            decoded.flags,
+            1 | (1 << 5) | (1 << 6),
+            "key length {key_len}"
+        );
+    }
+}
+
+#[test]
+fn key_report_rejects_cu_with_valid_key_after_finalize() {
+    let ctx = TestCtx::new();
+    let co = finalized_co_session(&ctx);
+    let (masked_key, _) = masked_sealing_key(&ctx, co.session_id, SCOPE_LOCAL);
+    ctx.session_close(co.session_id).expect("close CO session");
+    let cu = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    // Every other prerequisite is valid, isolating the CO-only role gate.
+    ctx.expect_fw_reject(
+        &TborKeyReportReq {
+            session_id: cu.session_id,
+            masked_key,
+            report_data: sample_report_data(),
+        },
+        TborStatus::InvalidPermissions,
+    );
+    ctx.session_close(cu.session_id).expect("close CU session");
+}
+
+/// Attests a generated ECC key carrying a non-empty key label.
+#[test]
+fn key_report_generated_ecc_non_empty_label() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: b"key-report-test".to_vec(),
+        })
+        .expect("generate labeled ECC key");
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data,
+        })
+        .expect("KeyReport accepts labeled ECC key");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    // Generated + sign.
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
+}
+
+/// Attests an ECC key carrying the maximum-length key label.
+#[test]
+fn key_report_generated_ecc_max_label() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+    use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
+        })
+        .expect("generate ECC key with max label");
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data,
+        })
+        .expect("KeyReport accepts max-label ECC key");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
+}
+
+/// Preserves DERIVE usage from generated-key metadata into KeyReport flags.
+#[test]
+fn key_report_generated_ecc_derive_usage() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
+        })
+        .expect("generate derive-only ECC key");
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data,
+        })
+        .expect("attest derive-only ECC key");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    // Generated + derive.
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 9));
+}
+
+/// Rejects combined SIGN | DERIVE usage for generated ECC keys.
+#[test]
+fn key_report_generated_ecc_sign_and_derive_usage_rejected() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    ctx.expect_fw_reject(
+        &TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_SIGN | KEY_USAGE_DERIVE,
+            key_label: Vec::new(),
+        },
+        TborStatus::InvalidPermissions,
+    );
+}
+
+/// Attests a DERIVE-only ECC key carrying a non-empty label.
+#[test]
+fn key_report_generated_ecc_derive_with_label() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_DERIVE,
+            key_label: b"derive-key-report".to_vec(),
+        })
+        .expect("generate labeled DERIVE ECC key");
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data,
+        })
+        .expect("attest labeled DERIVE ECC key");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    // Generated + derive.
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 9));
+}
+
+/// Attests a generated ECC key carrying a binary key label.
+#[test]
+fn key_report_generated_ecc_binary_label() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P256,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: vec![0x00, 0x80, 0xff, 0x41],
+        })
+        .expect("generate ECC key with binary label");
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data,
+        })
+        .expect("attest ECC key with binary label");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
+}
+
+/// Attests the largest supported ECC key with the maximum key-label length.
+#[test]
+fn key_report_p521_with_max_label() {
+    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+    use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+    use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
+
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let key = ctx
+        .tbor(&TborEccGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            curve: ECC_CURVE_P521,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
+        })
+        .expect("generate P-521 ECC key with maximum label");
+
+    let report_data = sample_report_data();
+
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: key.masked_key,
+            report_data,
+        })
+        .expect("attest P-521 ECC key with maximum label");
+
+    let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
+
+    assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
 }
