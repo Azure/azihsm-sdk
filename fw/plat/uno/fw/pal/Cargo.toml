@@ -63,6 +63,6 @@ semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
 
 # Test-only DDI commands, routed through the `HsmCustomDispatch` PAL hook
 # rather than the core opcode tables. Adds `TestAction` (DdiOp 2004),
-# which crash-recovery testing uses to inject faults. Never enable in a
-# production build.
-mcr_test_action = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
+# used by crash-recovery and credential-lifecycle testing. Never enable
+# in a production build.
+mcr_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
