@@ -46,6 +46,7 @@ use azihsm_ossl_engine_core::ffi;
 use foreign_types::ForeignTypeRef;
 use openssl::pkey::PKey;
 use parking_lot::Mutex;
+use zeroize::Zeroizing;
 
 use crate::context::EngineData;
 use crate::uri;
@@ -61,23 +62,23 @@ pub fn load_key(
 ) -> EngineResult<*mut ffi::EVP_PKEY> {
     let parsed = uri::parse(key_id)?;
 
-    // Reject unsupported key types before any HSM open or file I/O, so they
-    // fail with a clear error instead of a misleading environment/filesystem
-    // one. RSA loading lands in a follow-up (it needs an HSM import path plus
-    // test coverage).
-    match parsed.key_type {
-        KeyType::Ec => {}
-        KeyType::Rsa | KeyType::RsaPss => {
-            return Err(EngineError::Other(
-                "RSA key loading is not yet supported".into(),
-            ));
-        }
+    // Reject key types with no load path yet before any HSM open or file I/O,
+    // so they fail with a clear error instead of a misleading environment or
+    // filesystem one. RSA-PSS loading lands with its signature support.
+    if parsed.key_type == KeyType::RsaPss {
+        return Err(EngineError::Other(
+            "RSA-PSS key loading is not yet supported".into(),
+        ));
     }
 
     // First real caller of the lazy HSM open (idempotent).
     data.open_hsm_from_env()?;
     let masked = read_masked_key(&parsed.masked_key_path)?;
-    load_ec(engine, data, &masked)
+    match parsed.key_type {
+        KeyType::Ec => load_ec(engine, data, &masked),
+        KeyType::Rsa => crate::rsaload::load_rsa(engine, data, &masked),
+        KeyType::RsaPss => unreachable!("rejected above"),
+    }
 }
 
 /// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
@@ -92,7 +93,7 @@ const MAX_MASKED_KEY_SIZE: u64 = 64 * 1024;
 /// `O_CLOEXEC` keeps the fd from leaking across exec, a non-regular file is
 /// rejected outright, and the read is capped at [`MAX_MASKED_KEY_SIZE`].
 /// Mirrors `read_regular_hardened` in azihsm_ossl_engine_resiliency.
-pub(crate) fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
+pub(crate) fn read_masked_key(path: &Path) -> EngineResult<Zeroizing<Vec<u8>>> {
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
@@ -118,7 +119,9 @@ pub(crate) fn read_masked_key(path: &Path) -> EngineResult<Vec<u8>> {
 
     // Cap the read too: metadata can under-report (a growing or virtual file),
     // so bound the bytes actually read and reject anything over the limit.
-    let mut buf = Vec::new();
+    // Zeroizing so the masked bytes are scrubbed on every path — the
+    // over-size early return here and each caller's drop.
+    let mut buf = Zeroizing::new(Vec::new());
     file.take(MAX_MASKED_KEY_SIZE + 1)
         .read_to_end(&mut buf)
         .map_err(|e| EngineError::wrap(format!("read masked key {}", path.display()), e))?;
@@ -395,7 +398,7 @@ mod tests {
         let s = Scratch::new();
         let p = s.0.join("blob.bin");
         fs::write(&p, b"masked-bytes").unwrap();
-        assert_eq!(read_masked_key(&p).unwrap(), b"masked-bytes");
+        assert_eq!(read_masked_key(&p).unwrap().as_slice(), b"masked-bytes");
     }
 
     #[test]
@@ -425,13 +428,15 @@ mod tests {
         assert!(read_masked_key(&p).is_err());
     }
 
-    /// `load_key` rejects RSA/RSA-PSS before opening the HSM, so this needs no
-    /// device — only a throwaway ENGINE to satisfy the signature.
+    /// `load_key` rejects RSA-PSS before opening the HSM, so this needs no
+    /// device — only a throwaway ENGINE to satisfy the signature. (RSA now has
+    /// a load path via `rsaload::load_rsa`; RSA-PSS lands with its signature
+    /// support.)
     #[test]
     #[allow(unsafe_code)]
-    fn load_key_rejects_rsa_before_hsm_open() {
+    fn load_key_rejects_rsa_pss_before_hsm_open() {
         // SAFETY: ENGINE_new returns a fresh structural ref, freed below; the
-        // Engine wrapper is only used to satisfy the signature (the RSA arm
+        // Engine wrapper is only used to satisfy the signature (the RSA-PSS arm
         // returns before touching it).
         unsafe {
             let raw = ffi::ENGINE_new();
@@ -439,9 +444,9 @@ mod tests {
             let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
             let data = EngineData::new();
             let err =
-                load_key(&engine, &data, "azihsm:///tmp/does-not-matter;type=rsa").unwrap_err();
+                load_key(&engine, &data, "azihsm:///tmp/does-not-matter;type=rsa-pss").unwrap_err();
             assert!(
-                format!("{err}").contains("RSA key loading is not yet supported"),
+                format!("{err}").contains("RSA-PSS key loading is not yet supported"),
                 "unexpected error: {err}"
             );
             ffi::ENGINE_free(raw);

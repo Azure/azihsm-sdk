@@ -41,13 +41,12 @@ use super::finish::SessionHandshake;
 /// `part_policy` must be exactly [`PART_POLICY_LEN`] and match the policy
 /// bound at `PartInit`. `certs` are the PTA-chain certificate DERs
 /// (root → PTA), transferred out of band; each becomes one SGL data block
-/// referenced by a `(index, length)` descriptor. Callers exercising a gate
-/// that rejects *before* the chain walk pass an empty `certs` slice (the
-/// schema still needs >=1 descriptor, so a single placeholder with no OOB
-/// region is emitted).
-/// `prev_local_mk_backup` is the optional prior backup to restore
-/// (empty = first instantiation).
-pub(crate) fn part_final(
+/// referenced by a `(index, length)` descriptor.  Callers exercising a
+/// gate that rejects *before* the chain walk pass an empty `certs` slice
+/// (the schema still needs ≥1 descriptor, so a single placeholder with no
+/// OOB region is emitted).  `prev_local_mk_backup` is the optional prior
+/// backup to restore (empty = first instantiation).
+pub fn part_final(
     dev: &<AzihsmDdi as Ddi>::Dev,
     session: &SessionHandshake,
     part_policy: &[u8],

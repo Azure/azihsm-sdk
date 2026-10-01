@@ -50,6 +50,13 @@ fn new_test_engine() -> (Engine, *mut ffi::ENGINE) {
         engine
             .set_ec_method(crate::sign::ecdsa_method().unwrap())
             .unwrap();
+        // The RSA loader/import binds keys via RSA_new_method, which needs an
+        // RSA method on the engine — register the default, exactly as
+        // bind_helper does in production.
+        // SAFETY: RSA_get_default_method is a process-lifetime const method.
+        engine
+            .set_rsa_method(ffi::RSA_get_default_method())
+            .unwrap();
         (engine, raw)
     }
 }
@@ -327,7 +334,399 @@ mod round_trips {
         azihsm_ossl_engine_core::hkdf_method::register_hkdf_pkey_method::<crate::hkdf::AzihsmHkdf>(
             &engine,
         )?;
+        azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
+            crate::rsaimport::AzihsmRsaImport,
+        >(&engine)?;
         Ok((engine, engine_raw))
+    }
+
+    /// Import an external RSA key through the real `EVP_PKEY_keygen` (import)
+    /// path against our engine, with the given ctrl-string options. Returns the
+    /// imported key, or the OpenSSL error text if import fails.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn try_rsa_import(
+        engine_raw: *mut ffi::ENGINE,
+        opts: &[(&str, &str)],
+    ) -> Result<*mut ffi::EVP_PKEY, String> {
+        use std::ffi::CString;
+        use std::ffi::c_int;
+
+        let cstr = |s: &str| CString::new(s).unwrap();
+        let opts: Vec<_> = opts.iter().map(|(k, v)| (cstr(k), cstr(v))).collect();
+        // SAFETY: standard EVP_PKEY keygen sequence against our engine; every
+        // return code is checked and the ctx is freed on all paths.
+        unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::EVP_PKEY_RSA as c_int, engine_raw);
+            assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id(RSA, engine)");
+            assert_eq!(ffi::EVP_PKEY_keygen_init(ctx), 1, "EVP_PKEY_keygen_init");
+            for (key, value) in &opts {
+                assert_eq!(
+                    ffi::EVP_PKEY_CTX_ctrl_str(ctx, key.as_ptr(), value.as_ptr()),
+                    1,
+                    "pkey option {key:?} must be accepted at the parameter surface"
+                );
+            }
+            let mut pkey = std::ptr::null_mut();
+            let rc = ffi::EVP_PKEY_keygen(ctx, &mut pkey);
+            ffi::EVP_PKEY_CTX_free(ctx);
+            if rc == 1 {
+                assert!(!pkey.is_null(), "import returned a NULL EVP_PKEY");
+                Ok(pkey)
+            } else {
+                if !pkey.is_null() {
+                    ffi::EVP_PKEY_free(pkey);
+                }
+                Err(openssl::error::ErrorStack::get().to_string())
+            }
+        }
+    }
+
+    /// Import a software RSA key into the HSM through the real import path
+    /// (`azihsm.input_key`), reload the written masked blob through the loader,
+    /// and prove the public modulus survives the round trip. Asserts the masked
+    /// blob carries the requested key kind (RSA vs RSA-CRT). Backend-agnostic.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_rsa_import(data: EngineData, dir: &Path, crt: bool) -> EngineResult<()> {
+        use azihsm_api::HsmKeyCommonProps;
+        use azihsm_api::HsmKeyKind;
+        use azihsm_api::HsmKeyManager;
+        use azihsm_api::HsmRsaKeyUnmaskAlgo;
+        use openssl::rsa::Rsa;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // Fixture: a software RSA-2048 key as unencrypted PKCS#8 DER.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+        let input_der = sw_pkey
+            .private_key_to_pkcs8()
+            .map_err(|e| EngineError::wrap("encode pkcs8", e))?;
+        let expected_pub = sw_pkey
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode sw pub", e))?;
+
+        let tag = if crt { "crt" } else { "plain" };
+        let input_path = dir.join(format!("rsa-input-{tag}-{}.der", std::process::id()));
+        let blob_path = dir.join(format!("rsa-blob-{tag}-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&input_path);
+        let _ = std::fs::remove_file(&blob_path);
+        write_key_material(&input_path, &input_der)
+            .map_err(|e| EngineError::wrap("write input der", e))?;
+
+        // Import via the pkey method (genpkey-equivalent).
+        let raw = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "2048"),
+                ("azihsm.input_key", input_path.to_str().unwrap()),
+                ("azihsm.masked_key", blob_path.to_str().unwrap()),
+                ("azihsm.key_kind", if crt { "RSA-CRT" } else { "RSA" }),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("RSA import failed: {e}")))?;
+        assert!(
+            std::fs::metadata(&blob_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false),
+            "masked blob not written"
+        );
+
+        // The imported key's public modulus matches the original.
+        // SAFETY: raw is the owning EVP_PKEY from the import.
+        let imported: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        let imported_pub = imported
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode imported pub", e))?;
+        assert_eq!(imported_pub, expected_pub, "imported public key mismatch");
+
+        // The masked blob carries the requested key kind.
+        let blob = std::fs::read(&blob_path).map_err(|e| EngineError::wrap("read blob", e))?;
+        slot.get(&engine)
+            .ok_or(EngineError::NullParam("engine_data"))?
+            .with_session(|session| {
+                let mut algo = HsmRsaKeyUnmaskAlgo::default();
+                let (priv_key, _pub) = HsmKeyManager::unmask_key_pair(session, &mut algo, &blob)
+                    .map_err(|e| EngineError::wrap("unmask blob for kind check", e))?;
+                let expected = if crt {
+                    HsmKeyKind::RsaCrt
+                } else {
+                    HsmKeyKind::Rsa
+                };
+                assert_eq!(priv_key.kind(), expected, "masked blob key kind mismatch");
+                crate::context::delete_hsm_key(priv_key, "rsa kind-check key");
+                Ok(())
+            })?;
+
+        // The blob reloads through the loader with the same public key.
+        let uri = format!("azihsm://{};type=rsa", blob_path.display());
+        let reloaded_raw = crate::keyload::load_key(
+            &engine,
+            slot.get(&engine)
+                .ok_or(EngineError::NullParam("engine_data"))?,
+            &uri,
+        )?;
+        // SAFETY: reloaded_raw is the owning EVP_PKEY from load_key.
+        let reloaded: PKey<Public> = unsafe { PKey::from_ptr(reloaded_raw.cast()) };
+        let reloaded_pub = reloaded
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode reloaded pub", e))?;
+        assert_eq!(reloaded_pub, expected_pub, "reloaded public key mismatch");
+
+        // Teardown: drop keys (release engine refs), drop EngineData (delete
+        // HSM keys), free the engine, drop the stale pkey-table entries.
+        drop(imported);
+        drop(reloaded);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        let _ = std::fs::remove_file(&input_path);
+        let _ = std::fs::remove_file(&blob_path);
+        Ok(())
+    }
+
+    /// Export the HSM's unwrapping public key through the import path
+    /// (`genpkey ... -pkeyopt azihsm.key_usage:keyWrapping`) and prove it is a
+    /// usable 2048-bit RSA public key. Also pins that a non-2048 size is
+    /// rejected up front (the HSM unwrapping key is fixed at 2048 bits). Only
+    /// the mock test exercises this today; the hardware smoke follows.
+    #[cfg(feature = "mock")]
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_rsa_export_unwrapping_key(data: EngineData) -> EngineResult<()> {
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // A non-2048 size is rejected before any export work.
+        let err = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "3072"),
+                ("azihsm.key_usage", "keyWrapping"),
+            ],
+        )
+        .expect_err("keyWrapping must reject a non-2048 size");
+        assert!(
+            err.contains("requires rsa_keygen_bits=2048"),
+            "unexpected error: {err}"
+        );
+
+        // The 2048 export yields a usable 2048-bit RSA public key.
+        let raw = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "2048"),
+                ("azihsm.key_usage", "keyWrapping"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("keyWrapping export failed: {e}")))?;
+        // SAFETY: raw is the owning EVP_PKEY from the export.
+        let exported: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        let rsa = exported
+            .rsa()
+            .map_err(|e| EngineError::wrap("exported key is not RSA", e))?;
+        // size() is the modulus in bytes; 256 bytes == 2048 bits.
+        assert_eq!(rsa.size(), 256, "unwrapping key must be a 2048-bit RSA key");
+
+        // Teardown.
+        drop(exported);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        Ok(())
+    }
+
+    /// Import an external RSA key through the pre-wrapped path
+    /// (`azihsm.wrapped_key`): pre-wrap a software PKCS#8 key against the HSM's
+    /// unwrapping public key (RSA-OAEP-SHA256 + AES-256-KWP, via the same wrap
+    /// an external SDK holder would use), import the blob, and prove the masked
+    /// kind and reloaded public key — the wrapped-blob analogue of
+    /// [`run_rsa_import`]. Mock-only: it uses the cached unwrapping key handle.
+    #[cfg(feature = "mock")]
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_rsa_import_wrapped(data: EngineData, dir: &Path) -> EngineResult<()> {
+        use azihsm_api::HsmEncrypter;
+        use azihsm_api::HsmHashAlgo;
+        use azihsm_api::HsmKeyCommonProps;
+        use azihsm_api::HsmKeyKind;
+        use azihsm_api::HsmKeyManager;
+        use azihsm_api::HsmRsaAesWrapAlgo;
+        use azihsm_api::HsmRsaKeyUnmaskAlgo;
+        use openssl::rsa::Rsa;
+        use zeroize::Zeroizing;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // Software RSA-2048 as unencrypted PKCS#8, plus its public DER.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+        let pkcs8 = Zeroizing::new(
+            sw_pkey
+                .private_key_to_pkcs8()
+                .map_err(|e| EngineError::wrap("encode pkcs8", e))?,
+        );
+        let expected_pub = sw_pkey
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode sw pub", e))?;
+
+        // Pre-wrap the PKCS#8 against the HSM's unwrapping public key, exactly as
+        // an external party holding that key would, so the wrapped_key path
+        // receives a blob produced outside the import itself.
+        let wrapped = {
+            let ed = slot
+                .get(&engine)
+                .ok_or(EngineError::NullParam("engine_data"))?;
+            ed.with_session(|session| {
+                ed.with_unwrapping_key(session, |_unwrap_priv, unwrap_pub| {
+                    let mut wrap = HsmRsaAesWrapAlgo::new(HsmHashAlgo::Sha256, 32);
+                    HsmEncrypter::encrypt_vec(&mut wrap, unwrap_pub, &pkcs8)
+                        .map_err(|e| EngineError::wrap("external RSA-AES wrap", e))
+                })
+            })?
+        };
+
+        let blob_in = dir.join(format!("rsa-wrapped-in-{}.bin", std::process::id()));
+        let blob_out = dir.join(format!("rsa-wrapped-out-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&blob_in);
+        let _ = std::fs::remove_file(&blob_out);
+        write_key_material(&blob_in, &wrapped)
+            .map_err(|e| EngineError::wrap("write wrapped blob", e))?;
+
+        // Import through the pre-wrapped path.
+        let raw = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "2048"),
+                ("azihsm.wrapped_key", blob_in.to_str().unwrap()),
+                ("azihsm.masked_key", blob_out.to_str().unwrap()),
+                ("azihsm.key_kind", "RSA-CRT"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("wrapped_key import failed: {e}")))?;
+
+        // SAFETY: raw is the owning EVP_PKEY from the import.
+        let imported: PKey<Public> = unsafe { PKey::from_ptr(raw.cast()) };
+        let imported_pub = imported
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode imported pub", e))?;
+        assert_eq!(
+            imported_pub, expected_pub,
+            "wrapped import public key mismatch"
+        );
+
+        // The masked blob carries RSA-CRT.
+        let blob = std::fs::read(&blob_out).map_err(|e| EngineError::wrap("read blob", e))?;
+        slot.get(&engine)
+            .ok_or(EngineError::NullParam("engine_data"))?
+            .with_session(|session| {
+                let mut algo = HsmRsaKeyUnmaskAlgo::default();
+                let (priv_key, _pub) = HsmKeyManager::unmask_key_pair(session, &mut algo, &blob)
+                    .map_err(|e| EngineError::wrap("unmask blob for kind check", e))?;
+                assert_eq!(
+                    priv_key.kind(),
+                    HsmKeyKind::RsaCrt,
+                    "wrapped masked blob key kind mismatch"
+                );
+                crate::context::delete_hsm_key(priv_key, "rsa wrapped kind-check key");
+                Ok(())
+            })?;
+
+        // The blob reloads through the loader with the same public key.
+        let uri = format!("azihsm://{};type=rsa", blob_out.display());
+        let reloaded_raw = crate::keyload::load_key(
+            &engine,
+            slot.get(&engine)
+                .ok_or(EngineError::NullParam("engine_data"))?,
+            &uri,
+        )?;
+        // SAFETY: reloaded_raw is the owning EVP_PKEY from load_key.
+        let reloaded: PKey<Public> = unsafe { PKey::from_ptr(reloaded_raw.cast()) };
+        let reloaded_pub = reloaded
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode reloaded pub", e))?;
+        assert_eq!(reloaded_pub, expected_pub, "reloaded public key mismatch");
+
+        // Teardown.
+        drop(imported);
+        drop(reloaded);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        let _ = std::fs::remove_file(&blob_in);
+        let _ = std::fs::remove_file(&blob_out);
+        Ok(())
+    }
+
+    /// A direct-ABI keygen-bits setter (`EVP_PKEY_CTX_set_rsa_keygen_bits`,
+    /// which dispatches the numeric `EVP_PKEY_CTRL_RSA_KEYGEN_BITS` ctrl, not
+    /// the string form) must be recorded in the import state. Request
+    /// keyWrapping with a direct-set 3072 and confirm it is rejected for not
+    /// being 2048 — it would wrongly fall back to the 2048 default if the
+    /// numeric ctrl were not recorded. Mock-only.
+    #[cfg(feature = "mock")]
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_rsa_keygen_bits_direct_ctrl(data: EngineData) -> EngineResult<()> {
+        use std::ffi::CString;
+        use std::ffi::c_int;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // SAFETY: standard keygen ctx; bits set through the numeric ctrl, then a
+        // keygen that must fail the keyWrapping non-2048 check. Freed on all paths.
+        let err = unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::EVP_PKEY_RSA as c_int, engine_raw);
+            assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id(RSA, engine)");
+            assert_eq!(ffi::EVP_PKEY_keygen_init(ctx), 1, "EVP_PKEY_keygen_init");
+            let usage = CString::new("azihsm.key_usage").unwrap();
+            let wrapping = CString::new("keyWrapping").unwrap();
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(ctx, usage.as_ptr(), wrapping.as_ptr()),
+                1,
+                "key_usage must be accepted"
+            );
+            assert!(
+                ffi::EVP_PKEY_CTX_ctrl(
+                    ctx,
+                    ffi::EVP_PKEY_RSA as c_int,
+                    ffi::EVP_PKEY_OP_KEYGEN_CONST,
+                    ffi::EVP_PKEY_CTRL_RSA_KEYGEN_BITS_CONST,
+                    3072,
+                    std::ptr::null_mut(),
+                ) > 0,
+                "direct keygen_bits ctrl must be accepted"
+            );
+            let mut pkey = std::ptr::null_mut();
+            let rc = ffi::EVP_PKEY_keygen(ctx, &mut pkey);
+            let err = openssl::error::ErrorStack::get().to_string();
+            if !pkey.is_null() {
+                ffi::EVP_PKEY_free(pkey);
+            }
+            ffi::EVP_PKEY_CTX_free(ctx);
+            assert_ne!(
+                rc, 1,
+                "keyWrapping with a direct-set 3072 bits must be rejected"
+            );
+            err
+        };
+        assert!(
+            err.contains("requires rsa_keygen_bits=2048"),
+            "unexpected error: {err}"
+        );
+
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        Ok(())
     }
 
     /// Run an HKDF derive on a `NID_hkdf` context against `engine_raw` with
@@ -1292,6 +1691,78 @@ mod mock {
         }
     }
 
+    // Import an external RSA key into the HSM through the real EVP_PKEY_keygen
+    // (import) path — the ABI equivalent of `openssl genpkey -engine azihsm
+    // -algorithm RSA -pkeyopt azihsm.input_key:<der> -pkeyopt
+    // azihsm.masked_key:<path>` — for both RSA-CRT (default) and plain RSA,
+    // asserting the masked blob's kind and the reloaded public key (see
+    // round_trips::run_rsa_import).
+    #[test]
+    #[serial]
+    fn rsa_import_via_pkey_method_reloads() {
+        for crt in [true, false] {
+            let scratch = Scratch::new("rsa-import");
+            let data = EngineData::new();
+            data.open_hsm_with(
+                caller_settings(&scratch),
+                HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+            )
+            .unwrap();
+            round_trips::run_rsa_import(data, &scratch.0, crt).unwrap();
+        }
+    }
+
+    // Import an external RSA key through the pre-wrapped path
+    // (`azihsm.wrapped_key`): wrap a software PKCS#8 against the HSM's
+    // unwrapping public key, import, and verify the masked kind and reloaded
+    // public key (see round_trips::run_rsa_import_wrapped).
+    #[test]
+    #[serial]
+    fn rsa_import_wrapped_via_pkey_method_reloads() {
+        let scratch = Scratch::new("rsa-wrapped");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_rsa_import_wrapped(data, &scratch.0).unwrap();
+    }
+
+    // Export the HSM's unwrapping public key via `genpkey -algorithm RSA
+    // -pkeyopt azihsm.key_usage:keyWrapping`, asserting a usable 2048-bit RSA
+    // public key and the non-2048 rejection (see
+    // round_trips::run_rsa_export_unwrapping_key).
+    #[test]
+    #[serial]
+    fn rsa_export_unwrapping_key_via_pkey_method() {
+        let scratch = Scratch::new("rsa-export");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_rsa_export_unwrapping_key(data).unwrap();
+    }
+
+    // A direct-ABI keygen-bits setter (numeric ctrl, not the string form) must
+    // be recorded so an armed import honors it — here keyWrapping with a
+    // direct-set 3072 is rejected for not being 2048 (see
+    // round_trips::run_rsa_keygen_bits_direct_ctrl).
+    #[test]
+    #[serial]
+    fn rsa_keygen_bits_direct_ctrl_is_recorded() {
+        let scratch = Scratch::new("rsa-bits");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_rsa_keygen_bits_direct_ctrl(data).unwrap();
+    }
+
     // ECDH through the real EVP_PKEY_derive path — buffer and output_file
     // modes, blob reload, and the negatives — one round trip per supported
     // curve (see round_trips::run_derive).
@@ -1656,6 +2127,23 @@ mod hw_tests {
             let data = EngineData::new();
             data.open_hsm_from_env()?;
             round_trips::run_derive(data, &std::env::temp_dir(), curve)?;
+        }
+        Ok(())
+    }
+
+    /// Hardware RSA import round trips, same flow as the mock test (see
+    /// [`super::round_trips::run_rsa_import`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine rsa_import_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn rsa_import_from_env_smoke() -> EngineResult<()> {
+        for crt in [true, false] {
+            let data = EngineData::new();
+            data.open_hsm_from_env()?;
+            round_trips::run_rsa_import(data, &std::env::temp_dir(), crt)?;
         }
         Ok(())
     }

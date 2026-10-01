@@ -61,7 +61,7 @@ pub const ROTATED_CU_PSK: [u8; PSK_LEN] = [
 ];
 
 /// Rotate the default CO PSK and return a fresh authenticated CO session.
-pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+pub fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
     let bootstrap = ctx
         .open_session(CO_PSK_ID, SessionType::Authenticated)
         .expect("open_session must succeed");
@@ -79,7 +79,7 @@ pub(crate) fn bootstrap_rotated_co(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) ->
 }
 
 /// Rotate the default CU PSK and return a fresh plaintext CU session.
-pub(crate) fn bootstrap_rotated_cu(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
+pub fn bootstrap_rotated_cu(ctx: &TestCtx, target_psk: &[u8; PSK_LEN]) -> SessionHandshake {
     let bootstrap = ctx
         .open_session(CU_PSK_ID, SessionType::PlainText)
         .expect("open_session must succeed");
@@ -119,7 +119,7 @@ pub struct TestDev {
     _guard: Option<MutexGuard<'static, ()>>,
     /// Backend `DevInfo::path` this handle was opened on. Cached so
     /// multi-fd tests can bind extra `TestDev`s to the *same*
-    /// underlying device via [`TestCtx::new_with_path`](crate::harness::TestCtx::new_with_path).
+    /// underlying device via [`TestCtx::new_with_path`](crate::TestCtx::new_with_path).
     path: String,
 }
 
@@ -174,6 +174,32 @@ pub fn open_dev() -> TestDev {
     }
 }
 
+/// Primary counterpart to [`open_dev`] that opens the caller-
+/// supplied backend `path` instead of the first device advertised by
+/// `AzihsmDdi::dev_info_list()`. Still acquires `TEST_LOCK` and
+/// factory-resets the device before returning, giving the caller the
+/// same isolation guarantees as [`open_dev`].
+///
+/// Use this when the device is selected out-of-band (e.g. via an
+/// environment variable in the libfuzzer harness) but no other
+/// primary [`TestDev`] is alive on this thread to hold the lock.
+/// Do **not** call this while another primary handle exists — the
+/// second `TEST_LOCK` acquisition would deadlock; use
+/// [`open_dev_secondary`] instead.
+pub fn open_dev_with_path(path: &str) -> TestDev {
+    let guard = TEST_LOCK.lock();
+    let dev = AzihsmDdi::default()
+        .open_dev(path)
+        .expect("open test backend device on caller-supplied path");
+    dev.erase()
+        .expect("open_dev_with_path: factory-reset backend before test");
+    TestDev {
+        dev,
+        _guard: Some(guard),
+        path: path.to_string(),
+    }
+}
+
 /// Open a secondary [`TestDev`] on the same backend path as the
 /// primary [`TestDev`] already alive in this test.
 ///
@@ -189,7 +215,7 @@ pub fn open_dev() -> TestDev {
 ///
 /// Caller must ensure the primary [`TestDev`] outlives every
 /// secondary, otherwise the lock guard drops mid-test.
-pub(crate) fn open_dev_secondary(path: &str) -> TestDev {
+pub fn open_dev_secondary(path: &str) -> TestDev {
     let dev = AzihsmDdi::default()
         .open_dev(path)
         .expect("open secondary backend device on the same path as the primary TestDev");

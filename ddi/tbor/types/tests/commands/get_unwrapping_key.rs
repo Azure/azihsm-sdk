@@ -15,6 +15,12 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -22,12 +28,6 @@ use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::UNWRAPPING_PUB_KEY_LEN;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
-use crate::harness::CO_PSK_ID;
-use crate::harness::CU_PSK_ID as CU;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::ROTATED_CU_PSK;
 
 const RSA_2048_MODULUS_LEN: usize = 256;
 const RSA_PUBLIC_EXPONENT: u32 = 65_537;
