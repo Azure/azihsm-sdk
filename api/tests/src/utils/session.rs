@@ -33,9 +33,9 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
 /// hardware runs in separate processes need a matching `AZIHSM_MOBK_PATH` cache.
 /// The default cache path is process-specific.
 ///
-/// EX setup opens a CO session and rotates its default PSK. It does not call
-/// `part_init_ex` or `part_final_ex`; tests requiring partition-local or
-/// security-domain masking keys need additional provisioning.
+/// EX setup opens a CO session, rotates its default PSK, and calls
+/// `part_init_ex` and `part_final_ex` to provision partition-local masking keys.
+/// Security-domain operations still require their own provisioning.
 ///
 /// # Type Parameters
 ///
@@ -50,6 +50,7 @@ const ROTATED_CO_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
 /// - Partition reset or legacy initialization fails
 /// - Session creation fails
 /// - EX setup cannot rotate the default CO PSK
+/// - EX partition initialization or finalization fails
 #[allow(unused)]
 #[allow(clippy::expect_used)]
 pub(crate) fn with_session<F>(mut test: F)
@@ -122,6 +123,7 @@ fn open_session_ex_test_session(path: &str, rev: HsmApiRev) -> HsmSession {
     session
         .change_psk(&ROTATED_CO_PSK)
         .expect("Failed to rotate the default CO PSK");
+    crate::utils::sd_provision::provision_partition(&session);
     session
 }
 
