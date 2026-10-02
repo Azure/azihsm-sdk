@@ -34,11 +34,16 @@ use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
@@ -310,12 +315,6 @@ fn key_report_report_data_patterns() {
 
 #[test]
 fn key_report_generated_ecc_all_curves() {
-    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
-
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     for curve in [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521] {
@@ -385,9 +384,7 @@ fn key_report_rejects_all_symmetric_key_classes() {
 #[test]
 #[cfg(feature = "emu")]
 fn key_report_rejects_session_scope() {
-    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+    use crate::commands::common::SCOPE_SESSION;
 
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
@@ -515,7 +512,8 @@ fn key_report_imported_ecc_all_curves() {
             })
             .expect("attest imported ECC key");
 
-        verify_key_report(&ctx, &report.report, &imported.pub_key, &report_data);
+        let decoded = verify_key_report(&ctx, &report.report, &imported.pub_key, &report_data);
+        assert_eq!(decoded.flags, (1 << 0) | (1 << 5) | (1 << 6));
     }
 }
 
