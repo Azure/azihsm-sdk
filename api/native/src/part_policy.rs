@@ -76,6 +76,8 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_new(
     out_builder: *mut *mut AzihsmPartPolicyBuilder,
 ) -> AzihsmStatus {
     abi_boundary(|| {
+        validate_ptr(out_builder)?;
+
         let handle = Box::into_raw(Box::new(AzihsmPartPolicyBuilder {
             inner: api::PartPolicyBuilder::new(),
         }));
