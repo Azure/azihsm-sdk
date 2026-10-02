@@ -29,7 +29,7 @@ fn create_source_backup(
     pid_pub: &[u8; RAW_PUB_LEN],
     masked_sender_key: &[u8],
     receiver_report: &[u8],
-    policy: &[u8],
+    policy: &PartPolicy,
 ) -> Vec<u8> {
     let receiver = build_receiver_evidence(pid_pub, sata_key, receiver_report);
     receiver

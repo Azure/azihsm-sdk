@@ -167,6 +167,8 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_create_remote_backup(part_policy, masked_sealing_key, &receiver)?;
 
         copy_to_buffer(pok_remote_backup, &result.pok_remote_backup)?;
@@ -245,6 +247,8 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
         let dst_remote_backup = deref_mut_ptr(dst_remote_backup)?;
         validate_output_buffer(dst_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_reseal_remote_backup(
             part_policy,
             masked_sealing_key,
@@ -333,6 +337,8 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_restore_remote_backup(
             part_policy,
             masked_sealing_key,
@@ -411,6 +417,8 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
         let pok_peer_backup = deref_mut_ptr(pok_peer_backup)?;
         validate_output_buffer(pok_peer_backup, api::POK_REMOTE_BACKUP_LEN)?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_create_peer_backup(
             part_policy,
             masked_sealing_key,
@@ -498,6 +506,8 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_restore_peer_backup(
             part_policy,
             masked_sealing_key,

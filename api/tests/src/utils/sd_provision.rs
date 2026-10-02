@@ -31,13 +31,11 @@ use azihsm_crypto::x509_builder::leaf_cert;
 use azihsm_crypto::x509_builder::root_cert;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
-use zerocopy::IntoBytes;
 
 use crate::utils::partition_ex_helpers::new_partition;
 
@@ -607,20 +605,15 @@ pub(crate) fn build_receiver_evidence(
 /// `prev_local_mk` restores `PartLocalMK` during finalize — the reboot
 /// recovery step that lets a captured masked sealing key unmask.
 /// `allow_peer_cloning` sets that flag in the built policy (ignored when
-/// `policy_in` is supplied). Returns the CO session, the policy image, the
+/// `policy_in` is supplied). Returns the CO session, the typed policy, the
 /// PID public key, and the `local_mk_backup` that finalize produced.
 pub(crate) fn provision_backing_ex(
     sata_key: &CaKey,
     pota: &CaKey,
-    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    policy_in: Option<&PartPolicy>,
     prev_local_mk: Option<&[u8]>,
     allow_peer_cloning: bool,
-) -> (
-    HsmSession,
-    [u8; PART_POLICY_LEN],
-    [u8; RAW_PUB_LEN],
-    Vec<u8>,
-) {
+) -> (HsmSession, PartPolicy, [u8; RAW_PUB_LEN], Vec<u8>) {
     let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
@@ -662,29 +655,20 @@ pub(crate) fn provision_backing_ex(
     let mut pid_pub = [0u8; RAW_PUB_LEN];
     pid_pub.copy_from_slice(&pid_pub_vec);
 
-    let policy_bytes: [u8; PART_POLICY_LEN] = match policy_in {
-        Some(bytes) => bytes,
-        None => {
-            let built = backing_part_policy(
-                &pid,
-                &pid_pub_vec,
-                &sata_key.raw_pub(),
-                &pota.raw_pub(),
-                allow_peer_cloning,
-            );
-            let mut bytes = [0u8; PART_POLICY_LEN];
-            bytes.copy_from_slice(built.as_bytes());
-            bytes
-        }
+    let policy = match policy_in {
+        Some(policy) => policy.clone(),
+        None => backing_part_policy(
+            &pid,
+            &pid_pub_vec,
+            &sata_key.raw_pub(),
+            &pota.raw_pub(),
+            allow_peer_cloning,
+        ),
     };
-    // Borrow the wire image back as a typed policy for the init/final
-    // round-trip; the raw bytes are returned for the `sd_*` commands,
-    // which still take the policy as an opaque image.
-    let policy = PartPolicy::ref_from_wire(&policy_bytes).expect("valid policy image");
 
     let init = session
         .part_init_ex(
-            policy,
+            &policy,
             &mach_seed(),
             &pota_thumbprint(),
             &sata_thumbprint(),
@@ -702,10 +686,10 @@ pub(crate) fn provision_backing_ex(
         },
     ];
     let result = session
-        .part_final_ex(policy, &certs, prev_local_mk)
+        .part_final_ex(&policy, &certs, prev_local_mk)
         .expect("part_final_ex");
 
-    (session, policy_bytes, pid_pub, result.local_mk_backup)
+    (session, policy, pid_pub, result.local_mk_backup)
 }
 
 /// Provision a backing partition with peer cloning enabled — the common
@@ -714,26 +698,21 @@ pub(crate) fn provision_backing_ex(
 pub(crate) fn provision_backing(
     sata_key: &CaKey,
     pota: &CaKey,
-    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    policy_in: Option<&PartPolicy>,
     prev_local_mk: Option<&[u8]>,
-) -> (
-    HsmSession,
-    [u8; PART_POLICY_LEN],
-    [u8; RAW_PUB_LEN],
-    Vec<u8>,
-) {
+) -> (HsmSession, PartPolicy, [u8; RAW_PUB_LEN], Vec<u8>) {
     provision_backing_ex(sata_key, pota, policy_in, prev_local_mk, true)
 }
 
 /// Provision a fresh partition with a **backing-partition policy** — one
 /// that names this partition (via `PartInfo`) as the backup backing
 /// partition and anchors the security domain to `sata_key` — and return
-/// the live CO session, the exact policy image (needed verbatim by
+/// the live CO session, the typed policy (needed by
 /// `sd_create_remote_backup`), and the partition-identity public key that
 /// every evidence leaf certificate must carry.
 pub(crate) fn finalized_backing_session(
     sata_key: &CaKey,
-) -> (HsmSession, [u8; PART_POLICY_LEN], [u8; RAW_PUB_LEN]) {
+) -> (HsmSession, PartPolicy, [u8; RAW_PUB_LEN]) {
     let pota = CaKey::generate();
     let (session, policy, pid_pub, _local_mk) = provision_backing(sata_key, &pota, None, None);
     (session, policy, pid_pub)
