@@ -27,6 +27,7 @@ use azihsm_ddi_mbor_codec::MborEncoder;
 use azihsm_ddi_mbor_types::DdiAesOp;
 use azihsm_ddi_mbor_types::DdiDecoder;
 use azihsm_ddi_mbor_types::DdiDeviceKind;
+use azihsm_ddi_mbor_types::DdiOp;
 use azihsm_ddi_mbor_types::DdiOpReq;
 use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
@@ -191,20 +192,34 @@ struct SessionGenerationTracker {
     /// replaced (partition reset).
     generation: AtomicU64,
 
-    /// Session ids opened over the MBOR path, each mapped to the
-    /// `generation` they were opened under. Cleared by `reset`.
-    open_sessions: Mutex<HashMap<u16, u64>>,
+    /// Session ids opened over the MBOR path, each mapped to its unique
+    /// handle token and the generation it was opened under. Stale entries
+    /// are retained so only the matching handle can reopen after a reset.
+    open_sessions: Mutex<HashMap<u16, SessionGeneration>>,
+    next_token: AtomicU64,
+}
+
+#[derive(Clone, Copy)]
+struct SessionGeneration {
+    generation: u64,
+    token: DdiCookie,
 }
 
 impl SessionGenerationTracker {
-    /// Reject a `Close`/`InSession` request whose `session_id` doesn't
-    /// belong to the current generation.
+    /// Reject a `Close`/`InSession` request unless its per-handle token
+    /// identifies the currently tracked session.
     ///
     /// Must be called *before* the request is sent: rejecting only after
     /// a failed round trip would be too late, since the point is to keep
     /// a stale close from ever reaching the (possibly reused) live
     /// session on the replacement connection.
-    fn check(&self, session_ctrl: SessionControlKind, session_id: Option<u16>) -> DdiResult<()> {
+    fn check(
+        &self,
+        opcode: DdiOp,
+        session_ctrl: SessionControlKind,
+        session_id: Option<u16>,
+        cookie: Option<DdiCookie>,
+    ) -> DdiResult<()> {
         if session_ctrl == SessionControlKind::Open {
             // No session id to validate yet: the firmware hasn't assigned
             // one.
@@ -213,21 +228,42 @@ impl SessionGenerationTracker {
         let Some(id) = session_id else {
             return Ok(());
         };
+        let Some(token) = cookie else {
+            return Err(DdiError::DdiStatus(DdiStatus::SessionNotFound));
+        };
         let current = self.generation.load(Ordering::SeqCst);
         match self.open_sessions.lock().get(&id) {
-            Some(&generation) if generation == current => Ok(()),
+            Some(session)
+                if session.token == token
+                    && (session.generation == current || opcode == DdiOp::ReopenSession) =>
+            {
+                Ok(())
+            }
             _ => Err(DdiError::DdiStatus(DdiStatus::SessionNotFound)),
         }
     }
 
     /// Record the bookkeeping side-effect of a successful MBOR
-    /// `Open`/`Close` exchange on `session_id`.
-    fn record(&self, session_ctrl: SessionControlKind, session_id: Option<u16>) {
+    /// `Open`/`Close`/`ReopenSession` exchange.
+    fn record(
+        &self,
+        opcode: DdiOp,
+        session_ctrl: SessionControlKind,
+        session_id: Option<u16>,
+        cookie: &mut Option<DdiCookie>,
+    ) {
         match session_ctrl {
             SessionControlKind::Open => {
                 if let Some(id) = session_id {
-                    let generation = self.generation.load(Ordering::SeqCst);
-                    self.open_sessions.lock().insert(id, generation);
+                    let token = self.next_token.fetch_add(1, Ordering::SeqCst);
+                    *cookie = Some(token);
+                    self.open_sessions.lock().insert(
+                        id,
+                        SessionGeneration {
+                            generation: self.generation.load(Ordering::SeqCst),
+                            token,
+                        },
+                    );
                 }
             }
             SessionControlKind::Close => {
@@ -235,18 +271,24 @@ impl SessionGenerationTracker {
                     self.open_sessions.lock().remove(&id);
                 }
             }
+            SessionControlKind::InSession if opcode == DdiOp::ReopenSession => {
+                if let (Some(id), Some(token)) = (session_id, *cookie) {
+                    if let Some(session) = self.open_sessions.lock().get_mut(&id) {
+                        if session.token == token {
+                            session.generation = self.generation.load(Ordering::SeqCst);
+                        }
+                    }
+                }
+            }
             SessionControlKind::NoSession | SessionControlKind::InSession => {}
         }
     }
 
-    /// Bump the generation and drop all recorded session ids: called
-    /// after [`DdiVsockDev::erase`] replaces the live connection, since
-    /// every previously-tracked session id is gone and any id the
-    /// replacement connection's firmware hands out from here on belongs
-    /// to a new generation, even if it numerically reuses a freed one.
+    /// Bump the generation after [`DdiVsockDev::erase`] replaces the live
+    /// connection. Keep old tokens so a matching handle can explicitly
+    /// reopen; any other operation from that generation fails.
     fn reset(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        self.open_sessions.lock().clear();
     }
 }
 
@@ -407,7 +449,7 @@ impl DdiDev for DdiVsockDev {
     fn exec_op_mbor<T: DdiOpReq>(
         &self,
         req: &T,
-        _cookie: &mut Option<DdiCookie>,
+        cookie: &mut Option<DdiCookie>,
     ) -> DdiResult<T::OpResp> {
         let (pre_encode, post_decode) = match self.device_kind {
             DdiDeviceKind::Physical => (true, true),
@@ -448,7 +490,8 @@ impl DdiDev for DdiVsockDev {
         let cmd_id = self.next_cmd_id();
         let resp_buf = {
             let mut stream = self.stream.lock();
-            self.sessions.check(session_ctrl, session_id)?;
+            self.sessions
+                .check(opcode, session_ctrl, session_id, *cookie)?;
             let resp_buf = Self::submit_locked(
                 &mut stream,
                 cmd_id,
@@ -476,7 +519,8 @@ impl DdiDev for DdiVsockDev {
             // now that the exchange is confirmed successful, still under
             // the same lock `erase()` uses.
             let recorded_session_id = session_id.or(hdr.sess_id);
-            self.sessions.record(session_ctrl, recorded_session_id);
+            self.sessions
+                .record(opcode, session_ctrl, recorded_session_id, cookie);
             resp_buf
         };
 
@@ -582,7 +626,7 @@ impl DdiDev for DdiVsockDev {
         // tracked is gone — and any id the firmware hands out from here
         // on belongs to a new generation, even if it numerically reuses
         // an id freed by the reset. `SessionGenerationTracker::reset`
-        // bumps the generation and drops the old bookkeeping, so a
+        // bumps the generation while retaining old handle tokens, so a
         // subsequently-dropped stale `HsmSession` (see
         // `SessionGenerationTracker::check`) is rejected instead of
         // closing whatever live session now holds that id.
@@ -621,25 +665,51 @@ mod tests {
     #[test]
     fn open_then_close_same_generation_is_allowed() {
         let tracker = SessionGenerationTracker::default();
+        let mut cookie = None;
 
         // Open never carries a known session id ahead of time.
         tracker
-            .check(SessionControlKind::Open, None)
+            .check(DdiOp::OpenSession, SessionControlKind::Open, None, None)
             .expect("Open is never rejected pre-send");
-        tracker.record(SessionControlKind::Open, Some(7));
+        tracker.record(
+            DdiOp::OpenSession,
+            SessionControlKind::Open,
+            Some(7),
+            &mut cookie,
+        );
 
         // The freshly-opened id is usable in-session and closeable.
         tracker
-            .check(SessionControlKind::InSession, Some(7))
+            .check(
+                DdiOp::EccSign,
+                SessionControlKind::InSession,
+                Some(7),
+                cookie,
+            )
             .expect("freshly-opened id should be usable in-session");
         tracker
-            .check(SessionControlKind::Close, Some(7))
+            .check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(7),
+                cookie,
+            )
             .expect("freshly-opened id should be closeable");
-        tracker.record(SessionControlKind::Close, Some(7));
+        tracker.record(
+            DdiOp::CloseSession,
+            SessionControlKind::Close,
+            Some(7),
+            &mut cookie,
+        );
 
         // Once closed, the id is no longer recognized.
         assert!(matches!(
-            tracker.check(SessionControlKind::Close, Some(7)),
+            tracker.check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(7),
+                cookie
+            ),
             Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))
         ));
     }
@@ -651,28 +721,104 @@ mod tests {
     #[test]
     fn stale_session_after_reset_is_rejected_even_if_id_is_reused() {
         let tracker = SessionGenerationTracker::default();
-        tracker.record(SessionControlKind::Open, Some(3));
+        let mut stale_cookie = None;
+        tracker.record(
+            DdiOp::OpenSession,
+            SessionControlKind::Open,
+            Some(3),
+            &mut stale_cookie,
+        );
 
         // A partition reset: the old connection (and its session table)
         // is gone.
         tracker.reset();
 
-        // The stale `HsmSession::drop`'s `CloseSession` for the old id
-        // must be rejected, not forwarded to the replacement connection.
+        // An old handle's close and in-session requests are rejected even
+        // before the firmware reuses its numeric id.
         assert!(matches!(
-            tracker.check(SessionControlKind::Close, Some(3)),
+            tracker.check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(3),
+                stale_cookie
+            ),
+            Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))
+        ));
+        assert!(matches!(
+            tracker.check(
+                DdiOp::EccSign,
+                SessionControlKind::InSession,
+                Some(3),
+                stale_cookie
+            ),
             Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))
         ));
 
         // The replacement connection's firmware reuses id 3 for an
         // unrelated, live session opened after the reset.
-        tracker.record(SessionControlKind::Open, Some(3));
+        let mut new_cookie = None;
+        tracker.record(
+            DdiOp::OpenSession,
+            SessionControlKind::Open,
+            Some(3),
+            &mut new_cookie,
+        );
 
-        // That new session's own close must still succeed: the guard
-        // must distinguish generations, not just "is this id known".
+        // The stale handle must remain rejected after the new session is
+        // recorded, while the new handle's token is accepted.
+        assert!(matches!(
+            tracker.check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(3),
+                stale_cookie
+            ),
+            Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))
+        ));
         tracker
-            .check(SessionControlKind::Close, Some(3))
+            .check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(3),
+                new_cookie,
+            )
             .expect("new session on reused id should be closeable");
+    }
+
+    #[test]
+    fn matching_session_can_reopen_after_reset() {
+        let tracker = SessionGenerationTracker::default();
+        let mut cookie = None;
+        tracker.record(
+            DdiOp::OpenSession,
+            SessionControlKind::Open,
+            Some(9),
+            &mut cookie,
+        );
+        tracker.reset();
+
+        tracker
+            .check(
+                DdiOp::ReopenSession,
+                SessionControlKind::InSession,
+                Some(9),
+                cookie,
+            )
+            .expect("only the matching handle may reopen after reset");
+        tracker.record(
+            DdiOp::ReopenSession,
+            SessionControlKind::InSession,
+            Some(9),
+            &mut cookie,
+        );
+        tracker
+            .check(
+                DdiOp::EccSign,
+                SessionControlKind::InSession,
+                Some(9),
+                cookie,
+            )
+            .expect("reopened handle should use its session in the new generation");
     }
 
     /// A `Close`/`InSession` request for an id that was never opened at
@@ -681,7 +827,12 @@ mod tests {
     fn unknown_session_id_is_rejected() {
         let tracker = SessionGenerationTracker::default();
         assert!(matches!(
-            tracker.check(SessionControlKind::Close, Some(42)),
+            tracker.check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(42),
+                None
+            ),
             Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))
         ));
     }
@@ -692,7 +843,7 @@ mod tests {
     fn no_session_requests_are_never_rejected() {
         let tracker = SessionGenerationTracker::default();
         tracker
-            .check(SessionControlKind::NoSession, None)
+            .check(DdiOp::GetApiRev, SessionControlKind::NoSession, None, None)
             .expect("sessionless requests are never rejected");
     }
 
@@ -703,7 +854,7 @@ mod tests {
     fn open_requests_are_never_rejected_regardless_of_session_id() {
         let tracker = SessionGenerationTracker::default();
         tracker
-            .check(SessionControlKind::Open, Some(99))
+            .check(DdiOp::OpenSession, SessionControlKind::Open, Some(99), None)
             .expect("Open is never rejected pre-send, even with a session_id");
     }
 
@@ -714,9 +865,20 @@ mod tests {
     fn reset_with_no_open_sessions_is_harmless() {
         let tracker = SessionGenerationTracker::default();
         tracker.reset();
-        tracker.record(SessionControlKind::Open, Some(1));
+        let mut cookie = None;
+        tracker.record(
+            DdiOp::OpenSession,
+            SessionControlKind::Open,
+            Some(1),
+            &mut cookie,
+        );
         tracker
-            .check(SessionControlKind::Close, Some(1))
+            .check(
+                DdiOp::CloseSession,
+                SessionControlKind::Close,
+                Some(1),
+                cookie,
+            )
             .expect("session opened after reset should be closeable");
     }
 }
