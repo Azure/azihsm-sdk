@@ -434,7 +434,7 @@ fuzz_target!(|input: FuzzInput| {
                 "invalid masked key must be rejected by firmware, got {err}"
             ),
             (Ok(resp), _) => {
-                panic!("KeyReport unexpectedly succeeded for an invalid key: {resp:?}")
+                panic!("KeyReport unexpectedly succeeded for an invalid key")
             }
         }
 

@@ -183,7 +183,7 @@ fuzz_target!(|input: FuzzInput| {
                 );
             }
             (Ok(resp), false) => {
-                panic!("invalid ECC sign request unexpectedly succeeded: {resp:?}")
+                panic!("invalid ECC sign request unexpectedly succeeded")
             }
             (Err(err), true) => panic!("valid ECC sign request failed: {err}"),
             (Err(_), false) => {}

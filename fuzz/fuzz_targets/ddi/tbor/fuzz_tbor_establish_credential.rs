@@ -202,7 +202,7 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
                 );
             }
             (Ok(resp), false) => {
-                panic!("invalid PartInit request unexpectedly succeeded: {resp:?}")
+                panic!("invalid PartInit request unexpectedly succeeded")
             }
             (Err(err), true) => panic!("valid PartInit request failed: {err}"),
             (Err(_), false) => {}
