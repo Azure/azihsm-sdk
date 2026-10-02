@@ -34,17 +34,23 @@ use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
 use crate::commands::common::ENVELOPE_AAD_LEN;
 use crate::commands::common::ENVELOPE_HEADER_LEN;
 use crate::commands::common::ENVELOPE_IV_LEN;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// Sample caller-supplied report data bound into the report payload.
@@ -321,12 +327,6 @@ fn key_report_report_data_patterns() {
 /// Attests generated ECC keys on all supported curves and persistent scopes.
 #[test]
 fn key_report_generated_ecc_all_curves() {
-    use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-    use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-    use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
-
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     for curve in [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521] {
