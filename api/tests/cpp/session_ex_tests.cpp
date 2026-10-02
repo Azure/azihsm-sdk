@@ -757,6 +757,13 @@ TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
 
+    std::vector<uint8_t> valid_key(96, 0x11);
+    azihsm_buffer valid_key_buf{ valid_key.data(), static_cast<uint32_t>(valid_key.size()) };
+    ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &valid_key_buf), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(azihsm_part_policy_builder_set_sata_key(b, 0, &valid_key_buf), AZIHSM_STATUS_SUCCESS);
+    azihsm_buffer probe{ nullptr, 0 };
+    ASSERT_EQ(azihsm_part_policy_build(b, &probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+
     // `POLICY_MAX_KEY_LEN` is 96; one byte over must not fit.
     std::vector<uint8_t> too_long(97, 0x22);
     azihsm_buffer key_buf{ too_long.data(), static_cast<uint32_t>(too_long.size()) };
@@ -778,6 +785,13 @@ TEST(azihsm_part_policy_builder, wrong_length_ecc384_rejected_at_build)
     ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
+
+    std::vector<uint8_t> valid_key(96, 0x11);
+    azihsm_buffer valid_key_buf{ valid_key.data(), static_cast<uint32_t>(valid_key.size()) };
+    ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &valid_key_buf), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(azihsm_part_policy_builder_set_sata_key(b, 0, &valid_key_buf), AZIHSM_STATUS_SUCCESS);
+    azihsm_buffer probe{ nullptr, 0 };
+    ASSERT_EQ(azihsm_part_policy_build(b, &probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
 
     // 48 bytes fits the slot but is not a well-formed Ecc384 key.
     std::vector<uint8_t> too_short(48, 0x33);

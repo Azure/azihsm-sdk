@@ -338,32 +338,36 @@ mod tests {
 
     #[test]
     fn builder_rejects_oversized_inputs() {
+        let key = [0x11; POLICY_MAX_KEY_LEN];
+        let builder = PartPolicyBuilder::new()
+            .pota_key(PolicyKeyKind::Ecc384, &key)
+            .sata_key(PolicyKeyKind::Ecc384, &key);
+        assert!(builder.clone().build().is_ok());
+
         // Oversized key material is rejected (not truncated), since a
         // truncated key is a *different* key.
         assert_eq!(
-            PartPolicyBuilder::new()
+            builder
+                .clone()
                 .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN + 1])
                 .build(),
             Err(HsmError::InvalidArgument)
         );
         assert_eq!(
-            PartPolicyBuilder::new()
+            builder
+                .clone()
                 .backup_part_id(&[0x22; POLICY_BACKUP_PART_ID_LEN + 1])
                 .build(),
             Err(HsmError::InvalidArgument)
         );
         assert_eq!(
-            PartPolicyBuilder::new()
-                .info(&[0x33; POLICY_INFO_LEN + 1])
-                .build(),
+            builder.clone().info(&[0x33; POLICY_INFO_LEN + 1]).build(),
             Err(HsmError::InvalidArgument)
         );
 
         // Exactly-fitting inputs are accepted.
         assert!(
-            PartPolicyBuilder::new()
-                .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
-                .sata_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
+            builder
                 .backup_part_id(&[0x22; POLICY_BACKUP_PART_ID_LEN])
                 .info(&[0x33; POLICY_INFO_LEN])
                 .build()
@@ -373,14 +377,23 @@ mod tests {
 
     #[test]
     fn builder_rejects_wrong_length_ecc384_key() {
+        let key = [0x11; POLICY_MAX_KEY_LEN];
+        let builder = PartPolicyBuilder::new()
+            .pota_key(PolicyKeyKind::Ecc384, &key)
+            .sata_key(PolicyKeyKind::Ecc384, &key);
+        assert!(builder.clone().build().is_ok());
+
         // An Ecc384 key is `X ‖ Y` and must be exactly POLICY_MAX_KEY_LEN
         // bytes; the firmware rejects any other length, so a short key
         // that merely "fits" the slot must be rejected here too rather
         // than emitting a policy guaranteed to fail provisioning.
         for len in [0, 1, POLICY_MAX_KEY_LEN - 1] {
+            // Restore POTA so a missing anchor cannot mask an accepted empty key.
             assert_eq!(
-                PartPolicyBuilder::new()
+                builder
+                    .clone()
                     .pota_key(PolicyKeyKind::Ecc384, &vec![0x11; len])
+                    .pota_key(PolicyKeyKind::Ecc384, &key)
                     .build(),
                 Err(HsmError::InvalidArgument),
                 "Ecc384 key of {len} bytes must be rejected"
@@ -389,9 +402,8 @@ mod tests {
 
         // The exact length is accepted.
         assert!(
-            PartPolicyBuilder::new()
-                .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
-                .sata_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
+            builder
+                .pota_key(PolicyKeyKind::Ecc384, &key)
                 .build()
                 .is_ok()
         );
