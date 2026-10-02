@@ -3,8 +3,8 @@
  * Licensed under the MIT License.
  */
 
-#ifndef __AZIHSM_API_H__
-#define __AZIHSM_API_H__
+#ifndef AZIHSM_API_H
+#define AZIHSM_API_H
 
 #include <stdarg.h>
 #include <stdbool.h>
@@ -28,7 +28,7 @@
  crate), so the value is a literal here and pinned to the wire-schema
  `PSK_LEN` by a static assert in the DDI layer.
  */
-#define PSK_LEN 32
+#define AZIHSM_PSK_LEN 32
 
 enum azihsm_status
 #ifdef __cplusplus
@@ -677,15 +677,15 @@ enum azihsm_ecc_curve
 #endif // __cplusplus
 {
     /*
-     NIST P-256 curve (secp256r1), 256-bit security.
+     NIST P-256 curve (secp256r1), approximately 128-bit security strength.
      */
     AZIHSM_ECC_CURVE_P256 = 1,
     /*
-     NIST P-384 curve (secp384r1), 384-bit security.
+     NIST P-384 curve (secp384r1), approximately 192-bit security strength.
      */
     AZIHSM_ECC_CURVE_P384 = 2,
     /*
-     NIST P-521 curve (secp521r1), 521-bit security.
+     NIST P-521 curve (secp521r1), approximately 256-bit security strength.
      */
     AZIHSM_ECC_CURVE_P521 = 3,
 };
@@ -1345,7 +1345,7 @@ struct azihsm_session_psk
      */
     uint8_t psk_id;
     /*
-     Optional PSK buffer (exactly `PSK_LEN` bytes); NULL selects the
+     Optional PSK buffer (exactly `AZIHSM_PSK_LEN` bytes); NULL selects the
      partition default PSK for the slot.
      */
     const struct azihsm_buffer *psk;
@@ -1620,7 +1620,7 @@ extern "C"
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -1677,7 +1677,7 @@ azihsm_status azihsm_crypt_digest_update(
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- AZIHSM_STATUS_INSUFFICIENT_BUFFER is returned.
+ AZIHSM_STATUS_BUFFER_TOO_SMALL is returned.
 
  @internal
  # Safety
@@ -1695,7 +1695,7 @@ azihsm_status azihsm_crypt_digest_finish(azihsm_handle ctx_handle, struct azihsm
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -1718,7 +1718,7 @@ azihsm_status azihsm_crypt_encrypt(
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -1759,7 +1759,7 @@ azihsm_status azihsm_crypt_encrypt_init(
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
  Note: Output may be less than input size if buffering occurs (e.g., for block alignment).
 
  @internal
@@ -1780,7 +1780,7 @@ azihsm_status azihsm_crypt_encrypt_update(
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -1819,7 +1819,7 @@ azihsm_status azihsm_crypt_decrypt_init(
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
  Note: Output may be less than input size if buffering occurs (e.g., for block alignment).
 
  @internal
@@ -1835,13 +1835,12 @@ azihsm_status azihsm_crypt_decrypt_update(
 /*
  Finish streaming decryption operation and retrieve any remaining plaintext.
 
- @param[in] sess_handle Handle to the HSM session
  @param[in] ctx_handle Handle to the streaming decryption context
  @param[out] plain_text Pointer to plaintext output buffer
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -1862,7 +1861,7 @@ azihsm_status azihsm_crypt_decrypt_finish(
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -1937,7 +1936,7 @@ azihsm_status azihsm_crypt_sign_update(azihsm_handle ctx_handle, const struct az
 
  @return 0 on success, or a negative error code on failure.
  If output buffer is insufficient, required length is updated in the output buffer and
- the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+ the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 
  @internal
  # Safety
@@ -2216,8 +2215,8 @@ azihsm_status azihsm_key_unmask_pair(
  This function generates an attestation report for a key.
 
  @param[in] key_handle Handle to the key to attest
- @param[in] report_data Pointer to buffer containing custom data to include in the report (max 128
- bytes)
+ @param[in] report_data Pointer to buffer containing custom data to include in the report (exactly
+ 128 bytes)
  @param[out] report Pointer to buffer to receive the attestation report
 
  @return 0 on success, or a negative error code on failure
@@ -2699,7 +2698,7 @@ azihsm_status azihsm_sess_close(azihsm_handle handle);
 
  - `dev_handle` must be a valid partition handle.
  - `psk` must be a valid pointer to an `azihsm_session_psk` whose `psk`
-   field is NULL or a valid `azihsm_buffer` holding exactly `PSK_LEN`
+   field is NULL or a valid `azihsm_buffer` holding exactly `AZIHSM_PSK_LEN`
    bytes.
  - `sess_handle` must be a valid pointer to memory where the session handle
    will be written.
@@ -2815,7 +2814,7 @@ azihsm_status azihsm_sess_ex_part_final(
  before provisioning.
 
  @param[in] sess_handle Handle to the security-domain session
- @param[in] new_psk New PSK buffer; must be exactly `PSK_LEN` (32 B)
+ @param[in] new_psk New PSK buffer; must be exactly `AZIHSM_PSK_LEN` (32 B)
 
  @return `AzihsmStatus` indicating the result of the operation
 
@@ -2823,7 +2822,7 @@ azihsm_status azihsm_sess_ex_part_final(
 
  - `sess_handle` must be a valid security-domain session handle.
  - `new_psk` must be a valid pointer to an `azihsm_buffer` whose
-   backing storage holds exactly `PSK_LEN` bytes.
+   backing storage holds exactly `AZIHSM_PSK_LEN` bytes.
  */
 azihsm_status azihsm_sess_ex_psk_change(
     azihsm_handle sess_handle,
@@ -2852,4 +2851,4 @@ azihsm_status azihsm_session_get_prop(
 } // extern "C"
 #endif // __cplusplus
 
-#endif /* __AZIHSM_API_H__ */
+#endif /* AZIHSM_API_H */

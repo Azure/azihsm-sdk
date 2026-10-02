@@ -7,7 +7,7 @@ header = "/*\n * Copyright (c) Microsoft Corporation.\n * Licensed under the MIT
 
 cpp_compat = true
 
-include_guard = "__AZIHSM_API_H__"
+include_guard = "AZIHSM_API_H"
 
 documentation_style = "c"
 
@@ -135,6 +135,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmPartType" = "azihsm_part_type"
 "HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 "HsmSessionExType" = "azihsm_session_ex_type"
+"PSK_LEN" = "AZIHSM_PSK_LEN"
 
 [defines]
 "target_os = linux" = "__linux__ "
