@@ -2,20 +2,22 @@
 // Licensed under the MIT License.
 
 //! Integration tests for the HMAC key-generation API
-//! ([`HsmHmacKeyGenAlgo`] via [`HsmKeyManager::generate_key`]) against the
-//! emulator or hardware backend.
+//! ([`HsmHmacKeyGenAlgo`] via [`HsmKeyManager::generate_key`]).
 //!
-//! HMAC key generation is a TBOR-only (V2) capability, so these tests run
-//! on a security-domain (`session_ex`) session and are gated out of the
-//! mock backend by the parent module. Property-validation guards run
-//! before the device round-trip, so the reject tests are deterministic.
+//! Property-validation tests use the selected session API in either build.
+//! Successful random key generation requires `session_ex`. Property validation
+//! runs before the key-generation command is sent; session setup still requires
+//! a backend.
 
 use azihsm_api::*;
+use azihsm_api_tests_macro::*;
 
+#[cfg(feature = "session-ex-tests")]
 use crate::utils::partition_ex_helpers::*;
 
 /// Canonical `(kind, bits, key bytes)` for each HMAC SHA variant. HMAC
 /// keygen is fixed to the canonical per-variant length.
+#[cfg(feature = "session-ex-tests")]
 const HMAC_VARIANTS: [(HsmKeyKind, u32, usize); 3] = [
     (HsmKeyKind::HmacSha256, 256, 32),
     (HsmKeyKind::HmacSha384, 384, 48),
@@ -24,11 +26,12 @@ const HMAC_VARIANTS: [(HsmKeyKind, u32, usize); 3] = [
 
 /// TBOR masked HMAC-key envelope overhead: `header(8) + iv(12) + aad(192)
 /// + tag(16)`; the total blob is this plus the raw key bytes.
+#[cfg(feature = "session-ex-tests")]
 const MASKED_HMAC_OVERHEAD: usize = 8 + 12 + 192 + 16;
 
-/// Well-formed HMAC key props: a `Secret` HMAC key permitted for
-/// sign/verify, session-scoped so it needs only an active session (no
-/// partition finalize), and carrying a caller label.
+/// Session-scoped secret HMAC key properties with sign/verify capabilities
+/// and a caller-supplied label.
+#[cfg(feature = "session-ex-tests")]
 fn hmac_props(kind: HsmKeyKind, bits: u32) -> HsmKeyProps {
     HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -43,12 +46,9 @@ fn hmac_props(kind: HsmKeyKind, bits: u32) -> HsmKeyProps {
 }
 
 /// A key size that is not a supported HMAC digest size is rejected up
-/// front, before any device round-trip.
-#[test]
-fn hmac_key_gen_rejects_wrong_bits() {
-    let _guard = PARTITION_LOCK.lock();
-    let session = new_co_session();
-
+/// front, before sending a key-generation command.
+#[session_test]
+fn hmac_key_gen_rejects_wrong_bits(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .key_kind(HsmKeyKind::HmacSha256)
@@ -65,11 +65,8 @@ fn hmac_key_gen_rejects_wrong_bits() {
 }
 
 /// A non-HMAC key kind is rejected by the host guard.
-#[test]
-fn hmac_key_gen_rejects_wrong_kind() {
-    let _guard = PARTITION_LOCK.lock();
-    let session = new_co_session();
-
+#[session_test]
+fn hmac_key_gen_rejects_wrong_kind(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .key_kind(HsmKeyKind::Aes)
@@ -86,11 +83,8 @@ fn hmac_key_gen_rejects_wrong_kind() {
 }
 
 /// An HMAC key that is not a `Secret` is rejected.
-#[test]
-fn hmac_key_gen_rejects_wrong_class() {
-    let _guard = PARTITION_LOCK.lock();
-    let session = new_co_session();
-
+#[session_test]
+fn hmac_key_gen_rejects_wrong_class(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::HmacSha256)
@@ -108,11 +102,8 @@ fn hmac_key_gen_rejects_wrong_class() {
 
 /// Sign/verify are the only permitted usages; an additional capability
 /// (here `encrypt`) fails the supported-flags check.
-#[test]
-fn hmac_key_gen_rejects_extra_capability() {
-    let _guard = PARTITION_LOCK.lock();
-    let session = new_co_session();
-
+#[session_test]
+fn hmac_key_gen_rejects_extra_capability(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .key_kind(HsmKeyKind::HmacSha256)
@@ -134,6 +125,7 @@ fn hmac_key_gen_rejects_extra_capability() {
 /// through the device (proving the label is honored, not a fixed firmware
 /// label). Signing with the masked key is a separate (TBOR HMAC) capability
 /// and is covered elsewhere.
+#[cfg(feature = "session-ex-tests")]
 #[test]
 fn hmac_key_gen_roundtrip_generates_usable_key() {
     let _guard = PARTITION_LOCK.lock();
@@ -165,10 +157,11 @@ fn hmac_key_gen_roundtrip_generates_usable_key() {
     }
 }
 
-/// Each generation samples fresh randomness: two keys generated on the
-/// same session have distinct masked blobs.
+/// Successive key generations on the same session return distinct masked blobs.
+/// This comparison does not establish that the underlying key bytes differ.
+#[cfg(feature = "session-ex-tests")]
 #[test]
-fn hmac_key_gen_yields_distinct_keys() {
+fn hmac_key_gen_yields_distinct_masked_blobs() {
     let _guard = PARTITION_LOCK.lock();
     let session = crate::utils::sd_provision::finalized_co_session();
 

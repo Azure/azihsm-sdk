@@ -1156,11 +1156,9 @@ fn test_ecdh_rejects_non_derivable_shared_secret(session: HsmSession) {
     );
 }
 
-/// Derive a matching pair of **session-scoped** masked ECDH shared secrets
-/// on a V2 (TBOR) session. Session scope is required because the
-/// un-finalized session has no partition-local masking key.
-#[cfg(not(feature = "mock"))]
-fn tbor_session_shared_secrets(
+/// Derive a matching pair of session-scoped ECDH shared secrets.
+#[cfg(feature = "session-ex-tests")]
+fn derive_session_shared_secrets(
     session: &HsmSession,
     curve: HsmEccCurve,
 ) -> (HsmGenericSecretKey, HsmGenericSecretKey) {
@@ -1187,9 +1185,8 @@ fn tbor_session_shared_secrets(
     (secret_a, secret_b)
 }
 
-/// Derive a **session-scoped** AES key from a masked shared secret via
-/// TBOR HKDF (needed on the un-finalized V2 session).
-#[cfg(not(feature = "mock"))]
+/// Derive a labeled, session-scoped AES key from a shared secret using HKDF.
+#[cfg(feature = "session-ex-tests")]
 fn derive_aes_key_session(
     session: &HsmSession,
     hkdf_algo: &mut HsmHkdfAlgo,
@@ -1212,21 +1209,12 @@ fn derive_aes_key_session(
         .expect("derived key was not an AES key")
 }
 
-/// TBOR HKDF derive through a V2 session: derive AES and HMAC keys from a
-/// masked ECDH shared secret, exercising the public API's TBOR dispatch.
-/// AES output is verified end-to-end (both parties' keys agree on a CBC
-/// roundtrip); the derived HMAC key is validated by its typed properties
-/// (signing a masked HMAC key is a separate TBOR command).
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_hkdf_derive_tbor_aes_and_hmac() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
-    let (secret_a, secret_b) = tbor_session_shared_secrets(&session, HsmEccCurve::P256);
+/// Derive labeled, session-scoped AES and HMAC keys from an ECDH shared secret.
+/// Verify the AES keys through CBC and the HMAC keys through their properties.
+#[cfg(feature = "session-ex-tests")]
+#[session_test]
+fn test_hkdf_derive_labeled_session_keys(session: HsmSession) {
+    let (secret_a, secret_b) = derive_session_shared_secrets(&session, HsmEccCurve::P256);
 
     // AES output: derive on both sides and verify a CBC roundtrip.
     for bits in [128u32, 192, 256] {
@@ -1234,7 +1222,7 @@ fn test_hkdf_derive_tbor_aes_and_hmac() {
         let mut hkdf_b = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, None).expect("hkdf b");
         let key_a = derive_aes_key_session(&session, &mut hkdf_a, &secret_a, bits);
         let key_b = derive_aes_key_session(&session, &mut hkdf_b, &secret_b, bits);
-        assert_aes_cbc_roundtrip(&key_a, &key_b, b"tbor hkdf aes roundtrip");
+        assert_aes_cbc_roundtrip(&key_a, &key_b, b"hkdf aes roundtrip");
     }
 
     // HMAC output: derive and validate the typed properties + masked blob.

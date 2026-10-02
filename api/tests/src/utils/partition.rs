@@ -8,9 +8,18 @@
 //! and cleanup operations.
 
 use azihsm_api::*;
+#[cfg(not(feature = "session-ex-tests"))]
 use azihsm_api_tests_macro::*;
 use azihsm_crypto::*;
+use parking_lot::Mutex;
+#[cfg(not(feature = "session-ex-tests"))]
 use tracing::*;
+
+/// Serializes tests that reset or initialize the shared test partition.
+pub(crate) static PARTITION_LOCK: Mutex<()> = Mutex::new(());
+
+/// API revision used by the `open_session` test fixture.
+pub(crate) const SESSION_TEST_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 0 };
 
 /// Returns `true` when the `AZIHSM_USE_TPM` environment variable is set,
 /// indicating we are running against real hardware with TPM-sourced keys.
@@ -78,7 +87,7 @@ pub(crate) const TEST_POTA_PUBLIC_KEY_DER: [u8; 120] = [
 pub(crate) fn test_api_rev() -> HsmApiRev {
     // Function is defined in case we want to easily switch between different revisions for testing.
     // or to read from an environment variable in the future.
-    HsmApiRev { major: 1, minor: 0 }
+    SESSION_TEST_API_REV
 }
 
 /// Dynamically generates a POTA endorsement (signature + public key DER) for a partition.
@@ -262,7 +271,9 @@ pub(crate) fn save_mobk_after_init(part: &HsmPartition) {
 /// This utility function discovers available HSM partitions, opens each one,
 /// initializes it with test credentials, and executes the provided test closure
 /// with the partition and credentials as parameters. This allows tests to run
-/// against all available partitions sequentially.
+/// against all available partitions sequentially. The shared partition lock is
+/// held across setup and callback execution so concurrent session tests cannot
+/// observe a reset or reinitialization.
 ///
 /// # Type Parameters
 ///
@@ -280,6 +291,7 @@ pub(crate) fn with_partition<F>(mut test: F)
 where
     F: FnMut(HsmPartition, HsmCredentials),
 {
+    let _partition_guard = PARTITION_LOCK.lock();
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
     for part_info in part_mgr.iter() {
@@ -297,6 +309,7 @@ where
     }
 }
 
+#[cfg(not(feature = "session-ex-tests"))]
 #[partition_test]
 fn test_with_partition(partition: HsmPartition, creds: HsmCredentials) {
     assert_eq!(creds.id(), &APP_ID, "Invalid credentials ID");

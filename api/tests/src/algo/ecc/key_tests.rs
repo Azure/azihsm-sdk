@@ -907,17 +907,9 @@ fn test_unwrap_ecc_p521_key(session: HsmSession) {
     );
 }
 
-/// Verifies RSA-AES ECC key-pair unwrap through a V2 (TBOR) session for
-/// every supported curve.
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_unwrap_ecc_key_tbor_all_curves() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
+/// Verifies RSA-AES unwrap of session-scoped ECC keys for every supported curve.
+#[session_test]
+fn test_unwrap_ecc_session_key_all_curves(session: HsmSession) {
     for (crypto_curve, hsm_curve, hash_algo) in [
         (
             crypto::EccCurve::P256,
