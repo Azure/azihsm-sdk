@@ -46,7 +46,7 @@ fn sd_restore_remote_backup_roundtrip() {
     // Device 2 (reboot, same seed): restore PartLocalMK from device 1's
     // backup, then restore the security domain from the remote backup.
     let (session2, _policy2, _pid_pub2, _lmk2) =
-        provision_backing(&sata, &pota, Some(policy), Some(&local_mk));
+        provision_backing(&sata, &pota, Some(&policy), Some(&local_mk));
     let restored = evidence
         .with_hsm_evidence(|ev| {
             session2.sd_restore_remote_backup(

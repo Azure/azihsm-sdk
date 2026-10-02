@@ -669,6 +669,139 @@ TEST_F(azihsm_sess_ex, part_final_rejects_bad_part_policy_len)
         );
     });
 }
+TEST_F(azihsm_sess_ex, sd_commands_reject_bad_part_policy_len)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        std::vector<uint8_t> policy(485, 0);
+        std::vector<uint8_t> key(276, 0);
+        std::vector<uint8_t> backup(276, 0);
+        uint8_t cert = 0;
+        uint8_t report = 0;
+        azihsm_buffer policy_buf{ policy.data(), 0 };
+        azihsm_buffer key_buf{ key.data(), static_cast<uint32_t>(key.size()) };
+        azihsm_buffer cert_buf{ &cert, 1 };
+        azihsm_buffer report_buf{ &report, 1 };
+        azihsm_sd_cert_chain chain{ &cert_buf, 1 };
+        azihsm_sd_evidence evidence{ chain, chain, chain, &report_buf };
+        azihsm_buffer remote_backup{ backup.data(), 161 };
+        azihsm_buffer local_backup{ backup.data(), 276 };
+        azihsm_buffer mk_backup{ backup.data(), 260 };
+
+        azihsm_sd_create_remote_backup_params create{
+            &policy_buf,
+            &key_buf,
+            &evidence,
+        };
+        azihsm_sd_reseal_remote_backup_params reseal{
+            &policy_buf, &key_buf, &evidence, &evidence, &remote_backup,
+        };
+        azihsm_sd_restore_remote_backup_params restore{
+            &policy_buf, &key_buf, &evidence, &remote_backup, &mk_backup,
+        };
+        azihsm_sd_create_peer_backup_params create_peer{
+            &policy_buf,
+            &key_buf,
+            &evidence,
+            &local_backup,
+        };
+        azihsm_sd_restore_peer_backup_params restore_peer{
+            &policy_buf, &key_buf, &evidence, &remote_backup, &mk_backup,
+        };
+
+        std::vector<uint8_t> remote(161, 0);
+        std::vector<uint8_t> local(276, 0);
+        std::vector<uint8_t> mk(260, 0);
+        azihsm_buffer remote_out{ remote.data(), static_cast<uint32_t>(remote.size()) };
+        azihsm_buffer local_out{ local.data(), static_cast<uint32_t>(local.size()) };
+        azihsm_buffer mk_out{ mk.data(), static_cast<uint32_t>(mk.size()) };
+        for (uint32_t len : { 0u, 483u, 485u })
+        {
+            SCOPED_TRACE(len);
+            policy_buf.len = len;
+            EXPECT_EQ(
+                azihsm_sd_create_remote_backup(
+                    sess_handle,
+                    &create,
+                    &remote_out,
+                    &local_out,
+                    &mk_out
+                ),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+            EXPECT_EQ(
+                azihsm_sd_reseal_remote_backup(sess_handle, &reseal, &remote_out),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+            EXPECT_EQ(
+                azihsm_sd_restore_remote_backup(sess_handle, &restore, &local_out, &mk_out),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+            EXPECT_EQ(
+                azihsm_sd_create_peer_backup(sess_handle, &create_peer, &remote_out),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+            EXPECT_EQ(
+                azihsm_sd_restore_peer_backup(sess_handle, &restore_peer, &local_out, &mk_out),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+        }
+
+        azihsm_buffer remote_probe{ nullptr, 0 };
+        azihsm_buffer local_probe{ nullptr, 0 };
+        azihsm_buffer mk_probe{ nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_sd_create_remote_backup(
+                sess_handle,
+                &create,
+                &remote_probe,
+                &local_probe,
+                &mk_probe
+            ),
+            AZIHSM_STATUS_BUFFER_TOO_SMALL
+        );
+        EXPECT_EQ(remote_probe.len, remote.size());
+        EXPECT_EQ(local_probe.len, local.size());
+        EXPECT_EQ(mk_probe.len, mk.size());
+        remote_probe = { nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_sd_reseal_remote_backup(sess_handle, &reseal, &remote_probe),
+            AZIHSM_STATUS_BUFFER_TOO_SMALL
+        );
+        local_probe = { nullptr, 0 };
+        mk_probe = { nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_sd_restore_remote_backup(sess_handle, &restore, &local_probe, &mk_probe),
+            AZIHSM_STATUS_BUFFER_TOO_SMALL
+        );
+        remote_probe = { nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_sd_create_peer_backup(sess_handle, &create_peer, &remote_probe),
+            AZIHSM_STATUS_BUFFER_TOO_SMALL
+        );
+        local_probe = { nullptr, 0 };
+        mk_probe = { nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_sd_restore_peer_backup(sess_handle, &restore_peer, &local_probe, &mk_probe),
+            AZIHSM_STATUS_BUFFER_TOO_SMALL
+        );
+    });
+}
 #endif // !defined(AZIHSM_FEATURE_MOCK)
 
 // The typed partition-policy builder FFI is pure host-side serialization and

@@ -14,6 +14,7 @@ use azihsm_crypto::AesKey;
 use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::RwLock;
 use tracing::*;
+use zerocopy::IntoBytes;
 use zeroize::Zeroize;
 
 use super::*;
@@ -240,7 +241,7 @@ impl HsmSession {
     /// [`HsmError::InvalidSession`].
     pub fn sd_create_remote_backup(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         receiver_evidence: &HsmSdEvidence<'_>,
     ) -> HsmResult<HsmSdRemoteBackupResult> {
@@ -251,7 +252,7 @@ impl HsmSession {
                 inner.id,
                 masked_sealing_key,
                 receiver_evidence,
-                part_policy,
+                part_policy.as_bytes(),
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
@@ -268,7 +269,7 @@ impl HsmSession {
     /// [`HsmError::InvalidSession`].
     pub fn sd_reseal_remote_backup(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         src_evidence: &HsmSdEvidence<'_>,
         dest_evidence: &HsmSdEvidence<'_>,
@@ -282,7 +283,7 @@ impl HsmSession {
                 masked_sealing_key,
                 src_evidence,
                 dest_evidence,
-                part_policy,
+                part_policy.as_bytes(),
                 src_remote_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
@@ -300,7 +301,7 @@ impl HsmSession {
     /// [`HsmError::InvalidSession`].
     pub fn sd_restore_remote_backup(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         sender_evidence: &HsmSdEvidence<'_>,
         src_remote_backup: &[u8],
@@ -313,7 +314,7 @@ impl HsmSession {
                 inner.id,
                 masked_sealing_key,
                 sender_evidence,
-                part_policy,
+                part_policy.as_bytes(),
                 src_remote_backup,
                 prev_sd_mk_backup,
             ),
@@ -330,7 +331,7 @@ impl HsmSession {
     /// V2 session; a V1 session returns [`HsmError::InvalidSession`].
     pub fn sd_create_peer_backup(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         dst_evidence: &HsmSdEvidence<'_>,
         pok_local_backup: &[u8],
@@ -342,7 +343,7 @@ impl HsmSession {
                 inner.id,
                 masked_sealing_key,
                 dst_evidence,
-                part_policy,
+                part_policy.as_bytes(),
                 pok_local_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
@@ -360,7 +361,7 @@ impl HsmSession {
     /// session returns [`HsmError::InvalidSession`].
     pub fn sd_restore_peer_backup(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         src_evidence: &HsmSdEvidence<'_>,
         pok_peer_backup: &[u8],
@@ -373,7 +374,7 @@ impl HsmSession {
                 inner.id,
                 masked_sealing_key,
                 src_evidence,
-                part_policy,
+                part_policy.as_bytes(),
                 pok_peer_backup,
                 prev_sd_mk_backup,
             ),

@@ -5,6 +5,15 @@ its security domain. A security-domain session (opened with
 [`azihsm_sess_ex_open`](#azihsm_sess_ex_open)) is required to issue the
 provisioning command in this chapter.
 
+All policy-taking Rust APIs accept `&PartPolicy`, including partition
+init/final and remote/peer backup operations. Policy remains an explicit
+per-call input; partition and session opening are unchanged. Native C
+params continue to carry the serialized 484-byte policy in an
+`azihsm_buffer`. The native wrappers parse that image into `PartPolicy`
+after validating output capacity, preserving size probes and returning
+`AZIHSM_STATUS_INVALID_ARGUMENT` for a wrong-length policy once outputs
+are sufficiently sized. The C ABI and DDI wire format are unchanged.
+
 ## azihsm_sess_ex_open
 
 Open a security-domain session to the device.
