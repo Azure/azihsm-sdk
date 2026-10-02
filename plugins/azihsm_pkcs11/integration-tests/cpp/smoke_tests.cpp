@@ -56,6 +56,9 @@ TEST_F(smoke, aes_mechanisms_are_advertised)
     EXPECT_TRUE(has(CKM_AES_KEY_GEN));
     EXPECT_TRUE(has(CKM_AES_CBC));
     EXPECT_TRUE(has(CKM_AES_CBC_PAD));
+    EXPECT_TRUE(has(CKM_AES_GCM));
+    EXPECT_TRUE(has(CKM_AES_XTS));
+    EXPECT_TRUE(has(CKM_AES_XTS_KEY_GEN));
 
     CK_MECHANISM_INFO minfo{};
     ASSERT_CKR_OK(p11()->C_GetMechanismInfo(kSlot, CKM_AES_KEY_GEN, &minfo));
@@ -63,6 +66,17 @@ TEST_F(smoke, aes_mechanisms_are_advertised)
     ASSERT_CKR_OK(p11()->C_GetMechanismInfo(kSlot, CKM_AES_CBC_PAD, &minfo));
     EXPECT_NE(0u, minfo.flags & CKF_ENCRYPT);
     EXPECT_NE(0u, minfo.flags & CKF_DECRYPT);
+
+    // The key sizes are the device's: GCM keys only at 256 bits, XTS keys only
+    // as two 256-bit halves (reported in bytes, like the AES rows).
+    ASSERT_CKR_OK(p11()->C_GetMechanismInfo(kSlot, CKM_AES_GCM, &minfo));
+    EXPECT_EQ(32u, minfo.ulMinKeySize);
+    EXPECT_EQ(32u, minfo.ulMaxKeySize);
+    EXPECT_NE(0u, minfo.flags & CKF_ENCRYPT);
+    ASSERT_CKR_OK(p11()->C_GetMechanismInfo(kSlot, CKM_AES_XTS_KEY_GEN, &minfo));
+    EXPECT_EQ(64u, minfo.ulMinKeySize);
+    EXPECT_EQ(64u, minfo.ulMaxKeySize);
+    EXPECT_NE(0u, minfo.flags & CKF_GENERATE);
 }
 
 TEST_F(smoke, unimplemented_entry_point_reports_not_supported)

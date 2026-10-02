@@ -81,6 +81,19 @@ CK_RV azihsm_pkcs11_ckr_from_azihsm_hint(int status, CK_RV invalid_handle)
                * out of order. */
         return CKR_OPERATION_NOT_INITIALIZED;
     default:
+        /*
+         * Deliberately including the crypto-engine range -46..-77 (CRYPTO_*,
+         * e.g. CRYPTO_CPT_GC_UC_ERR_ICV_MISCOMPARE, a GCM tag mismatch). api/lib
+         * produces those only from a TBOR command status, and no AES path this
+         * module takes issues TBOR: CBC runs over MBOR on the V1 session
+         * azihsm_sess_open gives it, GCM and XTS over the DDI fast path. So the
+         * range would be dead code today, and a GCM tag mismatch arrives as the
+         * generic DDI_CMD_FAILURE (-8), indistinguishable from a device fault
+         * and reported as CKR_FUNCTION_FAILED; remapping -8 on the GCM decrypt
+         * path instead would tell a caller "tampered data" when the device or
+         * session died. Revisit once the SDK names the tag check on the fast
+         * path.
+         */
         return CKR_FUNCTION_FAILED;
     }
 }

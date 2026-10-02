@@ -332,12 +332,13 @@ TEST_F(aes_cbc, init_reports_arguments_then_operation_state_then_mechanism)
     EXPECT_CKR(CKR_ARGUMENTS_BAD, p11()->C_EncryptInit(s_, nullptr, key_));
     EXPECT_CKR(CKR_ARGUMENTS_BAD, p11()->C_DecryptInit(s_, nullptr, key_));
 
-    CK_MECHANISM gcm = { CKM_AES_GCM, iv_, sizeof(iv_) };
-    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_EncryptInit(s_, &gcm, key_));
-    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_DecryptInit(s_, &gcm, key_));
+    // An AES mechanism this token does not run.
+    CK_MECHANISM ecb = { CKM_AES_ECB, nullptr, 0 };
+    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_EncryptInit(s_, &ecb, key_));
+    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_DecryptInit(s_, &ecb, key_));
 
     ASSERT_CKR_OK(p11()->C_EncryptInit(s_, &pad_, key_));
-    EXPECT_CKR(CKR_OPERATION_ACTIVE, p11()->C_EncryptInit(s_, &gcm, key_))
+    EXPECT_CKR(CKR_OPERATION_ACTIVE, p11()->C_EncryptInit(s_, &ecb, key_))
         << "an active operation is reported before the mechanism is judged";
     EXPECT_CKR(CKR_OPERATION_ACTIVE, p11()->C_DecryptInit(s_, &pad_, key_));
 }
@@ -373,8 +374,8 @@ TEST_F(aes_cbc, init_requires_login)
     EXPECT_CKR(CKR_USER_NOT_LOGGED_IN, p11()->C_DecryptInit(s_, &pad_, key_));
     // Still: a malformed request is reported before the login state.
     EXPECT_CKR(CKR_ARGUMENTS_BAD, p11()->C_EncryptInit(s_, nullptr, key_));
-    CK_MECHANISM gcm = { CKM_AES_GCM, iv_, sizeof(iv_) };
-    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_EncryptInit(s_, &gcm, key_));
+    CK_MECHANISM ecb = { CKM_AES_ECB, nullptr, 0 };
+    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_EncryptInit(s_, &ecb, key_));
 }
 
 // ---------------------------------------------------------------------------

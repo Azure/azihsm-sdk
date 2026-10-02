@@ -3,11 +3,13 @@
 
 /// @file keygen_tests.cpp
 ///
-/// C_GenerateKey with CKM_AES_KEY_GEN through the module ABI: the login gate,
-/// argument/mechanism/session precedence, the template verdicts as seen by a
-/// caller (the full CK_RV matrix of the normaliser is unit-tested in
-/// tests/aes_template_test.c; here a representative row per verdict proves the
-/// wiring), and the attributes a generated key carries.
+/// C_GenerateKey with CKM_AES_KEY_GEN and CKM_AES_XTS_KEY_GEN through the
+/// module ABI: the login gate, argument/mechanism/session precedence, the
+/// template verdicts as seen by a caller (the full CK_RV matrix of the
+/// normaliser is unit-tested in tests/aes_template_test.c; here a
+/// representative row per verdict proves the wiring), the key family a
+/// template selects (plain AES, GCM or XTS), and the attributes a generated
+/// key carries.
 
 #include <cstring>
 #include <gtest/gtest.h>
@@ -24,6 +26,8 @@ CK_BBOOL g_true = CK_TRUE;
 CK_BBOOL g_false = CK_FALSE;
 CK_ULONG g_len32 = 32;
 CK_MECHANISM g_keygen = { CKM_AES_KEY_GEN, nullptr, 0 };
+CK_ULONG g_len64 = 64;
+CK_MECHANISM g_xts_keygen = { CKM_AES_XTS_KEY_GEN, nullptr, 0 };
 
 /// C_GenerateKey with CKA_VALUE_LEN=32 plus one extra attribute.
 CK_RV keygen_with(CK_SESSION_HANDLE s, CK_ATTRIBUTE extra, CK_OBJECT_HANDLE *out)
@@ -105,8 +109,8 @@ TEST_F(aes_keygen, rejects_other_keygen_mechanisms)
 {
     CK_OBJECT_HANDLE key = 0;
     CK_ATTRIBUTE tmpl[] = { { CKA_VALUE_LEN, &g_len32, sizeof(g_len32) } };
-    CK_MECHANISM xts = { CKM_AES_XTS_KEY_GEN, nullptr, 0 };
-    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_GenerateKey(s_, &xts, tmpl, 1, &key));
+    CK_MECHANISM des3 = { CKM_DES3_KEY_GEN, nullptr, 0 };
+    EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_GenerateKey(s_, &des3, tmpl, 1, &key));
     CK_MECHANISM generic = { CKM_GENERIC_SECRET_KEY_GEN, nullptr, 0 };
     EXPECT_CKR(CKR_MECHANISM_INVALID, p11()->C_GenerateKey(s_, &generic, tmpl, 1, &key));
 }
@@ -464,4 +468,202 @@ TEST_F(aes_keygen, destroyed_key_is_gone)
     CK_BYTE iv[kAesBlock] = { 0 };
     CK_MECHANISM cbc = { CKM_AES_CBC, iv, sizeof(iv) };
     EXPECT_CKR(CKR_KEY_HANDLE_INVALID, p11()->C_EncryptInit(s_, &cbc, key));
+}
+
+// ---------------------------------------------------------------------------
+// Key families: plain AES, GCM (selected by CKA_ALLOWED_MECHANISMS) and XTS
+// ---------------------------------------------------------------------------
+
+TEST_F(aes_keygen, a_plain_key_records_the_cbc_family)
+{
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(gen_aes_key(s_, 32, CK_TRUE, CK_TRUE, "family-cbc", &key));
+    std::vector<CK_MECHANISM_TYPE> mechs;
+    ASSERT_CKR_OK(get_allowed_mechs(s_, key, mechs));
+    EXPECT_EQ((std::vector<CK_MECHANISM_TYPE>{ CKM_AES_CBC, CKM_AES_CBC_PAD }), mechs);
+}
+
+TEST_F(aes_keygen, a_callers_narrower_list_is_kept_and_enforced)
+{
+    CK_MECHANISM_TYPE only_raw[] = { CKM_AES_CBC };
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(keygen_with(s_, { CKA_ALLOWED_MECHANISMS, only_raw, sizeof(only_raw) }, &key));
+    std::vector<CK_MECHANISM_TYPE> mechs;
+    ASSERT_CKR_OK(get_allowed_mechs(s_, key, mechs));
+    EXPECT_EQ((std::vector<CK_MECHANISM_TYPE>{ CKM_AES_CBC }), mechs);
+
+    CK_BYTE iv[kAesBlock] = { 0 };
+    CK_MECHANISM raw = { CKM_AES_CBC, iv, sizeof(iv) };
+    ASSERT_CKR_OK(p11()->C_EncryptInit(s_, &raw, key));
+    abandon_operations(s_);
+    CK_MECHANISM pad = { CKM_AES_CBC_PAD, iv, sizeof(iv) };
+    EXPECT_CKR(CKR_KEY_FUNCTION_NOT_PERMITTED, p11()->C_EncryptInit(s_, &pad, key));
+}
+
+TEST_F(aes_keygen, allowed_mechanisms_gcm_selects_a_gcm_key)
+{
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(gen_gcm_key(s_, "family-gcm", &key));
+    CK_KEY_TYPE kt = 0;
+    ASSERT_CKR_OK(get_attr(s_, key, CKA_KEY_TYPE, &kt));
+    EXPECT_EQ(static_cast<CK_KEY_TYPE>(CKK_AES), kt) << "a GCM key is still an AES key to PKCS#11";
+    std::vector<CK_MECHANISM_TYPE> mechs;
+    ASSERT_CKR_OK(get_allowed_mechs(s_, key, mechs));
+    EXPECT_EQ((std::vector<CK_MECHANISM_TYPE>{ CKM_AES_GCM }), mechs);
+}
+
+TEST_F(aes_keygen, gcm_keys_are_256_bit_only)
+{
+    CK_MECHANISM_TYPE gcm[] = { CKM_AES_GCM };
+    CK_OBJECT_HANDLE key = 0;
+    for (CK_ULONG bad : { 16ul, 24ul, 64ul })
+    {
+        CK_ATTRIBUTE tmpl[] = {
+            { CKA_VALUE_LEN, &bad, sizeof(bad) },
+            { CKA_ALLOWED_MECHANISMS, gcm, sizeof(gcm) },
+        };
+        EXPECT_CKR(CKR_ATTRIBUTE_VALUE_INVALID, p11()->C_GenerateKey(s_, &g_keygen, tmpl, 2, &key))
+            << "CKA_VALUE_LEN " << bad;
+    }
+}
+
+TEST_F(aes_keygen, allowed_mechanisms_no_single_family_satisfies_are_inconsistent)
+{
+    CK_OBJECT_HANDLE key = 0;
+    CK_MECHANISM_TYPE mixed[] = { CKM_AES_GCM, CKM_AES_CBC };
+    EXPECT_CKR(
+        CKR_TEMPLATE_INCONSISTENT,
+        keygen_with(s_, { CKA_ALLOWED_MECHANISMS, mixed, sizeof(mixed) }, &key)
+    ) << "one key cannot be both a GCM and a CBC key on this device";
+    CK_MECHANISM_TYPE xts[] = { CKM_AES_XTS };
+    EXPECT_CKR(
+        CKR_TEMPLATE_INCONSISTENT,
+        keygen_with(s_, { CKA_ALLOWED_MECHANISMS, xts, sizeof(xts) }, &key)
+    ) << "XTS keys come from CKM_AES_XTS_KEY_GEN";
+    CK_MECHANISM_TYPE foreign[] = { CKM_SHA256_HMAC };
+    EXPECT_CKR(
+        CKR_TEMPLATE_INCONSISTENT,
+        keygen_with(s_, { CKA_ALLOWED_MECHANISMS, foreign, sizeof(foreign) }, &key)
+    );
+}
+
+TEST_F(aes_keygen, malformed_allowed_mechanisms_are_invalid_values)
+{
+    CK_OBJECT_HANDLE key = 0;
+    CK_MECHANISM_TYPE gcm[] = { CKM_AES_GCM };
+    EXPECT_CKR(
+        CKR_ATTRIBUTE_VALUE_INVALID,
+        keygen_with(s_, { CKA_ALLOWED_MECHANISMS, gcm, 0 }, &key)
+    ) << "an empty list";
+    EXPECT_CKR(
+        CKR_ATTRIBUTE_VALUE_INVALID,
+        keygen_with(s_, { CKA_ALLOWED_MECHANISMS, gcm, sizeof(gcm) - 1 }, &key)
+    ) << "not a whole number of entries";
+}
+
+TEST_F(aes_keygen, xts_keygen_makes_a_512_bit_xts_key)
+{
+    CK_OBJECT_HANDLE key = 0;
+    ASSERT_CKR_OK(gen_xts_key(s_, "family-xts", &key));
+    CK_KEY_TYPE kt = 0;
+    ASSERT_CKR_OK(get_attr(s_, key, CKA_KEY_TYPE, &kt));
+    EXPECT_EQ(static_cast<CK_KEY_TYPE>(CKK_AES_XTS), kt);
+    CK_ULONG len = 0;
+    ASSERT_CKR_OK(get_attr(s_, key, CKA_VALUE_LEN, &len));
+    EXPECT_EQ(64u, len);
+    std::vector<CK_MECHANISM_TYPE> mechs;
+    ASSERT_CKR_OK(get_allowed_mechs(s_, key, mechs));
+    EXPECT_EQ((std::vector<CK_MECHANISM_TYPE>{ CKM_AES_XTS }), mechs);
+
+    // The key type may also be left to the token.
+    CK_MECHANISM xts_kg = { CKM_AES_XTS_KEY_GEN, nullptr, 0 };
+    CK_ULONG bytes = 64;
+    CK_ATTRIBUTE bare[] = { { CKA_VALUE_LEN, &bytes, sizeof(bytes) } };
+    ASSERT_CKR_OK(p11()->C_GenerateKey(s_, &xts_kg, bare, 1, &key));
+    ASSERT_CKR_OK(get_attr(s_, key, CKA_KEY_TYPE, &kt));
+    EXPECT_EQ(static_cast<CK_KEY_TYPE>(CKK_AES_XTS), kt);
+}
+
+TEST_F(aes_keygen, xts_keygen_rejects_unsupported_key_length)
+{
+    CK_OBJECT_HANDLE key = 0;
+    for (CK_ULONG bad : { 16ul, 32ul })
+    {
+        CK_ATTRIBUTE tmpl[] = { { CKA_VALUE_LEN, &bad, sizeof(bad) } };
+        EXPECT_CKR(
+            CKR_ATTRIBUTE_VALUE_INVALID,
+            p11()->C_GenerateKey(s_, &g_xts_keygen, tmpl, 1, &key)
+        ) << "CKA_VALUE_LEN "
+          << bad;
+    }
+}
+
+TEST_F(aes_keygen, xts_keygen_rejects_a_plain_aes_type_or_a_gcm_list)
+{
+    CK_OBJECT_HANDLE key = 0;
+    CK_KEY_TYPE aes = CKK_AES;
+    CK_ATTRIBUTE as_aes[] = {
+        { CKA_VALUE_LEN, &g_len64, sizeof(g_len64) },
+        { CKA_KEY_TYPE, &aes, sizeof(aes) },
+    };
+    EXPECT_CKR(CKR_TEMPLATE_INCONSISTENT, p11()->C_GenerateKey(s_, &g_xts_keygen, as_aes, 2, &key));
+    CK_MECHANISM_TYPE gcm[] = { CKM_AES_GCM };
+    CK_ATTRIBUTE as_gcm[] = {
+        { CKA_VALUE_LEN, &g_len64, sizeof(g_len64) },
+        { CKA_ALLOWED_MECHANISMS, gcm, sizeof(gcm) },
+    };
+    EXPECT_CKR(CKR_TEMPLATE_INCONSISTENT, p11()->C_GenerateKey(s_, &g_xts_keygen, as_gcm, 2, &key));
+}
+
+TEST_F(aes_keygen, xts_keygen_template_without_value_len_is_incomplete)
+{
+    CK_OBJECT_HANDLE key = 0;
+    CK_ATTRIBUTE label_only[] = { { CKA_LABEL, const_cast<char *>("x"), 1 } };
+    EXPECT_CKR(
+        CKR_TEMPLATE_INCOMPLETE,
+        p11()->C_GenerateKey(s_, &g_xts_keygen, label_only, 1, &key)
+    );
+}
+
+TEST_F(aes_keygen, xts_keygen_rejects_mechanism_parameter)
+{
+    CK_OBJECT_HANDLE key = 0;
+    CK_BYTE param = 0;
+    CK_MECHANISM with_param = { CKM_AES_XTS_KEY_GEN, &param, 1 };
+    CK_ATTRIBUTE tmpl[] = { { CKA_VALUE_LEN, &g_len64, sizeof(g_len64) } };
+    EXPECT_CKR(CKR_MECHANISM_PARAM_INVALID, p11()->C_GenerateKey(s_, &with_param, tmpl, 1, &key));
+}
+
+TEST_F(aes_keygen, an_xts_key_type_is_refused_for_plain_aes_keygen)
+{
+    // The mirror image of CKK_AES on CKM_AES_XTS_KEY_GEN.
+    CK_OBJECT_HANDLE key = 0;
+    CK_KEY_TYPE xts = CKK_AES_XTS;
+    EXPECT_CKR(
+        CKR_TEMPLATE_INCONSISTENT,
+        keygen_with(s_, { CKA_KEY_TYPE, &xts, sizeof(xts) }, &key)
+    );
+}
+
+TEST_F(aes_keygen, generated_keys_record_their_generation_mechanism)
+{
+    CK_OBJECT_HANDLE aes = 0, gcm = 0, xts = 0;
+    ASSERT_CKR_OK(gen_aes_key(s_, 32, CK_TRUE, CK_TRUE, "kgm-aes", &aes));
+    ASSERT_CKR_OK(gen_gcm_key(s_, "kgm-gcm", &gcm));
+    ASSERT_CKR_OK(gen_xts_key(s_, "kgm-xts", &xts));
+    CK_MECHANISM_TYPE m = 0;
+    ASSERT_CKR_OK(get_attr(s_, aes, CKA_KEY_GEN_MECHANISM, &m));
+    EXPECT_EQ(static_cast<CK_MECHANISM_TYPE>(CKM_AES_KEY_GEN), m);
+    ASSERT_CKR_OK(get_attr(s_, gcm, CKA_KEY_GEN_MECHANISM, &m));
+    EXPECT_EQ(static_cast<CK_MECHANISM_TYPE>(CKM_AES_KEY_GEN), m);
+    ASSERT_CKR_OK(get_attr(s_, xts, CKA_KEY_GEN_MECHANISM, &m));
+    EXPECT_EQ(static_cast<CK_MECHANISM_TYPE>(CKM_AES_XTS_KEY_GEN), m);
+
+    // And it is the token's to record, not the caller's to claim.
+    CK_OBJECT_HANDLE key = 0;
+    CK_MECHANISM_TYPE claimed = CKM_AES_XTS_KEY_GEN;
+    EXPECT_CKR(
+        CKR_ATTRIBUTE_READ_ONLY,
+        keygen_with(s_, { CKA_KEY_GEN_MECHANISM, &claimed, sizeof(claimed) }, &key)
+    );
 }

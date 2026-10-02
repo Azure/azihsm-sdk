@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 /*
- * Key-backed operations: C_GenerateKey (CKM_AES_KEY_GEN) and one-shot AES-CBC /
- * AES-CBC-PAD encrypt/decrypt.
+ * Key-backed operations: C_GenerateKey (CKM_AES_KEY_GEN, CKM_AES_XTS_KEY_GEN)
+ * and one-shot AES-CBC / AES-CBC-PAD / AES-GCM / AES-XTS encrypt/decrypt.
  *
  * The AZIHSM device holds keys only as session-scoped handles; the durable form
  * is the opaque masked blob. So C_GenerateKey stores that blob as the object's
@@ -21,19 +21,31 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-/* AES_BLOCK_LEN (the CBC IV/block length) comes from azihsm_pkcs11_key.h; the
- * key lengths and template constants from azihsm_pkcs11_template.h. */
+/* AES_BLOCK_LEN and the GCM/XTS widths come from azihsm_pkcs11_key.h; the key
+ * lengths, template constants and mechanism policy from
+ * azihsm_pkcs11_template.h. */
 
 /* Turns CKA_VALUE_LEN (bytes) into the device's bit-length key property. */
 #define AES_KEY_BITS_PER_BYTE 8
 
-/* Per-operation cipher state (s->op_ctx while op is P11_OP_ENCRYPT/_DECRYPT). */
+/* The CBC IV and the XTS tweak share one owned buffer in the operation. */
+_Static_assert(AES_XTS_TWEAK_LEN <= AES_BLOCK_LEN, "the XTS tweak must fit the IV buffer");
+
+/*
+ * Per-operation cipher state (s->op_ctx while op is P11_OP_ENCRYPT/_DECRYPT).
+ * Everything the mechanism parameters pointed at is copied in at init: the
+ * caller may free its CK_MECHANISM as soon as C_*Init returns.
+ */
 typedef struct
 {
-    CK_MECHANISM_TYPE mech;    /* CKM_AES_CBC or CKM_AES_CBC_PAD */
-    uint32_t hsm_key;          /* unmasked device key handle; owned, freed with the op */
-    CK_BYTE iv[AES_BLOCK_LEN]; /* the operation's IV seed (owned copy) */
+    CK_MECHANISM_TYPE mech;         /* CKM_AES_CBC / _CBC_PAD / _GCM / _XTS */
+    uint32_t hsm_key;               /* unmasked device key handle; owned, freed with the op */
+    CK_BYTE iv[AES_BLOCK_LEN];      /* CBC IV seed or XTS tweak (owned copy) */
+    CK_BYTE gcm_iv[AES_GCM_IV_LEN]; /* GCM IV (owned copy) */
+    CK_BYTE *aad;                   /* GCM additional data (owned copy), NULL if none */
+    CK_ULONG aad_len;
 } cipher_op;
 
 void azihsm_pkcs11_cipher_op_free(void *op_ctx)
@@ -44,12 +56,17 @@ void azihsm_pkcs11_cipher_op_free(void *op_ctx)
         return;
     }
     azihsm_pkcs11_key_release(op->hsm_key);
+    if (op->aad != NULL)
+    {
+        azihsm_pkcs11_wipe(op->aad, op->aad_len);
+        free(op->aad);
+    }
     azihsm_pkcs11_wipe(op, sizeof(*op));
     free(op);
 }
 
 /* ========================================================================= */
-/* C_GenerateKey (CKM_AES_KEY_GEN)                                           */
+/* C_GenerateKey (CKM_AES_KEY_GEN, CKM_AES_XTS_KEY_GEN)                      */
 /* ========================================================================= */
 
 CK_RV C_GenerateKey(
@@ -80,7 +97,8 @@ CK_RV C_GenerateKey(
     {
         rv = CKR_ARGUMENTS_BAD;
     }
-    else if (pMechanism->mechanism != CKM_AES_KEY_GEN)
+    else if ((pMechanism->mechanism != CKM_AES_KEY_GEN) &&
+             (pMechanism->mechanism != CKM_AES_XTS_KEY_GEN))
     {
         rv = CKR_MECHANISM_INVALID;
     }
@@ -100,9 +118,17 @@ CK_RV C_GenerateKey(
         return CKR_USER_NOT_LOGGED_IN; /* generation runs in the device session */
     }
 
+    const azihsm_pkcs11_keygen_policy *policy = NULL;
     CK_ULONG value_len = 0;
     CK_BBOOL token = CK_FALSE;
-    rv = azihsm_pkcs11_keygen_check_template(pTemplate, ulCount, &value_len, &token);
+    rv = azihsm_pkcs11_keygen_check_template(
+        pMechanism->mechanism,
+        pTemplate,
+        ulCount,
+        &policy,
+        &value_len,
+        &token
+    );
     if ((rv == CKR_OK) && token && ((s->flags & CKF_RW_SESSION) == 0))
     {
         rv = CKR_SESSION_READ_ONLY;
@@ -118,6 +144,7 @@ CK_RV C_GenerateKey(
     CK_ATTRIBUTE *full = NULL;
     rv = azihsm_pkcs11_key_aes_generate(
         slot->hsm_session,
+        policy->kind,
         (uint32_t)(value_len * AES_KEY_BITS_PER_BYTE),
         &blob,
         &blob_len
@@ -138,7 +165,7 @@ CK_RV C_GenerateKey(
     }
     azihsm_pkcs11_keygen_fill fill;
     CK_ULONG n = 0;
-    rv = azihsm_pkcs11_keygen_build_template(pTemplate, ulCount, &fill, full, &n);
+    rv = azihsm_pkcs11_keygen_build_template(policy, pTemplate, ulCount, &fill, full, &n);
     if (rv != CKR_OK)
     {
         goto cleanup;
@@ -167,7 +194,8 @@ CK_RV C_GenerateKey(
     }
     *phKey = h;
     AZIHSM_PKCS11_LOG(
-        "C_GenerateKey: AES-%lu obj=%lu (blob %lu bytes)",
+        "C_GenerateKey: kind %d, %lu bits, obj=%lu (blob %lu bytes)",
+        (int)policy->kind,
         (unsigned long)(value_len * AES_KEY_BITS_PER_BYTE),
         (unsigned long)h,
         (unsigned long)blob_len
@@ -185,7 +213,7 @@ cleanup:
 }
 
 /* ========================================================================= */
-/* One-shot AES-CBC encrypt / decrypt                                        */
+/* One-shot AES-CBC / AES-GCM / AES-XTS encrypt / decrypt                    */
 /* ========================================================================= */
 
 static CK_RV cipher_init(
@@ -210,6 +238,9 @@ static CK_RV cipher_init(
      * state — with the operation-state check between arguments and mechanism,
      * as in C_DigestInit. */
     CK_RV rv = CKR_OK;
+    const azihsm_pkcs11_cipher_mech *cm = NULL;
+    CK_GCM_PARAMS gcm;
+    memset(&gcm, 0, sizeof(gcm));
     if (pMechanism == NULL_PTR)
     {
         rv = CKR_ARGUMENTS_BAD;
@@ -218,13 +249,25 @@ static CK_RV cipher_init(
     {
         rv = CKR_OPERATION_ACTIVE;
     }
-    else if ((pMechanism->mechanism != CKM_AES_CBC) && (pMechanism->mechanism != CKM_AES_CBC_PAD))
+    else if ((cm = azihsm_pkcs11_cipher_mech_find(pMechanism->mechanism)) == NULL)
     {
         rv = CKR_MECHANISM_INVALID;
     }
+    else if (cm->mech == CKM_AES_GCM)
+    {
+        rv = azihsm_pkcs11_gcm_params_check(
+            pMechanism->pParameter,
+            pMechanism->ulParameterLen,
+            &gcm
+        );
+    }
+    else if (cm->mech == CKM_AES_XTS)
+    {
+        rv = azihsm_pkcs11_xts_tweak_check(pMechanism->pParameter, pMechanism->ulParameterLen);
+    }
     else if ((pMechanism->pParameter == NULL_PTR) || (pMechanism->ulParameterLen != AES_BLOCK_LEN))
     {
-        rv = CKR_MECHANISM_PARAM_INVALID; /* both take the raw 16-byte IV */
+        rv = CKR_MECHANISM_PARAM_INVALID; /* the raw 16-byte CBC IV */
     }
     if (rv != CKR_OK)
     {
@@ -266,9 +309,33 @@ static CK_RV cipher_init(
     CK_ATTRIBUTE type_attr = { CKA_KEY_TYPE, &kt, sizeof(kt) };
     rv = g_azihsm_pkcs11.store.ops
              ->get_attr(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, hKey, &type_attr, 1);
-    if ((rv == CKR_OK) && (kt != CKK_AES))
+    if ((rv == CKR_OK) && (kt != cm->key_type))
     {
         rv = CKR_KEY_TYPE_INCONSISTENT;
+        goto cleanup;
+    }
+    /* A GCM key and a CBC key are both CKK_AES; the allowed-mechanism list
+     * recorded at generation tells them apart, so a family mismatch is caught
+     * here rather than as the device's refusal of a blob unmasked under the
+     * wrong kind (a key-handle error). The rules, including keys that predate
+     * the list, are in azihsm_pkcs11_key_mech_permitted. */
+    CK_MECHANISM_TYPE mechs[KEYGEN_MAX_ALLOWED_MECHS];
+    CK_ATTRIBUTE mechs_attr = { CKA_ALLOWED_MECHANISMS, mechs, sizeof(mechs) };
+    rv = g_azihsm_pkcs11.store.ops
+             ->get_attr(g_azihsm_pkcs11.store.ctx, s->slot, CK_TRUE, hKey, &mechs_attr, 1);
+    /* Only an absent or over-long list is a policy verdict; a store failure
+     * is reported as itself. */
+    if ((rv != CKR_OK) && (rv != CKR_ATTRIBUTE_TYPE_INVALID) && (rv != CKR_BUFFER_TOO_SMALL))
+    {
+        if (rv == CKR_OBJECT_HANDLE_INVALID)
+        {
+            rv = CKR_KEY_HANDLE_INVALID;
+        }
+        goto cleanup;
+    }
+    if (!azihsm_pkcs11_key_mech_permitted(rv, mechs, mechs_attr.ulValueLen, cm->mech))
+    {
+        rv = CKR_KEY_FUNCTION_NOT_PERMITTED;
         goto cleanup;
     }
     CK_BBOOL allowed = CK_TRUE;
@@ -296,16 +363,34 @@ static CK_RV cipher_init(
         goto cleanup;
     }
 
-    op = (cipher_op *)malloc(sizeof(cipher_op));
+    /* Zeroed, so the free on any later failure sees no handle and no AAD. */
+    op = (cipher_op *)calloc(1, sizeof(cipher_op));
     if (op == NULL)
     {
         rv = CKR_HOST_MEMORY;
         goto cleanup;
     }
-    op->mech = pMechanism->mechanism;
-    op->hsm_key = 0;
-    memcpy(op->iv, pMechanism->pParameter, AES_BLOCK_LEN);
-    rv = azihsm_pkcs11_key_aes_unmask(slot->hsm_session, body, body_len, &op->hsm_key);
+    op->mech = cm->mech;
+    if (cm->mech == CKM_AES_GCM)
+    {
+        memcpy(op->gcm_iv, gcm.pIv, AES_GCM_IV_LEN);
+        if (gcm.ulAADLen > 0)
+        {
+            op->aad = (CK_BYTE *)malloc(gcm.ulAADLen);
+            if (op->aad == NULL)
+            {
+                rv = CKR_HOST_MEMORY;
+                goto cleanup;
+            }
+            memcpy(op->aad, gcm.pAAD, gcm.ulAADLen);
+            op->aad_len = gcm.ulAADLen;
+        }
+    }
+    else
+    {
+        memcpy(op->iv, pMechanism->pParameter, pMechanism->ulParameterLen);
+    }
+    rv = azihsm_pkcs11_key_aes_unmask(slot->hsm_session, cm->kind, body, body_len, &op->hsm_key);
     if (rv != CKR_OK)
     {
         goto cleanup;
@@ -335,6 +420,122 @@ CK_RV C_EncryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_
 CK_RV C_DecryptInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     return cipher_init(hSession, pMechanism, hKey, P11_OP_DECRYPT);
+}
+
+/*
+ * The GCM and XTS half of cipher_oneshot (called with the lock held and the
+ * operation found). Same lifetime rules; the difference is that the output
+ * length follows from the input length alone, so sizing needs no device call,
+ * and that GCM's tag moves between the device's params struct and the end of
+ * the PKCS#11 ciphertext here.
+ */
+static CK_RV cipher_oneshot_fixed(
+    azihsm_pkcs11_session_t *s,
+    cipher_op *op,
+    bool encrypt,
+    CK_BYTE_PTR in,
+    CK_ULONG in_len,
+    CK_BYTE_PTR out,
+    CK_ULONG_PTR out_len
+)
+{
+    CK_RV rv = CKR_OK;
+    CK_ULONG need = 0;
+    if ((out_len == NULL_PTR) || ((in == NULL_PTR) && (in_len > 0)))
+    {
+        rv = CKR_ARGUMENTS_BAD;
+    }
+    else
+    {
+        rv = azihsm_pkcs11_cipher_out_len(op->mech, encrypt, in_len, &need);
+    }
+    if ((rv == CKR_OK) && (op->mech == CKM_AES_GCM) &&
+        !azihsm_pkcs11_gcm_fits(op->aad_len, encrypt ? in_len : need))
+    {
+        rv = encrypt ? CKR_DATA_LEN_RANGE : CKR_ENCRYPTED_DATA_LEN_RANGE;
+    }
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_session_reset_op(s);
+        return rv;
+    }
+    s->op_mode = P11_OP_MODE_ONESHOT;
+
+    if (out == NULL_PTR)
+    {
+        *out_len = need; /* sizing probe: report, keep the operation */
+        return CKR_OK;
+    }
+    if (*out_len < need)
+    {
+        *out_len = need;
+        return CKR_BUFFER_TOO_SMALL; /* op stays active for the retry */
+    }
+
+    CK_ULONG written = need;
+    if (op->mech == CKM_AES_XTS)
+    {
+        rv = azihsm_pkcs11_key_aes_xts(encrypt, op->hsm_key, op->iv, in, in_len, out, &written);
+    }
+    else if (op->mech != CKM_AES_GCM)
+    {
+        rv = CKR_MECHANISM_INVALID; /* unreachable: cipher_out_len admits only GCM and XTS */
+    }
+    else if (encrypt)
+    {
+        /* Ciphertext first, then the tag the device handed back appended to
+         * it, as PKCS#11 lays out a GCM ciphertext. */
+        CK_BYTE tag[AES_GCM_TAG_LEN];
+        written = in_len;
+        rv = azihsm_pkcs11_key_aes_gcm(
+            true,
+            op->hsm_key,
+            op->gcm_iv,
+            op->aad,
+            op->aad_len,
+            in,
+            in_len,
+            tag,
+            out,
+            &written
+        );
+        if ((rv == CKR_OK) && (written != in_len))
+        {
+            /* GCM ciphertext is exactly as long as the plaintext; anything
+             * else would put the tag at the wrong offset. */
+            azihsm_pkcs11_wipe(out, need);
+            rv = CKR_FUNCTION_FAILED;
+        }
+        if (rv == CKR_OK)
+        {
+            memcpy(out + written, tag, AES_GCM_TAG_LEN);
+            written += AES_GCM_TAG_LEN;
+        }
+    }
+    else
+    {
+        /* The trailing tag is taken out before the call: the plaintext may be
+         * written over the very bytes that held it when the buffers overlap. */
+        CK_BYTE tag[AES_GCM_TAG_LEN];
+        CK_ULONG ct_len = in_len - AES_GCM_TAG_LEN;
+        memcpy(tag, in + ct_len, AES_GCM_TAG_LEN);
+        written = need;
+        rv = azihsm_pkcs11_key_aes_gcm(
+            false,
+            op->hsm_key,
+            op->gcm_iv,
+            op->aad,
+            op->aad_len,
+            in,
+            ct_len,
+            tag,
+            out,
+            &written
+        );
+    }
+    *out_len = (rv == CKR_OK) ? written : 0;
+    azihsm_pkcs11_session_reset_op(s);
+    return rv;
 }
 
 /*
@@ -373,6 +574,12 @@ static CK_RV cipher_oneshot(
         return CKR_OPERATION_NOT_INITIALIZED;
     }
     cipher_op *op = (cipher_op *)s->op_ctx;
+    if ((op->mech == CKM_AES_GCM) || (op->mech == CKM_AES_XTS))
+    {
+        CK_RV rv = cipher_oneshot_fixed(s, op, encrypt, in, in_len, out, out_len);
+        azihsm_pkcs11_unlock();
+        return rv;
+    }
     bool pad = (op->mech == CKM_AES_CBC_PAD);
 
     /* Argument check, then the deterministic length policy, host-side (the
