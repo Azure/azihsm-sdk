@@ -338,6 +338,14 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(self.entry(table, slot)?.kind())
     }
 
+    /// Returns the session ID bound to a live key, or `None` for a
+    /// partition-scoped key.
+    pub fn key_session_binding(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+        let (table, slot) = split_key_id(key_id);
+        let entry = self.entry(table, slot)?;
+        Ok(entry.session().then_some(entry.session_or_tag()))
+    }
+
     /// Returns a key's [`HsmVaultKeyAttrs`].
     pub fn key_attrs(&self, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
         let (table, slot) = split_key_id(key_id);
