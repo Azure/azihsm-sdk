@@ -250,10 +250,24 @@ fuzz_target!(|input: FuzzInput| {
         };
         let result = ctx.tbor(&req);
 
-        if let Err(err) = &result {
-            if matches!(err, DdiError::DriverError(_)) {
-                panic!("Crash Detected: {err}");
-            }
+        // `KeyReport` requires an `Initialized` partition (`PartInit` +
+        // `PartFinal`), which `bootstrap_rotated_co` does not provide. The
+        // handler checks partition state before inspecting the key, so every
+        // encodable request — even one carrying a valid generated ECC key —
+        // must be rejected with `InvalidArg`. Oversized keys fail host-side
+        // encoding before reaching the device.
+        let encodable = req.masked_key.len() <= KEY_REPORT_MASKED_KEY_MAX_LEN;
+        match &result {
+            Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
+            Ok(resp) => panic!("KeyReport unexpectedly succeeded before finalize: {resp:?}"),
+            Err(err) if encodable => assert!(
+                matches!(err, DdiError::TborStatus(TborStatus::InvalidArg)),
+                "KeyReport before finalize must be rejected with InvalidArg, got {err}"
+            ),
+            Err(err) => assert!(
+                matches!(err, DdiError::TborEncodeError),
+                "oversized masked key must fail host-side encoding, got {err}"
+            ),
         }
 
         ctx.session_close(session.session_id)
