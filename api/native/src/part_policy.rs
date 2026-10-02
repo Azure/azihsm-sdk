@@ -57,6 +57,8 @@ where
 /// padded.
 /// Missing either POTA or SATA key also causes `azihsm_part_policy_build`
 /// to return `AZIHSM_STATUS_INVALID_ARGUMENT`.
+/// Unsupported major versions and reserved flag bits are rejected at
+/// build time as well.
 ///
 /// @param[out] out_builder Receives the non-NULL builder handle on
 ///             success; left unmodified on failure.
@@ -104,6 +106,9 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_free(builder: *mut AzihsmPar
 }
 
 /// @brief Set the policy version (`major.minor`)
+///
+/// Major version must be 1; any minor version is accepted. An unsupported
+/// major version is rejected at `azihsm_part_policy_build` time.
 ///
 /// @param[in] builder Builder handle
 /// @param[in] major Major version number
@@ -273,6 +278,9 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_info(
 
 /// @brief Set the policy flag bits
 ///
+/// Bits 0-2 are supported; reserved bits 3-7 are rejected at
+/// `azihsm_part_policy_build` time.
+///
 /// @param[in] builder Builder handle
 /// @param[in] flags Raw flag bits (see the `PolicyFlags` definition)
 /// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle
@@ -298,6 +306,8 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_flags(
 /// usable (unchanged) for further serialization.
 /// Both POTA and SATA keys must be set; otherwise returns
 /// `AZIHSM_STATUS_INVALID_ARGUMENT`, even for a size probe.
+/// Unsupported major versions and reserved flag bits also return
+/// `AZIHSM_STATUS_INVALID_ARGUMENT` before writing output.
 ///
 /// @param[in] builder Builder handle
 /// @param[out] out Buffer to receive the serialized policy image

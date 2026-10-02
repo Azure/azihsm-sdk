@@ -105,6 +105,9 @@ impl PartPolicyBuilder {
     }
 
     /// Set the policy version (`major.minor`).
+    ///
+    /// An unsupported major version is rejected by [`build`](Self::build).
+    /// Any minor version is accepted.
     pub fn version(mut self, major: u8, minor: u8) -> Self {
         self.policy.version = PolicyVer { major, minor };
         self
@@ -173,6 +176,8 @@ impl PartPolicyBuilder {
     }
 
     /// Replace the policy flags wholesale.
+    ///
+    /// Reserved bits are rejected by [`build`](Self::build).
     pub fn flags(mut self, flags: PolicyFlags) -> Self {
         self.policy.flags = flags;
         self
@@ -199,11 +204,16 @@ impl PartPolicyBuilder {
     /// Finish building and return the owned [`PartPolicy`], or
     /// [`HsmError::InvalidArgument`] if a setter was given input that did
     /// not fit its fixed-size slot, or if either required POTA or SATA key
-    /// was not set.
+    /// was not set, the major version is unsupported, or a reserved flag
+    /// bit is set.
     pub fn build(self) -> HsmResult<PartPolicy> {
         match self.error {
             Some(err) => Err(err),
-            None if self.policy.pota_pub_key.is_empty() || self.policy.sata_pub_key.is_empty() => {
+            None if self.policy.pota_pub_key.is_empty()
+                || self.policy.sata_pub_key.is_empty()
+                || self.policy.version.major != POLICY_VERSION_MAJOR
+                || !self.policy.flags.is_valid() =>
+            {
                 Err(HsmError::InvalidArgument)
             }
             None => Ok(self.policy),
@@ -260,6 +270,48 @@ mod tests {
             .expect("required keys fit");
         assert_eq!(policy.version.major, POLICY_VERSION_MAJOR);
         assert_eq!(policy.version.minor, 0);
+    }
+
+    #[test]
+    fn builder_validates_major_version_and_accepts_any_minor_version() {
+        let key = [0x11; POLICY_MAX_KEY_LEN];
+        let builder = PartPolicyBuilder::new()
+            .pota_key(PolicyKeyKind::Ecc384, &key)
+            .sata_key(PolicyKeyKind::Ecc384, &key);
+
+        for major in 0..=u8::MAX {
+            let result = builder.clone().version(major, u8::MAX).build();
+            if major == POLICY_VERSION_MAJOR {
+                assert_eq!(result.expect("supported major").version.minor, u8::MAX);
+            } else {
+                assert_eq!(result, Err(HsmError::InvalidArgument));
+            }
+        }
+        for minor in 0..=u8::MAX {
+            let policy = builder
+                .clone()
+                .version(POLICY_VERSION_MAJOR, minor)
+                .build()
+                .expect("any minor version is accepted");
+            assert_eq!(policy.version.minor, minor);
+        }
+    }
+
+    #[test]
+    fn builder_validates_all_flag_combinations() {
+        let key = [0x11; POLICY_MAX_KEY_LEN];
+        let builder = PartPolicyBuilder::new()
+            .pota_key(PolicyKeyKind::Ecc384, &key)
+            .sata_key(PolicyKeyKind::Ecc384, &key);
+
+        for bits in 0..=u8::MAX {
+            let result = builder.clone().flags(PolicyFlags::from_bits(bits)).build();
+            if bits & !0x07 == 0 {
+                assert_eq!(result.expect("known flags").flags.into_bits(), bits);
+            } else {
+                assert_eq!(result, Err(HsmError::InvalidArgument));
+            }
+        }
     }
 
     #[test]

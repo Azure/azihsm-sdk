@@ -300,8 +300,11 @@ bitfield:
 | 2     | `allow_peer_cloning`     |
 | 3 – 7 | reserved (must be zero)  |
 
-Setting any reserved bit causes `azihsm_sess_ex_part_init` /
-`azihsm_sess_ex_part_final` to reject the policy.
+The major version must be 1; any minor version is accepted. Setting an
+unsupported major version or any reserved flag bit still returns
+`AZIHSM_STATUS_SUCCESS` from the setter, but
+`azihsm_part_policy_build` rejects the policy with
+`AZIHSM_STATUS_INVALID_ARGUMENT`, including during size probes.
 
 ```cpp
 azihsm_status azihsm_part_policy_builder_set_version(
@@ -344,6 +347,8 @@ NULL or misaligned handle or buffer, or `AZIHSM_STATUS_BUFFER_TOO_SMALL` if
 `out` is too small (with `out.len` set to the required size).
 Missing a required POTA or SATA key, or a previously recorded setter
 validation error, also returns `AZIHSM_STATUS_INVALID_ARGUMENT`.
+An unsupported major version or reserved flag bit also returns
+`AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 ## azihsm_sess_ex_psk_change
 

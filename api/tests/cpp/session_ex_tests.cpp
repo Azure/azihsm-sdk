@@ -698,6 +698,56 @@ TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
     EXPECT_EQ(image[1], 0u);
 }
 
+TEST(azihsm_part_policy_builder, invalid_versions_and_reserved_flags_rejected_at_build)
+{
+    azihsm_part_policy_builder *builder = nullptr;
+    ASSERT_EQ(azihsm_part_policy_builder_new(&builder), AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(builder, nullptr);
+    auto guard =
+        scope_guard::make_scope_exit([&builder] { azihsm_part_policy_builder_free(builder); });
+    std::vector<uint8_t> key(96, 0x11);
+    azihsm_buffer key_buf{ key.data(), static_cast<uint32_t>(key.size()) };
+    ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(builder, 0, &key_buf), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(azihsm_part_policy_builder_set_sata_key(builder, 0, &key_buf), AZIHSM_STATUS_SUCCESS);
+
+    for (uint16_t major = 0; major <= 255; ++major)
+    {
+        ASSERT_EQ(
+            azihsm_part_policy_builder_set_version(builder, static_cast<uint8_t>(major), 255),
+            AZIHSM_STATUS_SUCCESS
+        );
+        azihsm_buffer out{ nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_part_policy_build(builder, &out),
+            major == 1 ? AZIHSM_STATUS_BUFFER_TOO_SMALL : AZIHSM_STATUS_INVALID_ARGUMENT
+        ) << "major="
+          << major;
+        if (major != 1)
+        {
+            EXPECT_EQ(out.len, 0u);
+        }
+    }
+
+    ASSERT_EQ(azihsm_part_policy_builder_set_version(builder, 1, 0), AZIHSM_STATUS_SUCCESS);
+    for (uint16_t flags = 0; flags <= 255; ++flags)
+    {
+        ASSERT_EQ(
+            azihsm_part_policy_builder_set_flags(builder, static_cast<uint8_t>(flags)),
+            AZIHSM_STATUS_SUCCESS
+        );
+        azihsm_buffer out{ nullptr, 0 };
+        EXPECT_EQ(
+            azihsm_part_policy_build(builder, &out),
+            flags <= 7 ? AZIHSM_STATUS_BUFFER_TOO_SMALL : AZIHSM_STATUS_INVALID_ARGUMENT
+        ) << "flags="
+          << flags;
+        if (flags > 7)
+        {
+            EXPECT_EQ(out.len, 0u);
+        }
+    }
+}
+
 // Oversized key material is rejected at build time rather than truncated
 // (truncation would yield a *different* key while reporting success).
 TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
