@@ -5,19 +5,27 @@
 
 #![allow(dead_code)]
 
-use azihsm_crypto::*;
 use azihsm_crypto::aead_envelope::AeadAlg;
+use azihsm_crypto::*;
 use azihsm_ddi::*;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_tbor_codec::Encoder;
-use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_codec::header::Header;
-use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
+use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
+use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
+use azihsm_ddi_tbor_types::PartPolicy;
+use azihsm_ddi_tbor_types::PolicyKeyKind;
+use azihsm_ddi_tbor_types::PolicyPubKey;
+use azihsm_ddi_tbor_types::PolicyVer;
+use azihsm_ddi_tbor_types::SessionType;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
-use azihsm_ddi_tbor_types::SessionType;
 
 pub type DdiTest = AzihsmDdi;
 
@@ -183,4 +191,62 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
         }
         (expected, actual) => panic!("operation {expected:?} decoded as {actual:?}"),
     }
+}
+
+/// Fill a 96-byte `PolicyPubKey::data` slot with a deterministic
+/// pattern seeded by `fill`: `(fill + i) | 0x80`.
+///
+/// Fuzz targets use this to synthesize wire-valid-but-cryptographically-
+/// meaningless keys for policy slots the FW handler stores but does not
+/// validate (the SATA anchor in both targets, and the POTA anchor for
+/// `PartInit` where the chain walk never fires).
+pub fn fill_ecc384_pubkey_pattern(fill: u8) -> [u8; POLICY_MAX_KEY_LEN] {
+    let mut data = [0u8; POLICY_MAX_KEY_LEN];
+    for (i, b) in data.iter_mut().enumerate() {
+        *b = (fill.wrapping_add(i as u8)) | 0x80;
+    }
+    data
+}
+
+/// Build a wire-valid `PartPolicy` blob that clears FW policy validation:
+/// `version.major == POLICY_VERSION_MAJOR` and populated Ecc384 POTA +
+/// SATA trust anchors. SAPOTA and backup-partition slots are left absent.
+///
+/// `pota_pub_key` is the raw 96-byte P-384 `X ‖ Y` POTA pubkey to embed:
+/// `PartFinal` fuzz targets pass the real CA's raw pub (via
+/// `CaKey::raw_pub`) so the cert-chain walk can validate against it;
+/// `PartInit` fuzz targets pass a synthetic pattern (via
+/// [`fill_ecc384_pubkey_pattern`]) because the chain walk never fires
+/// there. The SATA slot is always filled with the `(0x20 + i) | 0x80`
+/// pattern — the FW records it as a claim but the fuzz targets never
+/// exercise a SATA chain, so any wire-valid Ecc384-shaped key suffices.
+///
+/// Uses the shared [`PartPolicy`] struct + typed [`PolicyPubKey`] /
+/// [`PolicyVer`] constructors so the on-wire byte layout tracks whatever
+/// the policy crate declares (no hand-computed field offsets here).
+///
+/// Constructs the policy directly from the wire-type's public fields
+/// rather than the API-crate `PartPolicyBuilder`, so the fuzz package
+/// keeps depending only on the low-level `azihsm_ddi_tbor_types` crate
+/// (not the full `azihsm_api` stack).
+pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PART_POLICY_LEN] {
+    use zerocopy::IntoBytes;
+
+    let mut policy = PartPolicy::zeroed();
+    policy.version = PolicyVer {
+        major: POLICY_VERSION_MAJOR,
+        minor: 0,
+    };
+    policy.pota_pub_key =
+        PolicyPubKey::new(PolicyKeyKind::Ecc384, POLICY_MAX_KEY_LEN as u16, pota_pub_key);
+    policy.sata_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        fill_ecc384_pubkey_pattern(0x20),
+    );
+    policy.info = [0xAB; POLICY_INFO_LEN];
+
+    let mut bytes = [0u8; PART_POLICY_LEN];
+    bytes.copy_from_slice(policy.as_bytes());
+    bytes
 }

@@ -5,6 +5,15 @@ its security domain. A security-domain session (opened with
 [`azihsm_sess_ex_open`](#azihsm_sess_ex_open)) is required to issue the
 provisioning command in this chapter.
 
+All policy-taking Rust APIs accept `&PartPolicy`, including partition
+init/final and remote/peer backup operations. Policy remains an explicit
+per-call input; partition and session opening are unchanged. Native C
+params continue to carry the serialized 484-byte policy in an
+`azihsm_buffer`. The native wrappers parse that image into `PartPolicy`
+after validating output capacity, preserving size probes and returning
+`AZIHSM_STATUS_INVALID_ARGUMENT` for a wrong-length policy once outputs
+are sufficiently sized. The C ABI and DDI wire format are unchanged.
+
 ## azihsm_sess_ex_open
 
 Open a security-domain session to the device.
@@ -114,6 +123,11 @@ azihsm_status azihsm_sess_ex_part_init(
 
 ### azihsm_sess_ex_part_init_params
 
+Partition-policy inputs use the name `part_policy` and appear first in the
+provisioning, finalization, and security-domain backup input structures.
+Callers must rebuild against the updated header: moving these fields changes
+the C struct layouts, even though the function signatures are unchanged.
+
 Provisioning input buffers for
 [`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init). Each field points
 to an [azihsm_buffer](#azihsm_buffer); `sapota_thumbprint` is optional and
@@ -121,8 +135,8 @@ may be NULL to omit it.
 
 ```cpp
 struct azihsm_sess_ex_part_init_params {
-    const struct azihsm_buffer *mach_seed;
     const struct azihsm_buffer *part_policy;
+    const struct azihsm_buffer *mach_seed;
     const struct azihsm_buffer *pota_thumbprint;
     const struct azihsm_buffer *sata_thumbprint;
     const struct azihsm_buffer *sapota_thumbprint;
@@ -131,8 +145,8 @@ struct azihsm_sess_ex_part_init_params {
 
  | Field             | Name                             | Description                              |
  | ----------------- | -------------------------------- | ---------------------------------------- |
+ | part_policy       | [azihsm_buffer*](#azihsm_buffer) | unified partition policy image (see [Partition policy builder](#partition-policy-builder)) |
  | mach_seed         | [azihsm_buffer*](#azihsm_buffer) | machine seed plaintext                   |
- | part_policy       | [azihsm_buffer*](#azihsm_buffer) | unified partition policy image           |
  | pota_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | POTA public-key thumbprint               |
  | sata_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | SATA public-key thumbprint               |
  | sapota_thumbprint | [azihsm_buffer*](#azihsm_buffer) | optional SAPOTA thumbprint (may be NULL) |
@@ -200,6 +214,150 @@ struct azihsm_sess_ex_part_final_params {
  | pta_cert_chain       | [azihsm_buffer*](#azihsm_buffer) | array of DER PTA certificates (root to leaf)    |
  | pta_cert_chain_len   | uint32_t                         | number of certificates in the chain             |
  | prev_local_mk_backup | [azihsm_buffer*](#azihsm_buffer) | optional prior local_mk backup (may be NULL)    |
+
+## Partition policy builder
+
+The `part_policy` image consumed by
+[`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init) and
+[`azihsm_sess_ex_part_final`](#azihsm_sess_ex_part_final) is a fixed-size
+binary layout. Rather than assemble it by hand, callers may use the
+opaque partition-policy builder to set named, typed fields and then
+serialize the canonical image. The on-wire format is unchanged — the
+builder is a pure convenience that emits exactly the bytes the init /
+final entry points already accept.
+
+Typical use:
+
+1. [`azihsm_part_policy_builder_new`](#azihsm_part_policy_builder_new)
+   allocates a builder (its version defaults to `major = 1, minor = 0`,
+   with every other field zeroed).
+2. Set both required POTA and SATA keys with the
+   `azihsm_part_policy_builder_set_*` setters, plus any optional fields.
+3. [`azihsm_part_policy_build`](#azihsm_part_policy_build) serializes the
+   image into a caller-provided [azihsm_buffer](#azihsm_buffer); it
+   follows the same two-call size-probe contract as other output buffers
+   (an undersized buffer is rejected with
+   `AZIHSM_STATUS_BUFFER_TOO_SMALL` and `len` set to the required size).
+4. [`azihsm_part_policy_builder_free`](#azihsm_part_policy_builder_free)
+   releases the builder.
+
+The serialized image may then be passed as the `part_policy` buffer to
+`azihsm_sess_ex_part_init` / `azihsm_sess_ex_part_final`.
+
+### azihsm_part_policy_builder_new
+
+Allocate a new partition-policy builder.
+
+```cpp
+azihsm_status azihsm_part_policy_builder_new(
+    struct azihsm_part_policy_builder **out_builder);
+```
+
+**Parameters**
+
+- `out_builder` — on success, receives a non-NULL opaque builder handle
+  that must be released with `azihsm_part_policy_builder_free`. Left
+  unmodified on failure.
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, or `AZIHSM_STATUS_INVALID_ARGUMENT`
+if `out_builder` is NULL.
+
+### azihsm_part_policy_builder_free
+
+Release a builder handle. Passing NULL is a no-op.
+
+```cpp
+void azihsm_part_policy_builder_free(
+    struct azihsm_part_policy_builder *builder
+    );
+```
+
+### azihsm_part_policy_builder_set_* 
+
+Set individual policy fields. Each returns `AZIHSM_STATUS_SUCCESS`, or
+`AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle or buffer. `kind` is the
+public-key kind discriminant (`0` = ECC P-384).
+
+Both POTA and SATA keys are mandatory: call
+`azihsm_part_policy_builder_set_pota_key` and
+`azihsm_part_policy_builder_set_sata_key` before building. If either key
+is unset, `azihsm_part_policy_build` returns
+`AZIHSM_STATUS_INVALID_ARGUMENT`, including for size probes.
+SAPOTA and backing-partition keys remain optional.
+
+Fixed-size fields reject input that does not satisfy their length
+requirement rather than truncating or padding it: if a key, `info`, or
+backing-partition id violates its slot's length rule, the setter still
+returns `AZIHSM_STATUS_SUCCESS`, but the subsequent
+`azihsm_part_policy_build` fails with `AZIHSM_STATUS_INVALID_ARGUMENT`.
+A *known* key kind must be exactly the length that kind requires — an
+ECC P-384 (`kind = 0`) key is `X || Y`, i.e. exactly 96 bytes — because
+the firmware rejects every other length; a shorter key that merely fits
+the slot is therefore rejected too. `info` and the backing-partition id
+must not exceed their respective slots (truncating key material would
+silently yield a *different* key).
+
+The `flags` byte passed to `azihsm_part_policy_builder_set_flags` is a
+bitfield:
+
+| Bit   | Meaning                  |
+|-------|--------------------------|
+| 0     | `include_fmc_cdi`        |
+| 1     | `require_trusted_sa_key` |
+| 2     | `allow_peer_cloning`     |
+| 3 – 7 | reserved (must be zero)  |
+
+The major version must be 1; any minor version is accepted. Setting an
+unsupported major version or any reserved flag bit still returns
+`AZIHSM_STATUS_SUCCESS` from the setter, but
+`azihsm_part_policy_build` rejects the policy with
+`AZIHSM_STATUS_INVALID_ARGUMENT`, including during size probes.
+
+```cpp
+azihsm_status azihsm_part_policy_builder_set_version(
+    struct azihsm_part_policy_builder *builder, uint8_t major, uint8_t minor);
+azihsm_status azihsm_part_policy_builder_set_pota_key(
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_sata_key(
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_sapota_key(
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_backup_part_id(
+    struct azihsm_part_policy_builder *builder, const struct azihsm_buffer *id);
+azihsm_status azihsm_part_policy_builder_set_backup_part_pub_key(
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
+    const struct azihsm_buffer *key);
+azihsm_status azihsm_part_policy_builder_set_info(
+    struct azihsm_part_policy_builder *builder, const struct azihsm_buffer *info);
+azihsm_status azihsm_part_policy_builder_set_flags(
+    struct azihsm_part_policy_builder *builder, uint8_t flags);
+```
+
+### azihsm_part_policy_build
+
+Serialize the policy into its canonical wire image.
+
+```cpp
+azihsm_status azihsm_part_policy_build(
+    struct azihsm_part_policy_builder *builder,
+    struct azihsm_buffer *out
+    );
+```
+
+**Returns**
+
+`AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_INVALID_ARGUMENT` on a
+NULL or misaligned handle or buffer, or `AZIHSM_STATUS_BUFFER_TOO_SMALL` if
+`out` is too small (with `out.len` set to the required size).
+Missing a required POTA or SATA key, or a previously recorded setter
+validation error, also returns `AZIHSM_STATUS_INVALID_ARGUMENT`.
+An unsupported major version or reserved flag bit also returns
+`AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 ## azihsm_sess_ex_psk_change
 
@@ -283,17 +441,17 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_create_remote_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *receiver_evidence;
-    const struct azihsm_buffer *policy;
 };
 ```
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (276 B)             |
  | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence                      |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
 
 ## azihsm_sd_reseal_remote_backup
 
@@ -338,20 +496,20 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_reseal_remote_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *src_evidence;
     const struct azihsm_sd_evidence *dest_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *src_remote_backup;
 };
 ```
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
  | src_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | source (sender) attestation evidence               |
  | dest_evidence      | [azihsm_sd_evidence*](#azihsm_sd_evidence) | destination (receiver) attestation evidence        |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | source remote backup to reseal (161 B)             |
 
 ## azihsm_sd_restore_remote_backup
@@ -402,9 +560,9 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_restore_remote_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *sender_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *src_remote_backup;
     const struct azihsm_buffer *prev_sd_mk_backup;
 };
@@ -412,9 +570,9 @@ struct azihsm_sd_restore_remote_backup_params {
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
  | sender_evidence    | [azihsm_sd_evidence*](#azihsm_sd_evidence) | sender attestation evidence                        |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | remote backup to restore (161 B)                   |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (260 B)|
 
@@ -461,18 +619,18 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_create_peer_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *dst_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *pok_local_backup;
 };
 ```
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (276 B)             |
  | dst_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | destination (peer) attestation evidence            |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | pok_local_backup   | [azihsm_buffer*](#azihsm_buffer)           | device-local partition-owner-key backup (276 B)    |
 
 ## azihsm_sd_restore_peer_backup
@@ -524,9 +682,9 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_restore_peer_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *src_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *pok_peer_backup;
     const struct azihsm_buffer *prev_sd_mk_backup;
 };
@@ -534,9 +692,9 @@ struct azihsm_sd_restore_peer_backup_params {
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
  | src_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | source (peer) attestation evidence                 |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | pok_peer_backup    | [azihsm_buffer*](#azihsm_buffer)           | peer backup to restore (161 B)                     |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (260 B)|
 

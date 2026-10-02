@@ -454,10 +454,18 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler>() -> EngineResult<*mut ffi::EVP_
     d.ctrl = ctrl_dummy;
     let _ = DEFAULTS.set(d);
 
+    // Create with EVP_PKEY_FLAG_AUTOARGLEN: EVP_PKEY_meth_copy copies the
+    // callbacks but not the flags, and the inherited built-in encrypt/decrypt/
+    // sign ops rely on it to short-circuit the out==NULL size query. Without it
+    // that query reaches e.g. pkey_rsa_encrypt with a NULL buffer and segfaults
+    // (hit once the engine is the process default, e.g. the import's RSA wrap).
     // SAFETY: fresh method; meth_copy duplicates the built-in callbacks; the
     // setters install our overrides (keeping the built-in keygen_init).
     unsafe {
-        let method = ffi::EVP_PKEY_meth_new(ffi::EVP_PKEY_RSA as c_int, 0);
+        let method = ffi::EVP_PKEY_meth_new(
+            ffi::EVP_PKEY_RSA as c_int,
+            ffi::EVP_PKEY_FLAG_AUTOARGLEN_CONST,
+        );
         if method.is_null() {
             return Err(EngineError::Other("EVP_PKEY_meth_new failed".into()));
         }
@@ -557,6 +565,26 @@ mod tests {
         assert_eq!(rc, 1, "built-in must accept keygen_bits");
         assert_eq!(state_of(ctx).bits, Some(3072));
         free_ctx(ctx);
+    }
+
+    // The method must carry EVP_PKEY_FLAG_AUTOARGLEN (dropped by
+    // EVP_PKEY_meth_copy) so the out==NULL size query is short-circuited instead
+    // of segfaulting in the inherited built-in ops.
+    #[test]
+    #[allow(unsafe_code)]
+    fn method_advertises_autoarglen() {
+        let method = new_rsa_pkey_method::<PanicImport>().unwrap();
+        let mut flags: c_int = 0;
+        // SAFETY: method is our fresh method; the getter writes the out-params
+        // (NULL for the ones we don't want).
+        unsafe { ffi::EVP_PKEY_meth_get0_info(null_mut(), &mut flags, method) };
+        assert_ne!(
+            flags & ffi::EVP_PKEY_FLAG_AUTOARGLEN_CONST,
+            0,
+            "RSA pkey method must carry EVP_PKEY_FLAG_AUTOARGLEN"
+        );
+        // SAFETY: method is ours and unregistered.
+        unsafe { ffi::EVP_PKEY_meth_free(method) };
     }
 
     // The azihsm.* import options are parsed and recorded, and any of them arms
