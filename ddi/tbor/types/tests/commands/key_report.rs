@@ -45,7 +45,6 @@ use crate::commands::common::ENVELOPE_HEADER_LEN;
 use crate::commands::common::ENVELOPE_IV_LEN;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
-use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// Sample caller-supplied report data bound into the report payload.
