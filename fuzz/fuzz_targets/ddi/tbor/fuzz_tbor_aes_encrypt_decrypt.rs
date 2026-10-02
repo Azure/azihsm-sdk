@@ -70,19 +70,44 @@ fuzz_target!(|input: FuzzInput| {
             input.cmdreq_data.masked_key.clone()
         };
 
+        let msg = &input.cmdreq_data.msg;
+        let op = input.cmdreq_data.op;
+        let expect_success = input.use_valid_key
+            && (op == AES_OP_ENCRYPT || op == AES_OP_DECRYPT)
+            && !msg.is_empty()
+            && msg.len().is_multiple_of(AES_IV_LEN)
+            && msg.len() <= AES_MSG_MAX_LEN;
+
         let req = TborAesEncryptDecryptReq {
             session_id: session.session_id,
-            masked_key,
-            op: input.cmdreq_data.op,
-            msg: input.cmdreq_data.msg.clone(),
+            masked_key: masked_key.clone(),
+            op,
+            msg: msg.clone(),
             iv: input.cmdreq_data.iv,
         };
         let result = ctx.tbor(&req);
 
-        if let Err(err) = &result {
-            if matches!(err, DdiError::DriverError(_)) {
-                panic!("Crash Detected: {err}");
+        match (&result, expect_success) {
+            (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
+            (Ok(resp), true) => {
+                assert_eq!(resp.msg.len(), msg.len(), "output length must match input");
+                if op == AES_OP_ENCRYPT {
+                    let decrypted = ctx
+                        .tbor(&TborAesEncryptDecryptReq {
+                            session_id: session.session_id,
+                            masked_key,
+                            op: AES_OP_DECRYPT,
+                            msg: resp.msg.clone(),
+                            iv: input.cmdreq_data.iv,
+                        })
+                        .expect("decrypting valid ciphertext should succeed");
+                    assert_eq!(&decrypted.msg, msg, "AES round trip must recover plaintext");
+                    assert_eq!(decrypted.iv, resp.iv, "decrypt chaining IV must match");
+                }
             }
+            (Ok(resp), false) => panic!("invalid AES request unexpectedly succeeded: {resp:?}"),
+            (Err(err), true) => panic!("valid AES request failed: {err}"),
+            (Err(_), false) => {}
         }
 
         ctx.session_close(session.session_id)

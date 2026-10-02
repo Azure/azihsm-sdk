@@ -62,6 +62,24 @@ impl EccCurve {
             Self::P521 => ECC_CURVE_P521,
         }
     }
+
+    /// Largest digest the firmware zero-extends into the ECDSA field.
+    fn max_digest_len(&self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 64,
+        }
+    }
+
+    /// Wire `r ‖ s` length, each component padded to the coordinate width.
+    fn wire_sig_len(&self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
+        }
+    }
 }
 
 /// Fuzz input corresponding to the MBOR `EccSign` target.
@@ -129,17 +147,30 @@ fuzz_target!(|input: FuzzInput| {
             fuzzed_masked_key(&input.cmdreq_data)
         };
 
+        let digest = wire_digest(&input.cmdreq_data);
+        let expect_success = generate_valid_key
+            && matches!(digest.len(), 32 | 48 | 64)
+            && digest.len() <= input.curve.max_digest_len();
+
         let req = TborEccSignReq {
             session_id: session.session_id,
             masked_key,
-            digest: wire_digest(&input.cmdreq_data),
+            digest,
         };
         let result = ctx.tbor(&req);
 
-        if let Err(err) = &result {
-            if matches!(err, DdiError::DriverError(_)) {
-                panic!("Crash Detected: {err}");
+        match (&result, expect_success) {
+            (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
+            (Ok(resp), true) => assert_eq!(
+                resp.signature.len(),
+                input.curve.wire_sig_len(),
+                "signature length must match the curve wire length"
+            ),
+            (Ok(resp), false) => {
+                panic!("invalid ECC sign request unexpectedly succeeded: {resp:?}")
             }
+            (Err(err), true) => panic!("valid ECC sign request failed: {err}"),
+            (Err(_), false) => {}
         }
 
         ctx.session_close(session.session_id)

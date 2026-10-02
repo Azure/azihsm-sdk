@@ -7,17 +7,20 @@
 mod common;
 
 use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::TborPartInitReq;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
+use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
+use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::PartPolicy;
+use azihsm_ddi_tbor_types::PolicyKeyKind;
+use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::TborPartInitReq;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -91,6 +94,23 @@ fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
     bytes
 }
 
+/// Mirror of the firmware `policy::from_bytes` validation: major version
+/// must match, POTA/SATA must be Ecc384 keys, SAPOTA/backup keys are
+/// either absent or Ecc384, and no reserved flag bits may be set.
+fn is_valid_part_policy(policy: &PartPolicy) -> bool {
+    fn valid_key(key: &PolicyPubKey, required: bool) -> bool {
+        (!required && key.is_empty())
+            || (key.kind() == PolicyKeyKind::Ecc384 && key.len() == POLICY_MAX_KEY_LEN)
+    }
+
+    policy.version.major == POLICY_VERSION_MAJOR
+        && valid_key(&policy.pota_pub_key, true)
+        && valid_key(&policy.sata_pub_key, true)
+        && valid_key(&policy.sapota_pub_key, false)
+        && valid_key(&policy.backup_part_pub_key, false)
+        && policy.flags.is_valid()
+}
+
 /// Fuzzed base request parameters for the TBOR `PartInit` operation.
 #[derive(Arbitrary, Debug)]
 pub struct PartInitCmdReqData {
@@ -162,10 +182,9 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
         } else {
             input.cmdreq_data.part_policy
         };
-        let part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(
-            &part_policy_bytes,
-        )
-        .unwrap_or_else(|_| PartPolicy::zeroed());
+        let part_policy =
+            <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(&part_policy_bytes)
+                .unwrap_or_else(|_| PartPolicy::zeroed());
 
         let pota_thumbprint = if input.use_valid_pota_thumbprint {
             VALID_POTA_THUMBPRINT
@@ -189,6 +208,12 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
                 .unwrap_or_default()
         };
 
+        // `PartInit` succeeds only with an authentic `mach_seed` envelope and
+        // a well-formed policy; thumbprints are opaque, and SAPOTA is either
+        // absent or exactly 48 bytes, so neither affects validity.
+        let expect_success =
+            input.use_valid_mach_seed_envelope && is_valid_part_policy(&part_policy);
+
         let req = TborPartInitReq {
             session_id: session.session_id,
             mach_seed_envelope,
@@ -200,10 +225,20 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
 
         let resp = ctx.tbor(&req);
 
-        if let Err(err) = &resp {
-            if matches!(err, DdiError::DriverError(_)) {
-                panic!("Crash Detected: {}", err);
+        match (&resp, expect_success) {
+            (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
+            (Ok(resp), true) => {
+                assert!(!resp.pta_csr.is_empty(), "PartInit must return a PTA CSR");
+                assert!(
+                    !resp.pta_report.is_empty(),
+                    "PartInit must return a PTA report"
+                );
             }
+            (Ok(resp), false) => {
+                panic!("invalid PartInit request unexpectedly succeeded: {resp:?}")
+            }
+            (Err(err), true) => panic!("valid PartInit request failed: {err}"),
+            (Err(_), false) => {}
         }
 
         ctx.session_close(session.session_id)

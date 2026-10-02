@@ -31,6 +31,15 @@ impl EccCurve {
             Self::P521 => ECC_CURVE_P521,
         }
     }
+
+    /// Raw shared-secret (X coordinate) length.
+    fn secret_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 66,
+        }
+    }
 }
 
 /// Key scope selector mirroring the `KeyScope` wire discriminants.
@@ -157,13 +166,28 @@ fuzz_target!(|input: FuzzInput| {
         };
         let result = ctx.tbor(&req);
 
+        // Only generated key pairs with an encodable label can derive; of
+        // those, only Session scope has a provisioned masking key after
+        // `bootstrap_rotated_co`.
+        let valid_keys = input.use_valid_masked_key
+            && input.use_valid_peer_pub_key
+            && input.cmdreq_data.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
+        let session_scope = matches!(input.key_scope, KeyScope::Session);
+
         match &result {
-            // Ephemeral/Local/SecurityDomain masking keys are not
-            // provisioned by `bootstrap_rotated_co`, so the FW is expected
-            // to reject those scopes.
-            Err(DdiError::TborStatus(TborStatus::UnsupportedKeyScope)) => {}
             Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
-            _ => {}
+            Ok(resp) if valid_keys && session_scope => assert_eq!(
+                resp.masked_secret.len(),
+                MASKED_SECRET_MIN_LEN - 32 + input.curve.secret_len(),
+                "masked secret length must match the curve secret length"
+            ),
+            Ok(resp) => panic!("invalid ECDH request unexpectedly succeeded: {resp:?}"),
+            Err(err) if valid_keys && session_scope => panic!("valid ECDH request failed: {err}"),
+            Err(err) if valid_keys => assert!(
+                matches!(err, DdiError::TborStatus(TborStatus::UnsupportedKeyScope)),
+                "unprovisioned scope must be rejected with UnsupportedKeyScope, got {err}"
+            ),
+            Err(_) => {}
         }
 
         ctx.session_close(session.session_id)
