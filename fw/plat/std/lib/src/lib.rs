@@ -823,6 +823,56 @@ mod tests {
         );
     }
 
+    /// End-to-end regression test for the shutdown drain protocol: an IO
+    /// genuinely still in flight (queued or being processed by
+    /// `handle_io`) when `shutdown_async` begins must still be allowed to
+    /// run to completion, not dropped or aborted.
+    ///
+    /// Submits directly through the private `io_tx` channel instead of
+    /// via [`StdHsm::io`]: that method's returned future borrows `self`
+    /// for as long as it's unresolved (through the final
+    /// `reply_rx.await`), which would make it impossible to then move
+    /// `hsm` into `shutdown_async` — a by-value method — while the IO is
+    /// still pending. Sending directly decouples submission from the
+    /// reply, so nothing borrows `hsm` once the send completes, letting
+    /// this test actually start shutdown while the IO is still
+    /// in-flight, then await the reply afterward.
+    #[tokio::test]
+    async fn shutdown_waits_for_io_still_in_flight_when_it_begins() {
+        const PID: u8 = 1;
+        let hsm = StdHsm::new();
+        hsm.part_alloc(PID, 1u128 << PID)
+            .await
+            .expect("part_alloc failed");
+        hsm.part_enable(PID).await.expect("part_enable failed");
+
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        hsm.io_tx
+            .send(HsmIoRequest {
+                pid: HsmPartId::from(PID),
+                qid: 0,
+                qidx: 0,
+                sqe: [0u32; 16],
+                tx: reply_tx,
+            })
+            .await
+            .expect("submission channel closed unexpectedly");
+
+        // Nothing borrows `hsm` at this point, so shutdown can begin
+        // while the IO submitted above is still queued/processing —
+        // exactly the race `ShutdownTracker`'s drain exists to handle.
+        tokio::time::timeout(Duration::from_secs(10), hsm.shutdown_async())
+            .await
+            .expect("shutdown_async did not complete — Embassy thread hung");
+
+        // Only check the reply after shutdown has fully drained: if the
+        // drain let the executor stop without finishing this IO,
+        // `reply_tx` would have been dropped unsent and this would error.
+        reply_rx.await.expect(
+            "in-flight IO's reply was dropped instead of completing before shutdown finished",
+        );
+    }
+
     #[test]
     #[should_panic(expected = "StdHsm requires a multi-thread Tokio runtime")]
     fn current_thread_tokio_runtime_is_rejected() {
