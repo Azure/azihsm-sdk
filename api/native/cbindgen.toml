@@ -32,7 +32,7 @@ usize_is_size_t = true
 
 # A list of items to not include in the generated bindings
 # default: []
-exclude = []
+exclude = ["AzihsmWideChar"]
 include = [
   "AzihsmAlgoAesCbcParams",
   "AzihsmAlgoAesGcmParams",
@@ -126,7 +126,6 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmSessionPsk" = "azihsm_session_psk"
 "AzihsmStatus" = "azihsm_status"
 "AzihsmStr" = "azihsm_str"
-"AzihsmWideChar" = "azihsm_char"
 "HsmEccCurve" = "azihsm_ecc_curve"
 "HsmError" = "azihsm_status"
 "HsmKeyClass" = "azihsm_key_class"

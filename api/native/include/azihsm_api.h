@@ -871,7 +871,7 @@ typedef uint8_t azihsm_char;
 
 #if defined(_WIN32)
 /*
- Wide character (UTF-16 for Windows)
+ Character (UTF-16 for Windows)
  */
 typedef uint16_t azihsm_char;
 #endif
@@ -881,20 +881,10 @@ typedef uint16_t azihsm_char;
  */
 struct azihsm_str
 {
-#if !defined(_WIN32)
     /*
      Pointer to the string
      */
-    azihsm_char *str
-#endif
-        ;
-#if defined(_WIN32)
-    /*
-     Pointer to the string
-     */
-    azihsm_char *str
-#endif
-        ;
+    azihsm_char *str;
     /*
      Length of the string (including null terminator)
      */
