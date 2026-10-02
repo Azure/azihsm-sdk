@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-09-25):
-* emu: 136 tests
+Test counts:
+* emu: 146 tests
 * mock: 6 tests
 
 ## Legend
@@ -243,6 +243,28 @@ independent of CO/CU session state.
 | Invalid slot and invalid certificate-index failures preserve the entire valid chain | ✅ | `get_cert::all_reject_classes_preserve_entire_chain` | Covers both rejection classes against a full-chain snapshot. |
 | Out-of-session `GetCertificate` remains callable while a CU PlainText session is active | ✅ | `get_cert::callable_while_cu_session_active` | Uses shared `common::CU`; CU uses the supported `SessionType::PlainText` pairing. |
 | `GetCertificate` remains stable across both supported CO Authenticated and CU PlainText session lifecycles | ✅ | `get_cert::entire_chain_stable_across_co_and_cu_session_lifecycles` | Verifies every advertised certificate before, during, and after each supported role/session pairing. |
+
+## `GetUnwrappingKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `GetUnwrappingKey` command.
+The command returns the partition RSA-2048 unwrapping public key in
+`n_le(256) ‖ e_le(4)` wire format and is available to both Crypto-Officer
+and Crypto-User sessions after the applicable PSK has been rotated.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Happy path returns a well-formed RSA-2048 unwrapping public key | ✅ | `get_unwrapping_key::get_unwrapping_key_returns_rsa_pub_key` | Verifies 260-byte wire length, 2048-bit odd modulus, and exponent 65537 |
+| Repeated calls in the same CO session return the same partition key | ✅ | `get_unwrapping_key::get_unwrapping_key_is_stable` | Confirms the key is stable rather than regenerated per request |
+| Rotated Crypto-User session may fetch the unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_available_to_cu` | Also validates the returned RSA public-key structure |
+| Closed session is rejected with `SessionNotFound` | ✅ | `get_unwrapping_key::get_unwrapping_key_closed_session_rejected` | Request is issued after closing a valid CO session |
+| Unwrapping key remains stable across separate CO sessions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_co_sessions` | Closes and reopens CO under the rotated PSK |
+| CO and CU sessions observe the same partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_same_for_co_and_cu` | Confirms the key is partition-scoped rather than role-scoped |
+| Crypto-User using the default PSK is rejected with `DefaultPskMustRotate` | ✅ | `get_unwrapping_key::get_unwrapping_key_default_cu_psk_rejected` | Exercises the dispatcher default-PSK gate |
+| Unknown session id is rejected with `SessionNotFound` | ✅ | `get_unwrapping_key::get_unwrapping_key_unknown_session_rejected` | Uses `u16::MAX` |
+| Unwrapping key remains stable across separate CU sessions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_cu_sessions` | Reopens CU using the rotated CU PSK |
+| CO PSK rotation does not change the partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_co_psk_rotation` | Reads the key before and after a second CO PSK rotation |
+| CU PSK rotation does not change the partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_cu_psk_rotation` | Reads the key before and after a second CU PSK rotation |
+| Key remains stable across CO → CU → CO role transitions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_role_transitions` | Confirms partition-key identity across role/session transitions |
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
