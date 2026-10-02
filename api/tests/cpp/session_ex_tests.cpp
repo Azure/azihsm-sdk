@@ -652,7 +652,10 @@ TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
 
-    std::vector<uint8_t> pota(48, 0x11);
+    // `PolicyKeyKind::Ecc384` (kind 0) is `X || Y`, exactly
+    // `POLICY_MAX_KEY_LEN` (96) bytes; the firmware rejects any other
+    // length, so the builder requires it too.
+    std::vector<uint8_t> pota(96, 0x11);
     azihsm_buffer pota_buf{ pota.data(), static_cast<uint32_t>(pota.size()) };
     ASSERT_EQ(azihsm_part_policy_builder_set_version(b, 1, 0), AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &pota_buf), AZIHSM_STATUS_SUCCESS);
@@ -686,6 +689,26 @@ TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
     std::vector<uint8_t> too_long(97, 0x22);
     azihsm_buffer key_buf{ too_long.data(), static_cast<uint32_t>(too_long.size()) };
     // The setter defers validation; it still reports success.
+    ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &key_buf), AZIHSM_STATUS_SUCCESS);
+
+    std::vector<uint8_t> image(512, 0);
+    azihsm_buffer out{ image.data(), static_cast<uint32_t>(image.size()) };
+    EXPECT_EQ(azihsm_part_policy_build(b, &out), AZIHSM_STATUS_INVALID_ARGUMENT);
+}
+
+// A known key kind must carry its exact firmware-required length. An
+// `Ecc384` (kind 0) key is `X || Y` = 96 bytes; a shorter key merely
+// "fits" the 96-byte slot but is rejected at build time, since firmware
+// rejects every non-96-byte Ecc384 key.
+TEST(azihsm_part_policy_builder, wrong_length_ecc384_rejected_at_build)
+{
+    AzihsmPartPolicyBuilder *b = azihsm_part_policy_builder_new();
+    ASSERT_NE(b, nullptr);
+    auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
+
+    // 48 bytes fits the slot but is not a well-formed Ecc384 key.
+    std::vector<uint8_t> too_short(48, 0x33);
+    azihsm_buffer key_buf{ too_short.data(), static_cast<uint32_t>(too_short.size()) };
     ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &key_buf), AZIHSM_STATUS_SUCCESS);
 
     std::vector<uint8_t> image(512, 0);

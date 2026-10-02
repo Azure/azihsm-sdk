@@ -34,11 +34,14 @@ use crate::error::HsmError;
 /// the typed setters, then call [`build`](Self::build) to obtain the
 /// owned [`PartPolicy`].  Public-key setters copy the supplied raw bytes
 /// into the fixed [`POLICY_MAX_KEY_LEN`] slot and record the active
-/// length.  Oversized input to a fixed-size slot is rejected (not
-/// truncated): the first such error is captured and surfaced by
-/// [`build`](Self::build) as [`HsmError::InvalidArgument`], since
-/// truncating cryptographic key material would silently yield a
-/// *different* key while reporting success.
+/// length.  A known key kind must be the exact length the firmware
+/// requires (an [`PolicyKeyKind::Ecc384`] key is `X ‖ Y`, i.e. exactly
+/// [`POLICY_MAX_KEY_LEN`] bytes); a wrong-length or oversized key is
+/// rejected (not truncated): the first such error is captured and
+/// surfaced by [`build`](Self::build) as [`HsmError::InvalidArgument`],
+/// since emitting a short or truncated key would silently yield a
+/// *different* key (or one guaranteed to fail provisioning) while
+/// reporting success.
 #[derive(Debug, Clone)]
 pub struct PartPolicyBuilder {
     policy: PartPolicy,
@@ -65,11 +68,28 @@ impl PartPolicyBuilder {
 
     /// Build a [`PolicyPubKey`] slot from a discriminant and raw key
     /// bytes, copying them into the fixed [`POLICY_MAX_KEY_LEN`] slot and
-    /// recording the active length.  Rejects input that would not fit,
-    /// rather than truncating (which would yield a different key).
+    /// recording the active length.
+    ///
+    /// Enforces the exact on-wire length the firmware requires for a
+    /// *known* key kind (an [`PolicyKeyKind::Ecc384`] key is `X ‖ Y`, so
+    /// exactly [`POLICY_MAX_KEY_LEN`] bytes); firmware unconditionally
+    /// rejects every other length, so accepting a short key here would
+    /// report success for a policy guaranteed to fail provisioning.  For
+    /// unknown/future key kinds the exact length is not known, so only the
+    /// slot-capacity bound is enforced.  Oversized input is rejected
+    /// rather than truncated (truncation would yield a different key).
     fn make_key(kind: PolicyKeyKind, raw: &[u8]) -> HsmResult<PolicyPubKey> {
-        if raw.len() > POLICY_MAX_KEY_LEN {
-            return Err(HsmError::InvalidArgument);
+        match kind {
+            PolicyKeyKind::Ecc384 => {
+                if raw.len() != POLICY_MAX_KEY_LEN {
+                    return Err(HsmError::InvalidArgument);
+                }
+            }
+            _ => {
+                if raw.len() > POLICY_MAX_KEY_LEN {
+                    return Err(HsmError::InvalidArgument);
+                }
+            }
         }
         let mut data = [0u8; POLICY_MAX_KEY_LEN];
         data[..raw.len()].copy_from_slice(raw);
@@ -260,6 +280,31 @@ mod tests {
                 .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
                 .backup_part_id(&[0x22; POLICY_BACKUP_PART_ID_LEN])
                 .info(&[0x33; POLICY_INFO_LEN])
+                .build()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn builder_rejects_wrong_length_ecc384_key() {
+        // An Ecc384 key is `X ‖ Y` and must be exactly POLICY_MAX_KEY_LEN
+        // bytes; the firmware rejects any other length, so a short key
+        // that merely "fits" the slot must be rejected here too rather
+        // than emitting a policy guaranteed to fail provisioning.
+        for len in [0, 1, POLICY_MAX_KEY_LEN - 1] {
+            assert_eq!(
+                PartPolicyBuilder::new()
+                    .pota_key(PolicyKeyKind::Ecc384, &vec![0x11; len])
+                    .build(),
+                Err(HsmError::InvalidArgument),
+                "Ecc384 key of {len} bytes must be rejected"
+            );
+        }
+
+        // The exact length is accepted.
+        assert!(
+            PartPolicyBuilder::new()
+                .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
                 .build()
                 .is_ok()
         );
