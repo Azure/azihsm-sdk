@@ -7,6 +7,7 @@
 //! 'Unified GSRAM address map (2 MiB at 0x6100_0000).'
 
 pub const IO_GSRAM_BASE: u32 = 0x61000000;
+pub const FIPS_PROVISIONED_KEYS_FLAG_OFFSET: u32 = 0x135C;
 pub const BOOT_STATUS_OFFSET: u32 = 0x7000;
 pub const IPC_ADMIN_HSM_RX_PI_OFFSET: u32 = 0x7004;
 pub const IPC_ADMIN_HSM_RX_CI_OFFSET: u32 = 0x7008;
@@ -61,7 +62,15 @@ pub const BKS_TABLE_OFFSET: u32 = 0x1110;
 pub const BKS_TABLE_COUNT: u32 = 12;
 pub const BKS_TABLE_STRIDE: u32 = 0x29;
 pub const BKS_TABLE_SIZE: u32 = 0x29;
-pub const HSM_SEED_TABLE_OFFSET: u32 = 0x12FC;
+pub const SP_FIPS_PROVISIONED_KEYS_OFFSET: u32 = 0x12FC;
+pub const SP_FIPS_PROVISIONED_KEYS_COUNT: u32 = 1;
+pub const SP_FIPS_PROVISIONED_KEYS_STRIDE: u32 = 0x30;
+pub const SP_FIPS_PROVISIONED_KEYS_SIZE: u32 = 0x30;
+pub const CP_FIPS_PROVISIONED_KEYS_OFFSET: u32 = 0x132C;
+pub const CP_FIPS_PROVISIONED_KEYS_COUNT: u32 = 1;
+pub const CP_FIPS_PROVISIONED_KEYS_STRIDE: u32 = 0x30;
+pub const CP_FIPS_PROVISIONED_KEYS_SIZE: u32 = 0x30;
+pub const HSM_SEED_TABLE_OFFSET: u32 = 0x1360;
 pub const HSM_SEED_TABLE_COUNT: u32 = 2;
 pub const HSM_SEED_TABLE_STRIDE: u32 = 0x30;
 pub const HSM_SEED_TABLE_SIZE: u32 = 0x30;
@@ -71,6 +80,11 @@ pub const SRAM_IO_BUF_STRIDE: u32 = 0x4000;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4000;
 
 tock_registers::register_bitfields! [u32,
+    /// 'FIPS provisioned-keys flag (byte 0) plus 3 reserved bytes.'
+    pub FIPS_PROVISIONED_KEYS_FLAG [
+        FLAG OFFSET(0) NUMBITS(8) [],
+        RSVD OFFSET(8) NUMBITS(24) [],
+    ],
     /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
     pub BOOT_STATUS [
         STATE OFFSET(0) NUMBITS(32) [],
@@ -318,8 +332,11 @@ pub mod regs {
         pub IoGsramRegs {
             (0x0 => _reserved0),
             (0x1110 => pub bks_table: [u8; 492]),
-            (0x12fc => pub hsm_seed_table: [u8; 96]),
-            (0x135c => _reserved1),
+            (0x12fc => pub sp_fips_provisioned_keys: [u8; 48]),
+            (0x132c => pub cp_fips_provisioned_keys: [u8; 48]),
+            (0x135c => pub fips_provisioned_keys_flag: crate::RW<u32, super::FIPS_PROVISIONED_KEYS_FLAG::Register>),
+            (0x1360 => pub hsm_seed_table: [u8; 96]),
+            (0x13c0 => _reserved1),
             (0x7000 => pub boot_status: crate::RW<u32, super::BOOT_STATUS::Register>),
             (0x7004 => pub ipc_admin_hsm_rx_pi: crate::RW<u32, super::IPC_ADMIN_HSM_RX_PI::Register>),
             (0x7008 => pub ipc_admin_hsm_rx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_RX_CI::Register>),
