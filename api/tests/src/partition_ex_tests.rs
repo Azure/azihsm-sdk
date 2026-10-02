@@ -50,7 +50,7 @@ fn part_init_rejects_bad_part_policy_len() {
     let (mach_seed, pota, sata) = valid_part_init_inputs();
     let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
 
-    let res = session.part_init_ex(&mach_seed, &bad_policy, &pota, &sata, None);
+    let res = session.part_init_ex(&bad_policy, &mach_seed, &pota, &sata, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
@@ -63,7 +63,7 @@ fn part_init_rejects_bad_pota_thumbprint_len() {
     let policy = vec![0u8; PART_POLICY_LEN];
     let bad_pota = vec![0u8; POTA_THUMBPRINT_LEN + 1];
 
-    let res = session.part_init_ex(&mach_seed, &policy, &bad_pota, &sata, None);
+    let res = session.part_init_ex(&policy, &mach_seed, &bad_pota, &sata, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
@@ -76,7 +76,7 @@ fn part_init_rejects_bad_sata_thumbprint_len() {
     let policy = vec![0u8; PART_POLICY_LEN];
     let bad_sata = vec![0u8; SATA_THUMBPRINT_LEN + 1];
 
-    let res = session.part_init_ex(&mach_seed, &policy, &pota, &bad_sata, None);
+    let res = session.part_init_ex(&policy, &mach_seed, &pota, &bad_sata, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
@@ -89,7 +89,7 @@ fn part_init_rejects_bad_sapota_thumbprint_len() {
     let policy = vec![0u8; PART_POLICY_LEN];
     let bad_sapota = vec![0u8; SAPOTA_THUMBPRINT_LEN + 1];
 
-    let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, Some(&bad_sapota));
+    let res = session.part_init_ex(&policy, &mach_seed, &pota, &sata, Some(&bad_sapota));
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
@@ -184,7 +184,7 @@ fn part_init_valid_inputs_pass_host_guards() {
     let (mach_seed, pota, sata) = valid_part_init_inputs();
     let policy = vec![0u8; PART_POLICY_LEN];
 
-    let res = session.part_init_ex(&mach_seed, &policy, &pota, &sata, None);
+    let res = session.part_init_ex(&policy, &mach_seed, &pota, &sata, None);
     assert!(!matches!(res, Err(HsmError::InvalidArgument)));
 }
 

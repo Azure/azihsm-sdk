@@ -33,13 +33,13 @@ fn sd_create_peer_backup_roundtrip() {
     // Create the security domain first to obtain the device-local backup
     // that CreatePeerBackup recovers BKS3 from.
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&policy, &masked, ev))
         .expect("create remote backup");
 
     // Self-peer backup: seal to our own attested identity as destination.
     let peer = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
 
@@ -64,17 +64,17 @@ fn sd_create_peer_backup_rerandomizes() {
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&policy, &masked, ev))
         .expect("create remote backup");
 
     let first = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
     let second = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
 

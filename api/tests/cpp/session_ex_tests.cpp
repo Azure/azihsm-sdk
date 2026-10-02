@@ -2,11 +2,20 @@
 // Licensed under the MIT License.
 
 #include <azihsm_api.h>
+#include <cstddef>
 #include <gtest/gtest.h>
 #include <scope_guard.hpp>
 
 #include "handle/part_list_handle.hpp"
 #include "utils/utils.hpp"
+
+static_assert(offsetof(azihsm_sess_ex_part_init_params, part_policy) == 0);
+static_assert(offsetof(azihsm_sess_ex_part_final_params, part_policy) == 0);
+static_assert(offsetof(azihsm_sd_create_remote_backup_params, part_policy) == 0);
+static_assert(offsetof(azihsm_sd_reseal_remote_backup_params, part_policy) == 0);
+static_assert(offsetof(azihsm_sd_restore_remote_backup_params, part_policy) == 0);
+static_assert(offsetof(azihsm_sd_create_peer_backup_params, part_policy) == 0);
+static_assert(offsetof(azihsm_sd_restore_peer_backup_params, part_policy) == 0);
 
 class azihsm_sess_ex : public ::testing::Test
 {
