@@ -1176,6 +1176,10 @@ struct azihsm_sd_evidence
 struct azihsm_sd_create_remote_backup_params
 {
     /*
+     Unified partition-policy image (484 B) describing the domain.
+     */
+    const struct azihsm_buffer *part_policy;
+    /*
      Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
      `MASKED_SEALING_KEY_LEN` (276 B).
      */
@@ -1184,10 +1188,6 @@ struct azihsm_sd_create_remote_backup_params
      Receiver attestation evidence.
      */
     const struct azihsm_sd_evidence *receiver_evidence;
-    /*
-     Unified partition-policy image (484 B) describing the domain.
-     */
-    const struct azihsm_buffer *policy;
 };
 
 /*
@@ -1195,6 +1195,10 @@ struct azihsm_sd_create_remote_backup_params
  */
 struct azihsm_sd_reseal_remote_backup_params
 {
+    /*
+     Unified partition-policy image (484 B) describing the domain.
+     */
+    const struct azihsm_buffer *part_policy;
     /*
      Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
      unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
@@ -1209,10 +1213,6 @@ struct azihsm_sd_reseal_remote_backup_params
      */
     const struct azihsm_sd_evidence *dest_evidence;
     /*
-     Unified partition-policy image (484 B) describing the domain.
-     */
-    const struct azihsm_buffer *policy;
-    /*
      Source remote backup to reseal, exactly `POK_REMOTE_BACKUP_LEN`
      (161 B).
      */
@@ -1225,6 +1225,10 @@ struct azihsm_sd_reseal_remote_backup_params
 struct azihsm_sd_restore_remote_backup_params
 {
     /*
+     Unified partition-policy image (484 B) describing the domain.
+     */
+    const struct azihsm_buffer *part_policy;
+    /*
      Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
      unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
      */
@@ -1233,10 +1237,6 @@ struct azihsm_sd_restore_remote_backup_params
      Sender attestation evidence.
      */
     const struct azihsm_sd_evidence *sender_evidence;
-    /*
-     Unified partition-policy image (484 B) describing the domain.
-     */
-    const struct azihsm_buffer *policy;
     /*
      Remote backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
      */
@@ -1254,6 +1254,10 @@ struct azihsm_sd_restore_remote_backup_params
 struct azihsm_sd_create_peer_backup_params
 {
     /*
+     Unified partition-policy image (484 B) describing the domain.
+     */
+    const struct azihsm_buffer *part_policy;
+    /*
      Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
      `MASKED_SEALING_KEY_LEN` (276 B).
      */
@@ -1262,10 +1266,6 @@ struct azihsm_sd_create_peer_backup_params
      Destination (peer) attestation evidence.
      */
     const struct azihsm_sd_evidence *dst_evidence;
-    /*
-     Unified partition-policy image (484 B) describing the domain.
-     */
-    const struct azihsm_buffer *policy;
     /*
      Device-local partition-owner-key backup (276 B) from which BKS3 is
      recovered.
@@ -1279,6 +1279,10 @@ struct azihsm_sd_create_peer_backup_params
 struct azihsm_sd_restore_peer_backup_params
 {
     /*
+     Unified partition-policy image (484 B) describing the domain.
+     */
+    const struct azihsm_buffer *part_policy;
+    /*
      Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
      unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
      */
@@ -1287,10 +1291,6 @@ struct azihsm_sd_restore_peer_backup_params
      Source (peer) attestation evidence.
      */
     const struct azihsm_sd_evidence *src_evidence;
-    /*
-     Unified partition-policy image (484 B) describing the domain.
-     */
-    const struct azihsm_buffer *policy;
     /*
      Peer backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
      */
@@ -1354,13 +1354,13 @@ typedef azihsm_session_ex_type azihsm_session_ex_type;
 struct azihsm_sess_ex_part_init_params
 {
     /*
-     Machine seed plaintext buffer.
-     */
-    const struct azihsm_buffer *mach_seed;
-    /*
      Unified partition policy image buffer.
      */
     const struct azihsm_buffer *part_policy;
+    /*
+     Machine seed plaintext buffer.
+     */
+    const struct azihsm_buffer *mach_seed;
     /*
      POTA public-key thumbprint buffer.
      */
@@ -2422,7 +2422,7 @@ azihsm_status azihsm_part_get_prop(azihsm_handle handle, struct azihsm_part_prop
  @brief Create a new security domain and its remote backup
 
  Creates a security domain under the calling session's partition from
- `params.policy`, using the sender's masked sealing key and the
+ `params.part_policy`, using the sender's masked sealing key and the
  receiver's attestation evidence, and returns the three backups the
  firmware produces.
 
