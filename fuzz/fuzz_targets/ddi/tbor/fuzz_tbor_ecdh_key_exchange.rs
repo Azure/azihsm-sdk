@@ -11,36 +11,10 @@ use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
+use common::EccCurve;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-/// Elliptic curve selector mirroring the `EccCurve` wire discriminants.
-#[derive(Arbitrary, Debug, Clone, Copy)]
-enum EccCurve {
-    P256,
-    P384,
-    P521,
-}
-
-impl EccCurve {
-    fn to_tbor(self) -> u8 {
-        match self {
-            Self::P256 => ECC_CURVE_P256,
-            Self::P384 => ECC_CURVE_P384,
-            Self::P521 => ECC_CURVE_P521,
-        }
-    }
-
-    /// Raw shared-secret (X coordinate) length.
-    fn secret_len(self) -> usize {
-        match self {
-            Self::P256 => 32,
-            Self::P384 => 48,
-            Self::P521 => 66,
-        }
-    }
-}
 
 /// Key scope selector mirroring the `KeyScope` wire discriminants.
 #[derive(Arbitrary, Debug, Clone, Copy)]
@@ -178,7 +152,7 @@ fuzz_target!(|input: FuzzInput| {
             Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
             Ok(resp) if valid_keys && session_scope => assert_eq!(
                 resp.masked_secret.len(),
-                MASKED_SECRET_MIN_LEN - 32 + input.curve.secret_len(),
+                MASKED_SECRET_MIN_LEN - 32 + input.curve.coord_len(),
                 "masked secret length must match the curve secret length"
             ),
             Ok(resp) => panic!("invalid ECDH request unexpectedly succeeded: {resp:?}"),

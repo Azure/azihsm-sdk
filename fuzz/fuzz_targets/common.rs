@@ -18,6 +18,9 @@ use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
@@ -71,6 +74,54 @@ impl FuzzRole {
         match self {
             FuzzRole::Co => SessionType::Authenticated,
             FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
+}
+
+/// TBOR ECC curves (wire `EccCurve` discriminants) for generated keys.
+///
+/// Shadows the `azihsm_crypto::EccCurve` glob import within this module.
+#[derive(Arbitrary, Debug, Clone, Copy)]
+pub enum EccCurve {
+    P256,
+    P384,
+    P521,
+}
+
+impl EccCurve {
+    pub fn to_tbor(self) -> u8 {
+        match self {
+            Self::P256 => ECC_CURVE_P256,
+            Self::P384 => ECC_CURVE_P384,
+            Self::P521 => ECC_CURVE_P521,
+        }
+    }
+
+    /// Raw (unpadded) coordinate length in bytes; also the length of an
+    /// ECDH shared secret (the X coordinate).
+    pub fn coord_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 66,
+        }
+    }
+
+    /// Largest digest the firmware zero-extends into the ECDSA field.
+    pub fn max_digest_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 64,
+        }
+    }
+
+    /// Wire `r ‖ s` length, each component padded to the coordinate width.
+    pub fn wire_sig_len(self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
         }
     }
 }

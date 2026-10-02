@@ -28,6 +28,7 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::*;
+use common::EccCurve;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -43,32 +44,6 @@ enum KeySource {
     GeneratedAesKey(common::AesKeySize),
     HmacKey(HmacHash),
     GeneratedSecretKey(EccCurve),
-}
-
-#[derive(Arbitrary, Debug)]
-enum EccCurve {
-    P256,
-    P384,
-    P521,
-}
-
-impl EccCurve {
-    fn to_tbor(&self) -> u8 {
-        match self {
-            Self::P256 => ECC_CURVE_P256,
-            Self::P384 => ECC_CURVE_P384,
-            Self::P521 => ECC_CURVE_P521,
-        }
-    }
-
-    /// Raw (unpadded) coordinate length in bytes.
-    fn coord_len(&self) -> usize {
-        match self {
-            Self::P256 => 32,
-            Self::P384 => 48,
-            Self::P521 => 66,
-        }
-    }
 }
 
 #[derive(Arbitrary, Debug)]

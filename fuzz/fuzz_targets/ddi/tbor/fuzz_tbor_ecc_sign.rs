@@ -11,6 +11,7 @@ use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
+use common::EccCurve;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -42,42 +43,6 @@ impl DigestAlgorithm {
             Self::Sha384 => 48,
             Self::Sha512 => 64,
             Self::Unknown(value) => *value as usize % (ECC_DIGEST_MAX_LEN + 1),
-        }
-    }
-}
-
-/// ECC curve for generated TBOR signing keys.
-#[derive(Arbitrary, Debug)]
-enum EccCurve {
-    P256,
-    P384,
-    P521,
-}
-
-impl EccCurve {
-    fn to_tbor(&self) -> u8 {
-        match self {
-            Self::P256 => ECC_CURVE_P256,
-            Self::P384 => ECC_CURVE_P384,
-            Self::P521 => ECC_CURVE_P521,
-        }
-    }
-
-    /// Largest digest the firmware zero-extends into the ECDSA field.
-    fn max_digest_len(&self) -> usize {
-        match self {
-            Self::P256 => 32,
-            Self::P384 => 48,
-            Self::P521 => 64,
-        }
-    }
-
-    /// Wire `r ‖ s` length, each component padded to the coordinate width.
-    fn wire_sig_len(&self) -> usize {
-        match self {
-            Self::P256 => 64,
-            Self::P384 => 96,
-            Self::P521 => 136,
         }
     }
 }
