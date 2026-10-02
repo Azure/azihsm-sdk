@@ -356,20 +356,31 @@ fn verify_key_report(
     let (x_be, y_be) = cose_key_xy(cose_key);
 
     // COSE_Key coordinates are big-endian; the wire public key is LE
-    // `x ‖ y`, so reverse each COSE_Key coordinate and compare the exact
-    // byte strings against the corresponding wire half.
+    // `x ‖ y`, with each coordinate zero-padded to the wire width (P-521:
+    // 66 -> 68 bytes). Reverse each COSE_Key coordinate and compare it with
+    // the unpadded prefix of the corresponding wire half.
     assert_eq!(x_be.len(), coord_len, "COSE_Key pk_x matches the curve width");
     assert_eq!(y_be.len(), coord_len, "COSE_Key pk_y matches the curve width");
+    assert!(
+        pub_key_le.len() % 2 == 0 && pub_key_le.len() / 2 >= coord_len,
+        "wire public key length must hold two padded coordinates",
+    );
+    let wire_coord_len = pub_key_le.len() / 2;
+    let (wire_x, wire_y) = pub_key_le.split_at(wire_coord_len);
+    assert!(
+        wire_x[coord_len..].iter().chain(&wire_y[coord_len..]).all(|&b| b == 0),
+        "wire public key coordinate padding must be zero",
+    );
     let x_le: Vec<u8> = x_be.iter().rev().copied().collect();
     let y_le: Vec<u8> = y_be.iter().rev().copied().collect();
     assert_eq!(
         x_le.as_slice(),
-        &pub_key_le[..coord_len],
+        &wire_x[..coord_len],
         "attested COSE_Key pk_x must re-derive the key's X",
     );
     assert_eq!(
         y_le.as_slice(),
-        &pub_key_le[coord_len..2 * coord_len],
+        &wire_y[..coord_len],
         "attested COSE_Key pk_y must re-derive the key's Y",
     );
 }
