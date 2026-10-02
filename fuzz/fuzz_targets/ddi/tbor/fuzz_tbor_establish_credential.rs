@@ -81,11 +81,9 @@ fn is_valid_part_policy(policy: &PartPolicy) -> bool {
 /// Fuzzed base request parameters for the TBOR `PartInit` operation.
 #[derive(Arbitrary, Debug)]
 pub struct PartInitCmdReqData {
-    /// Raw `mach_seed` plaintext. Sealed into an AEAD-GCM envelope
-    /// before being shipped on the wire (see
-    /// [`FuzzInput::use_valid_mach_seed_envelope`]), unless that flag
-    /// is `false`, in which case these raw bytes are used directly as
-    /// the (almost certainly invalid) envelope.
+    /// Raw `mach_seed` plaintext. Always sealed into a wire-correct
+    /// AEAD-GCM envelope (canonical session-bound AAD), which is then
+    /// optionally corrupted by [`FuzzInput::envelope_mutation`].
     pub mach_seed: [u8; MACH_SEED_LEN],
     /// Raw 484-byte `part_policy` blob.
     pub part_policy: [u8; PART_POLICY_LEN],
@@ -103,10 +101,12 @@ pub struct PartInitCmdReqData {
 /// Crypto-Officer session).
 #[derive(Arbitrary, Debug)]
 pub struct FuzzInput {
-    /// If `true`, the fuzz test will seal `cmdreq_data.mach_seed` into
-    /// a wire-correct AEAD-GCM envelope (canonical session-bound AAD)
-    /// instead of shipping the fuzzed raw bytes as-is.
-    pub use_valid_mach_seed_envelope: bool,
+    /// Post-seal mutation applied to the wire-valid 100-byte
+    /// `mach_seed` envelope. Mutating a valid envelope (rather than
+    /// shipping raw bytes) keeps the length gate satisfied for
+    /// `FlipByte`, so malformed headers, AAD, ciphertext, and tags reach
+    /// the device-side envelope parser.
+    pub envelope_mutation: common::EnvelopeMutation,
     /// If `true`, the fuzz test will use a wire-correct 484-byte
     /// `part_policy` blob instead of `cmdreq_data.part_policy`.
     pub use_valid_part_policy: bool,
@@ -137,12 +137,12 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
         // so the request clears the default-PSK reject arm).
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
-        let mach_seed_envelope = if input.use_valid_mach_seed_envelope {
+        let mut mach_seed_envelope =
             encrypt_mach_seed_envelope(&session, &input.cmdreq_data.mach_seed)
-                .expect("mach_seed envelope should seal")
-        } else {
-            input.cmdreq_data.mach_seed.to_vec()
-        };
+                .expect("mach_seed envelope should seal");
+        // Snapshot no-op-ness against the pre-mutation envelope.
+        let envelope_is_valid = input.envelope_mutation.is_noop(&mach_seed_envelope);
+        input.envelope_mutation.apply(&mut mach_seed_envelope);
 
         let part_policy_bytes = if input.use_valid_part_policy {
             common::known_good_part_policy(common::fill_ecc384_pubkey_pattern(0x10))
@@ -175,11 +175,11 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
                 .unwrap_or_default()
         };
 
-        // `PartInit` succeeds only with an authentic `mach_seed` envelope and
-        // a well-formed policy; thumbprints are opaque, and SAPOTA is either
-        // absent or exactly 48 bytes, so neither affects validity.
-        let expect_success =
-            input.use_valid_mach_seed_envelope && is_valid_part_policy(&part_policy);
+        // `PartInit` succeeds only with an unmutated (authentic) `mach_seed`
+        // envelope and a well-formed policy; thumbprints are opaque, and
+        // SAPOTA is either absent or exactly 48 bytes, so neither affects
+        // validity.
+        let expect_success = envelope_is_valid && is_valid_part_policy(&part_policy);
 
         let req = TborPartInitReq {
             session_id: session.session_id,

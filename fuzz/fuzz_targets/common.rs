@@ -15,6 +15,7 @@ use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
@@ -67,6 +68,74 @@ impl FuzzRole {
         match self {
             FuzzRole::Co => SessionType::Authenticated,
             FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
+}
+
+fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
+    Ok(u.bytes(len)?.to_vec())
+}
+
+/// Post-seal mutation applied to a wire-valid `PartInit`
+/// `mach_seed_envelope`.
+///
+/// `None` ships the sealed envelope untouched so the handler advances
+/// past AEAD authentication into the policy / thumbprint / seed
+/// pipeline. The other variants exercise the envelope parser's header,
+/// AAD, ciphertext, tag, and length-reject paths without leaving them
+/// buried under negligible-probability arbitrary-byte inputs.
+#[derive(Arbitrary, Debug)]
+pub enum EnvelopeMutation {
+    /// Ship the sealed envelope unchanged.
+    None,
+    /// XOR a fuzzed mask into a fuzzed offset (offset wrapped modulo
+    /// envelope length). Exercises AEAD tag / ciphertext tampering.
+    FlipByte { offset: u16, mask: u8 },
+    /// Truncate to `len % (envelope.len() + 1)` bytes. Exercises
+    /// short-envelope rejects and post-decrypt length checks.
+    Truncate { len: u16 },
+    /// Append fuzzed trailing bytes (bounded) to exercise over-length
+    /// rejects.
+    Append(#[arbitrary(with = bounded_appended_bytes)] Vec<u8>),
+}
+
+impl EnvelopeMutation {
+    pub fn apply(&self, envelope: &mut Vec<u8>) {
+        match self {
+            EnvelopeMutation::None => {}
+            EnvelopeMutation::FlipByte { offset, mask } => {
+                if !envelope.is_empty() && *mask != 0 {
+                    let idx = (*offset as usize) % envelope.len();
+                    envelope[idx] ^= *mask;
+                }
+            }
+            EnvelopeMutation::Truncate { len } => {
+                let cap = envelope.len() + 1;
+                envelope.truncate((*len as usize) % cap);
+            }
+            EnvelopeMutation::Append(extra) => {
+                envelope.extend_from_slice(extra);
+            }
+        }
+    }
+
+    /// `true` iff this mutation would leave the sealed envelope byte-
+    /// identical (matches the `None` variant or a no-op offset/mask/len/
+    /// extra choice inside a mutation variant). Drives the "expect
+    /// success" classification for the result assertion.
+    pub fn is_noop(&self, envelope: &[u8]) -> bool {
+        match self {
+            EnvelopeMutation::None => true,
+            EnvelopeMutation::FlipByte { mask, .. } => *mask == 0 || envelope.is_empty(),
+            EnvelopeMutation::Truncate { len } => {
+                // `Vec::truncate(new_len)` only shrinks when `new_len <
+                // envelope.len()`; `apply` computes
+                // `len % (envelope.len() + 1)` so a no-op requires the
+                // modulo to land on `envelope.len()`.
+                (*len as usize) % (envelope.len() + 1) == envelope.len()
+            }
+            EnvelopeMutation::Append(extra) => extra.is_empty(),
         }
     }
 }
