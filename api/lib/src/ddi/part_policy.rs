@@ -202,7 +202,7 @@ impl PartPolicyBuilder {
     pub fn build(self) -> HsmResult<PartPolicy> {
         match self.error {
             Some(err) => Err(err),
-            None if self.policy.pota_pub_key.len() == 0 || self.policy.sata_pub_key.len() == 0 => {
+            None if self.policy.pota_pub_key.is_empty() || self.policy.sata_pub_key.is_empty() => {
                 Err(HsmError::InvalidArgument)
             }
             None => Ok(self.policy),
