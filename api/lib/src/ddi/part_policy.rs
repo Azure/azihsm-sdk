@@ -197,10 +197,14 @@ impl PartPolicyBuilder {
 
     /// Finish building and return the owned [`PartPolicy`], or
     /// [`HsmError::InvalidArgument`] if a setter was given input that did
-    /// not fit its fixed-size slot.
+    /// not fit its fixed-size slot, or if either required POTA or SATA key
+    /// was not set.
     pub fn build(self) -> HsmResult<PartPolicy> {
         match self.error {
             Some(err) => Err(err),
+            None if self.policy.pota_pub_key.len() == 0 || self.policy.sata_pub_key.len() == 0 => {
+                Err(HsmError::InvalidArgument)
+            }
             None => Ok(self.policy),
         }
     }
@@ -224,6 +228,7 @@ mod tests {
         let policy = PartPolicyBuilder::new()
             .version(POLICY_VERSION_MAJOR, 0)
             .pota_key(PolicyKeyKind::Ecc384, &pota)
+            .sata_key(PolicyKeyKind::Ecc384, &pota)
             .backup_part_id(&[0xCD; POLICY_BACKUP_PART_ID_LEN])
             .info(&[0xAB; POLICY_INFO_LEN])
             .allow_peer_cloning(true)
@@ -246,9 +251,36 @@ mod tests {
 
     #[test]
     fn builder_defaults_version_to_major_one() {
-        let policy = PartPolicyBuilder::new().build().expect("defaults fit");
+        let key = [0x11; POLICY_MAX_KEY_LEN];
+        let policy = PartPolicyBuilder::new()
+            .pota_key(PolicyKeyKind::Ecc384, &key)
+            .sata_key(PolicyKeyKind::Ecc384, &key)
+            .build()
+            .expect("required keys fit");
         assert_eq!(policy.version.major, POLICY_VERSION_MAJOR);
         assert_eq!(policy.version.minor, 0);
+    }
+
+    #[test]
+    fn builder_rejects_missing_required_anchor_keys() {
+        let key = [0x11; POLICY_MAX_KEY_LEN];
+
+        assert_eq!(
+            PartPolicyBuilder::new().build(),
+            Err(HsmError::InvalidArgument)
+        );
+        assert_eq!(
+            PartPolicyBuilder::new()
+                .pota_key(PolicyKeyKind::Ecc384, &key)
+                .build(),
+            Err(HsmError::InvalidArgument)
+        );
+        assert_eq!(
+            PartPolicyBuilder::new()
+                .sata_key(PolicyKeyKind::Ecc384, &key)
+                .build(),
+            Err(HsmError::InvalidArgument)
+        );
     }
 
     #[test]
@@ -278,6 +310,7 @@ mod tests {
         assert!(
             PartPolicyBuilder::new()
                 .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
+                .sata_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
                 .backup_part_id(&[0x22; POLICY_BACKUP_PART_ID_LEN])
                 .info(&[0x33; POLICY_INFO_LEN])
                 .build()
@@ -305,6 +338,7 @@ mod tests {
         assert!(
             PartPolicyBuilder::new()
                 .pota_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
+                .sata_key(PolicyKeyKind::Ecc384, &[0x11; POLICY_MAX_KEY_LEN])
                 .build()
                 .is_ok()
         );

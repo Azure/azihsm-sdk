@@ -663,6 +663,7 @@ TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
     azihsm_buffer pota_buf{ pota.data(), static_cast<uint32_t>(pota.size()) };
     ASSERT_EQ(azihsm_part_policy_builder_set_version(b, 1, 0), AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &pota_buf), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(azihsm_part_policy_builder_set_sata_key(b, 0, &pota_buf), AZIHSM_STATUS_SUCCESS);
     ASSERT_EQ(azihsm_part_policy_builder_set_flags(b, 0), AZIHSM_STATUS_SUCCESS);
 
     // Probe: zero-capacity buffer yields the required length.
