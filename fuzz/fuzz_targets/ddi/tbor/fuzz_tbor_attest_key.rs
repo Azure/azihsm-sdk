@@ -167,36 +167,6 @@ enum Expected {
     Rejected,
 }
 
-/// Unified `PartPolicy` blob with a real POTA public key so `PartFinal`
-/// can validate a PTA chain anchored to it.
-fn part_policy_with_pota(pota_raw: &[u8; 96]) -> [u8; PART_POLICY_LEN] {
-    const OFF_POTA: usize = 2;
-    const OFF_SATA: usize = 102;
-    const OFF_FLAGS: usize = 418;
-    const OFF_INFO: usize = 419;
-
-    // Write an Ecc384 (kind 0) raw X‖Y pubkey at `off` (no SEC1 prefix).
-    fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
-        bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
-        for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
-            *b = (fill.wrapping_add(i as u8)) | 0x80;
-        }
-    }
-
-    let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes[0] = 1; // version major
-    bytes[1] = 0; // version minor
-    write_pubkey(&mut bytes, OFF_POTA, 0x10);
-    write_pubkey(&mut bytes, OFF_SATA, 0x20);
-    bytes[OFF_POTA + 4..OFF_POTA + 4 + 96].copy_from_slice(pota_raw);
-    bytes[OFF_FLAGS] = 0;
-    for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
-        *b = 0xAB;
-    }
-    bytes
-}
-
 fn mach_seed() -> [u8; MACH_SEED_LEN] {
     core::array::from_fn(|i| 0x40 + i as u8)
 }
@@ -210,7 +180,7 @@ fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
 /// masking keys that `KeyReport` unmasks with.
 fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
     let pota = CaKey::generate();
-    let policy = part_policy_with_pota(&pota.raw_pub());
+    let policy = common::known_good_part_policy(pota.raw_pub());
     let init = ctx
         .part_init(session, &mach_seed(), &policy, &pota_thumbprint())
         .expect("PartInit should succeed");

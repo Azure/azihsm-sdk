@@ -73,14 +73,14 @@ test = false
 [[bin]]
 bench = false
 doc = false
-name = "fuzz_tbor_psk_change"
+name = "fuzz_tbor_part_init"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_init.rs"
 test = false
 
 [[bin]]
 bench = false
 doc = false
-name = "fuzz_tbor_psk_change"
+name = "fuzz_tbor_part_final"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_final.rs"
 test = false
 

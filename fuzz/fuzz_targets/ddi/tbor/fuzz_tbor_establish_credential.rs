@@ -61,39 +61,6 @@ const VALID_SAPOTA_THUMBPRINT: [u8; SATA_THUMBPRINT_LEN] = {
     v
 };
 
-/// Build a 484-byte unified `PartPolicy` blob that the firmware's
-/// `PartPolicy::try_read_from_bytes` parser accepts: POTA + SATA trust
-/// anchors are populated `Ecc384` keys, SAPOTA + backing-partition keys
-/// are left absent (zero `len`), and flags/info are filled with
-/// deterministic, non-zero bytes.
-fn known_good_part_policy() -> [u8; PART_POLICY_LEN] {
-    const OFF_POTA: usize = 2;
-    const OFF_SATA: usize = 102;
-    const OFF_FLAGS: usize = 418;
-    const OFF_INFO: usize = 419;
-
-    // Write an Ecc384 (kind 0) raw X‖Y pubkey at `off` (no SEC1 prefix).
-    fn write_pubkey(bytes: &mut [u8], off: usize, fill: u8) {
-        bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-        bytes[off + 2..off + 4].copy_from_slice(&96u16.to_le_bytes());
-        for (i, b) in bytes[off + 4..off + 4 + 96].iter_mut().enumerate() {
-            *b = (fill.wrapping_add(i as u8)) | 0x80;
-        }
-    }
-
-    let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes[0] = 1; // version major
-    bytes[1] = 0; // version minor
-    write_pubkey(&mut bytes, OFF_POTA, 0x10);
-    write_pubkey(&mut bytes, OFF_SATA, 0x20);
-    // SAPOTA + backup-part pubkeys left absent (len 0).
-    bytes[OFF_FLAGS] = 0;
-    for b in bytes[OFF_INFO..OFF_INFO + 64].iter_mut() {
-        *b = 0xAB;
-    }
-    bytes
-}
-
 /// Mirror of the firmware `policy::from_bytes` validation: major version
 /// must match, POTA/SATA must be Ecc384 keys, SAPOTA/backup keys are
 /// either absent or Ecc384, and no reserved flag bits may be set.
@@ -178,7 +145,7 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
         };
 
         let part_policy_bytes = if input.use_valid_part_policy {
-            known_good_part_policy()
+            common::known_good_part_policy(common::fill_ecc384_pubkey_pattern(0x10))
         } else {
             input.cmdreq_data.part_policy
         };
