@@ -40,12 +40,13 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
 
+use crate::commands::common::ENVELOPE_AAD_LEN;
+use crate::commands::common::ENVELOPE_HEADER_LEN;
+use crate::commands::common::ENVELOPE_IV_LEN;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-
-use crate::commands::common::{ENVELOPE_AAD_LEN, ENVELOPE_HEADER_LEN, ENVELOPE_IV_LEN};
 
 /// Sample caller-supplied report data bound into the report payload.
 fn sample_report_data() -> [u8; KEY_REPORT_DATA_LEN] {
@@ -359,7 +360,7 @@ fn key_report_generated_ecc_all_curves() {
 /// attests asymmetric keys that have a public component.
 #[test]
 #[cfg(feature = "emu")]
-fn key_report_rejects_all_symmetric_key_classes_emu() {
+fn key_report_rejects_all_symmetric_key_classes() {
     use azihsm_ddi_tbor_types::KEY_CLASS_AES;
     use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
     use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
@@ -498,10 +499,10 @@ fn key_report_rejects_tampered_iv_and_ciphertext() {
     }
 }
 
-/// Attests imported ECC keys on all supported curves in the emulator.
+/// Attests imported ECC keys across P-256, P-384, and P-521 using platform-appropriate key sizes.
 #[test]
 #[cfg(feature = "emu")]
-fn key_report_imported_ecc_all_curves_emu() {
+fn key_report_imported_ecc_all_curves() {
     use azihsm_crypto::EccPrivateKey;
     use azihsm_crypto::ExportableKey;
     use azihsm_crypto::KeyGenerationOp;
@@ -511,11 +512,26 @@ fn key_report_imported_ecc_all_curves_emu() {
 
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    for key_len in [32, 48, 66] {
-        let key = EccPrivateKey::generate(key_len).expect("host ECC key generation");
+
+    for (key_len, key_bits) in [
+        (32usize, 256usize),
+        (48usize, 384usize),
+        (66usize, 521usize),
+    ] {
+        let generation_size = if cfg!(target_os = "windows") {
+            key_bits
+        } else {
+            key_len
+        };
+
+        let key = EccPrivateKey::generate(generation_size).expect("host ECC key generation");
+
         let der = key.to_vec().expect("export PKCS#8 key");
+
         let imported = unwrap(&ctx, session.session_id, KEY_CLASS_ECC, &der);
+
         let report_data = sample_report_data();
+
         let report = ctx
             .tbor(&TborKeyReportReq {
                 session_id: session.session_id,
