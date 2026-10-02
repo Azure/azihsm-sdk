@@ -576,4 +576,119 @@ TEST_F(azihsm_sess_ex, psk_change_rotates_co_psk)
         }
     });
 }
+
+// A `part_final` size probe with a too-small `local_mk_backup` reports
+// BUFFER_TOO_SMALL even when the `part_policy` buffer has the wrong length,
+// because the output-buffer capacity check now precedes the policy-length
+// parse (matching `part_init`). A single non-empty cert clears the cert-chain
+// length guard; the chain contents are only validated later, inside
+// `part_final_ex`, which the probe never reaches.
+TEST_F(azihsm_sess_ex, part_final_size_probe_precedes_policy_parse)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        // Deliberately wrong-length (32-byte) policy image; `PART_POLICY_LEN`
+        // is 484.
+        std::vector<uint8_t> policy(32, 0);
+        std::vector<uint8_t> cert(1, 0);
+        azihsm_buffer policy_buf{ policy.data(), static_cast<uint32_t>(policy.size()) };
+        azihsm_buffer cert_buf{ cert.data(), static_cast<uint32_t>(cert.size()) };
+
+        azihsm_sess_ex_part_final_params params{};
+        params.part_policy = &policy_buf;
+        params.pta_cert_chain = &cert_buf;
+        params.pta_cert_chain_len = 1;
+        params.prev_local_mk_backup = nullptr;
+
+        // Zero-capacity output buffer: a pure size probe.
+        azihsm_buffer local_mk_backup{ nullptr, 0 };
+        auto err = azihsm_sess_ex_part_final(sess_handle, &params, &local_mk_backup);
+
+        ASSERT_EQ(err, AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        EXPECT_GT(local_mk_backup.len, 0u);
+    });
+}
 #endif // !defined(AZIHSM_FEATURE_MOCK)
+
+// The typed partition-policy builder FFI is pure host-side serialization and
+// needs no device, so these run in every lane (including the mock lane).
+
+// NULL builder handles are rejected by every entry point.
+TEST(azihsm_part_policy_builder, null_handle_rejected)
+{
+    EXPECT_EQ(
+        azihsm_part_policy_builder_set_version(nullptr, 1, 0),
+        AZIHSM_STATUS_INVALID_ARGUMENT
+    );
+    EXPECT_EQ(azihsm_part_policy_builder_set_flags(nullptr, 0), AZIHSM_STATUS_INVALID_ARGUMENT);
+
+    azihsm_buffer out{ nullptr, 0 };
+    EXPECT_EQ(azihsm_part_policy_build(nullptr, &out), AZIHSM_STATUS_INVALID_ARGUMENT);
+
+    // Freeing NULL is a documented no-op (must not crash).
+    azihsm_part_policy_builder_free(nullptr);
+}
+
+// The two-call size-probe contract: a zero-capacity buffer reports the
+// required length, and a correctly-sized buffer then serializes the image.
+TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
+{
+    AzihsmPartPolicyBuilder *b = azihsm_part_policy_builder_new();
+    ASSERT_NE(b, nullptr);
+    auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
+
+    std::vector<uint8_t> pota(48, 0x11);
+    azihsm_buffer pota_buf{ pota.data(), static_cast<uint32_t>(pota.size()) };
+    ASSERT_EQ(azihsm_part_policy_builder_set_version(b, 1, 0), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &pota_buf), AZIHSM_STATUS_SUCCESS);
+    ASSERT_EQ(azihsm_part_policy_builder_set_flags(b, 0), AZIHSM_STATUS_SUCCESS);
+
+    // Probe: zero-capacity buffer yields the required length.
+    azihsm_buffer probe{ nullptr, 0 };
+    ASSERT_EQ(azihsm_part_policy_build(b, &probe), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+    ASSERT_GT(probe.len, 0u);
+
+    // Serialize into a correctly-sized buffer.
+    std::vector<uint8_t> image(probe.len, 0);
+    azihsm_buffer out{ image.data(), probe.len };
+    ASSERT_EQ(azihsm_part_policy_build(b, &out), AZIHSM_STATUS_SUCCESS);
+    EXPECT_EQ(out.len, probe.len);
+
+    // The version bytes land at the front of the canonical image.
+    EXPECT_EQ(image[0], 1u);
+    EXPECT_EQ(image[1], 0u);
+}
+
+// Oversized key material is rejected at build time rather than truncated
+// (truncation would yield a *different* key while reporting success).
+TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
+{
+    AzihsmPartPolicyBuilder *b = azihsm_part_policy_builder_new();
+    ASSERT_NE(b, nullptr);
+    auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
+
+    // `POLICY_MAX_KEY_LEN` is 96; one byte over must not fit.
+    std::vector<uint8_t> too_long(97, 0x22);
+    azihsm_buffer key_buf{ too_long.data(), static_cast<uint32_t>(too_long.size()) };
+    // The setter defers validation; it still reports success.
+    ASSERT_EQ(azihsm_part_policy_builder_set_pota_key(b, 0, &key_buf), AZIHSM_STATUS_SUCCESS);
+
+    std::vector<uint8_t> image(512, 0);
+    azihsm_buffer out{ image.data(), static_cast<uint32_t>(image.size()) };
+    EXPECT_EQ(azihsm_part_policy_build(b, &out), AZIHSM_STATUS_INVALID_ARGUMENT);
+}

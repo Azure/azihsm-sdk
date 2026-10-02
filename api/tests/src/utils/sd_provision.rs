@@ -385,7 +385,7 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN], allow_peer_cloning: bool)
     for (i, b) in sata.iter_mut().enumerate() {
         *b = (0x20u8.wrapping_add(i as u8)) | 0x80;
     }
-    PartPolicy::builder()
+    PartPolicyBuilder::new()
         .version(1, 0)
         .pota_key(PolicyKeyKind::Ecc384, pota_raw)
         .sata_key(PolicyKeyKind::Ecc384, &sata)
@@ -397,6 +397,7 @@ fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN], allow_peer_cloning: bool)
         // `SdRestoreLocalBackup`), which don't gate on it.
         .allow_peer_cloning(allow_peer_cloning)
         .build()
+        .expect("policy fields fit")
 }
 
 /// Deterministic machine-seed fixture.
@@ -503,7 +504,7 @@ fn backing_part_policy(
     // Anchor the policy to a real POTA key so `part_final_ex` can validate
     // a PTA certificate chain against it; bind the real SATA anchor and
     // name this partition as the backing partition.
-    PartPolicy::builder()
+    PartPolicyBuilder::new()
         .version(1, 0)
         .pota_key(PolicyKeyKind::Ecc384, pota_pub)
         .sata_key(PolicyKeyKind::Ecc384, sata_pub)
@@ -512,6 +513,7 @@ fn backing_part_policy(
         .info(&[0xAB; POLICY_INFO_LEN])
         .allow_peer_cloning(allow_peer_cloning)
         .build()
+        .expect("policy fields fit")
 }
 
 /// Owns the DER bytes for the receiver's three evidence chains and the

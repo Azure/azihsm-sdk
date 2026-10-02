@@ -220,7 +220,8 @@ final entry points already accept.
 Typical use:
 
 1. [`azihsm_part_policy_builder_new`](#azihsm_part_policy_builder_new)
-   allocates a builder (starting from an all-zero policy).
+   allocates a builder (its version defaults to `major = 1, minor = 0`,
+   with every other field zeroed).
 2. Populate the fields with the `azihsm_part_policy_builder_set_*`
    setters.
 3. [`azihsm_part_policy_build`](#azihsm_part_policy_build) serializes the
@@ -262,6 +263,25 @@ void azihsm_part_policy_builder_free(
 Set individual policy fields. Each returns `AZIHSM_STATUS_SUCCESS`, or
 `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle or buffer. `kind` is the
 public-key kind discriminant (`0` = ECC P-384).
+
+Fixed-size fields reject oversized input rather than truncating it: if a
+key, `info`, or backing-partition id exceeds its slot, the setter still
+returns `AZIHSM_STATUS_SUCCESS`, but the subsequent
+`azihsm_part_policy_build` fails with `AZIHSM_STATUS_INVALID_ARGUMENT`
+(truncating key material would silently yield a *different* key).
+
+The `flags` byte passed to `azihsm_part_policy_builder_set_flags` is a
+bitfield:
+
+| Bit   | Meaning                  |
+|-------|--------------------------|
+| 0     | `include_fmc_cdi`        |
+| 1     | `require_trusted_sa_key` |
+| 2     | `allow_peer_cloning`     |
+| 3 – 7 | reserved (must be zero)  |
+
+Setting any reserved bit causes `azihsm_sess_ex_part_init` /
+`azihsm_sess_ex_part_final` to reject the policy.
 
 ```cpp
 azihsm_status azihsm_part_policy_builder_set_version(

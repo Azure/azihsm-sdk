@@ -224,15 +224,27 @@ pub fn fill_ecc384_pubkey_pattern(fill: u8) -> [u8; POLICY_MAX_KEY_LEN] {
 /// Uses the shared [`PartPolicy`] struct + typed [`PolicyPubKey`] /
 /// [`PolicyVer`] constructors so the on-wire byte layout tracks whatever
 /// the policy crate declares (no hand-computed field offsets here).
+///
+/// Constructs the policy directly from the wire-type's public fields
+/// rather than the API-crate `PartPolicyBuilder`, so the fuzz package
+/// keeps depending only on the low-level `azihsm_ddi_tbor_types` crate
+/// (not the full `azihsm_api` stack).
 pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PART_POLICY_LEN] {
     use zerocopy::IntoBytes;
 
-    let policy = PartPolicy::builder()
-        .version(POLICY_VERSION_MAJOR, 0)
-        .pota_key(PolicyKeyKind::Ecc384, &pota_pub_key)
-        .sata_key(PolicyKeyKind::Ecc384, &fill_ecc384_pubkey_pattern(0x20))
-        .info(&[0xAB; POLICY_INFO_LEN])
-        .build();
+    let mut policy = PartPolicy::zeroed();
+    policy.version = PolicyVer {
+        major: POLICY_VERSION_MAJOR,
+        minor: 0,
+    };
+    policy.pota_pub_key =
+        PolicyPubKey::new(PolicyKeyKind::Ecc384, POLICY_MAX_KEY_LEN as u16, pota_pub_key);
+    policy.sata_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        fill_ecc384_pubkey_pattern(0x20),
+    );
+    policy.info = [0xAB; POLICY_INFO_LEN];
 
     let mut bytes = [0u8; PART_POLICY_LEN];
     bytes.copy_from_slice(policy.as_bytes());

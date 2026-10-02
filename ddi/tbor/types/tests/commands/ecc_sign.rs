@@ -108,11 +108,8 @@ fn rev(src: &[u8], len: usize) -> Vec<u8> {
 
 /// Verify a wire-LE ECDSA signature on the host with `azihsm_crypto`.
 ///
-
 /// * `pub_le` — `x_le ‖ y_le`, each `wire_coord_len` bytes.
-
 /// * `sig_le` — `r_le ‖ s_le`, each `wire_coord_len` bytes.
-
 /// * `digest_le` — the wire-LE digest that was handed to `EccSign`.
 fn verify_wire_ecdsa(pub_le: &[u8], sig_le: &[u8], digest_le: &[u8]) -> bool {
     let (wire_coord, raw_coord) = coord_sizes(pub_le.len());

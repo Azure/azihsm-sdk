@@ -11,6 +11,7 @@ mod hmac;
 mod kbkdf;
 mod key;
 mod masked_key;
+mod part_policy;
 mod partition;
 mod partition_ex;
 mod rsa;
@@ -68,10 +69,6 @@ pub use azihsm_ddi_tbor_types::PartPolicy;
 /// Unified partition-provisioning policy and its typed field helpers,
 /// re-exported so callers can build a [`PartPolicy`] with named setters
 /// instead of hand-assembling the wire image.
-pub use azihsm_ddi_tbor_types::PartPolicyBuilder;
-/// Unified partition-provisioning policy and its typed field helpers,
-/// re-exported so callers can build a [`PartPolicy`] with named setters
-/// instead of hand-assembling the wire image.
 pub use azihsm_ddi_tbor_types::PolicyFlags;
 /// Unified partition-provisioning policy and its typed field helpers,
 /// re-exported so callers can build a [`PartPolicy`] with named setters
@@ -96,6 +93,9 @@ pub(crate) use hmac::*;
 pub(crate) use kbkdf::*;
 pub(crate) use key::*;
 pub(crate) use masked_key::*;
+/// Typed, fluent builder for [`PartPolicy`]; construct a policy with
+/// named setters instead of hand-assembling the wire image.
+pub use part_policy::PartPolicyBuilder;
 pub(crate) use partition::*;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;

@@ -41,17 +41,22 @@ where
     }
     // Safety: non-null, caller guarantees it points at a live builder.
     let b = unsafe { &mut *builder };
-    let taken = std::mem::replace(&mut b.inner, api::PartPolicy::builder());
+    let taken = std::mem::replace(&mut b.inner, api::PartPolicyBuilder::new());
     b.inner = f(taken);
     Ok(())
 }
 
 /// @brief Allocate a new partition-policy builder
 ///
-/// The returned handle starts from an all-zero policy; set the fields
+/// The returned handle starts from a policy whose version defaults to
+/// `major = 1, minor = 0` with every other field zeroed; set the fields
 /// you need through the `azihsm_part_policy_builder_set_*` functions,
 /// then serialize it with `azihsm_part_policy_build`. Release it with
 /// `azihsm_part_policy_builder_free`.
+///
+/// Oversized key / `info` / backing-id input is rejected at
+/// `azihsm_part_policy_build` time (returning `AZIHSM_INVALID_ARGUMENT`)
+/// rather than silently truncated.
 ///
 /// @return A non-NULL builder handle on success, or NULL on allocation
 ///         failure.
@@ -59,7 +64,7 @@ where
 #[allow(unsafe_code)]
 pub extern "C" fn azihsm_part_policy_builder_new() -> *mut AzihsmPartPolicyBuilder {
     Box::into_raw(Box::new(AzihsmPartPolicyBuilder {
-        inner: api::PartPolicy::builder(),
+        inner: api::PartPolicyBuilder::new(),
     }))
 }
 
@@ -69,9 +74,14 @@ pub extern "C" fn azihsm_part_policy_builder_new() -> *mut AzihsmPartPolicyBuild
 /// Passing NULL is a no-op. The handle must not be used afterwards.
 ///
 /// @param[in] builder Builder handle to free (may be NULL)
+///
+/// # Safety
+///
+/// - `builder` must be NULL or a handle returned by
+///   `azihsm_part_policy_builder_new` that has not already been freed.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_free(builder: *mut AzihsmPartPolicyBuilder) {
+pub unsafe extern "C" fn azihsm_part_policy_builder_free(builder: *mut AzihsmPartPolicyBuilder) {
     if !builder.is_null() {
         // Safety: reclaim the Box allocated in `_new`.
         drop(unsafe { Box::from_raw(builder) });
@@ -84,9 +94,13 @@ pub extern "C" fn azihsm_part_policy_builder_free(builder: *mut AzihsmPartPolicy
 /// @param[in] major Major version number
 /// @param[in] minor Minor version number
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL handle
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_version(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_version(
     builder: *mut AzihsmPartPolicyBuilder,
     major: u8,
     minor: u8,
@@ -101,9 +115,14 @@ pub extern "C" fn azihsm_part_policy_builder_set_version(
 /// @param[in] key Raw public-key bytes
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_pota_key(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_pota_key(
     builder: *mut AzihsmPartPolicyBuilder,
     kind: u16,
     key: *const AzihsmBuffer,
@@ -121,9 +140,14 @@ pub extern "C" fn azihsm_part_policy_builder_set_pota_key(
 /// @param[in] key Raw public-key bytes
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_sata_key(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_sata_key(
     builder: *mut AzihsmPartPolicyBuilder,
     kind: u16,
     key: *const AzihsmBuffer,
@@ -141,9 +165,14 @@ pub extern "C" fn azihsm_part_policy_builder_set_sata_key(
 /// @param[in] key Raw public-key bytes
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_sapota_key(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_sapota_key(
     builder: *mut AzihsmPartPolicyBuilder,
     kind: u16,
     key: *const AzihsmBuffer,
@@ -160,9 +189,14 @@ pub extern "C" fn azihsm_part_policy_builder_set_sapota_key(
 /// @param[in] id Backing-partition identifier bytes
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_backup_part_id(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_backup_part_id(
     builder: *mut AzihsmPartPolicyBuilder,
     id: *const AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -179,9 +213,14 @@ pub extern "C" fn azihsm_part_policy_builder_set_backup_part_id(
 /// @param[in] key Raw public-key bytes
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_backup_part_pub_key(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_backup_part_pub_key(
     builder: *mut AzihsmPartPolicyBuilder,
     kind: u16,
     key: *const AzihsmBuffer,
@@ -200,9 +239,14 @@ pub extern "C" fn azihsm_part_policy_builder_set_backup_part_pub_key(
 /// @param[in] info Opaque info bytes
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_info(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_info(
     builder: *mut AzihsmPartPolicyBuilder,
     info: *const AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -217,9 +261,13 @@ pub extern "C" fn azihsm_part_policy_builder_set_info(
 /// @param[in] builder Builder handle
 /// @param[in] flags Raw flag bits (see the `PolicyFlags` definition)
 /// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL handle
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_set_flags(
+pub unsafe extern "C" fn azihsm_part_policy_builder_set_flags(
     builder: *mut AzihsmPartPolicyBuilder,
     flags: u8,
 ) -> AzihsmStatus {
@@ -238,9 +286,15 @@ pub extern "C" fn azihsm_part_policy_builder_set_flags(
 /// @param[out] out Buffer to receive the serialized policy image
 /// @return `AZIHSM_SUCCESS`, `AZIHSM_INVALID_ARGUMENT` on a NULL handle /
 ///         buffer, or `AZIHSM_BUFFER_TOO_SMALL` if `out` is too small
+///
+/// # Safety
+///
+/// - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+/// - `out` must be a valid pointer to an `azihsm_buffer` with writable
+///   backing storage of its advertised length.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_build(
+pub unsafe extern "C" fn azihsm_part_policy_build(
     builder: *mut AzihsmPartPolicyBuilder,
     out: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
@@ -251,7 +305,7 @@ pub extern "C" fn azihsm_part_policy_build(
         // Safety: non-null, caller guarantees it points at a live builder.
         let b = unsafe { &mut *builder };
         let output = deref_mut_ptr(out)?;
-        let policy = b.inner.clone().build();
+        let policy = b.inner.clone().build()?;
         copy_to_buffer(output, policy.as_bytes())
     })
 }
