@@ -40,7 +40,7 @@ enum KeySource {
     EccGenerated(EccCurve),
     BuiltInUnwrappingKey,
     ImportedRsaKey,
-    GeneratedAesKey(AesKeySize),
+    GeneratedAesKey(common::AesKeySize),
     HmacKey(HmacHash),
     GeneratedSecretKey(EccCurve),
 }
@@ -67,23 +67,6 @@ impl EccCurve {
             Self::P256 => 32,
             Self::P384 => 48,
             Self::P521 => 66,
-        }
-    }
-}
-
-#[derive(Arbitrary, Debug)]
-enum AesKeySize {
-    Aes128,
-    Aes192,
-    Aes256,
-}
-
-impl AesKeySize {
-    fn to_tbor(&self) -> u8 {
-        match self {
-            Self::Aes128 => AES_KEY_SIZE_128,
-            Self::Aes192 => AES_KEY_SIZE_192,
-            Self::Aes256 => AES_KEY_SIZE_256,
         }
     }
 }

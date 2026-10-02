@@ -21,26 +21,9 @@ struct FuzzInput {
     /// Generate a valid masked AES key instead of using fuzzed bytes.
     use_valid_key: bool,
     /// AES key size for a generated key.
-    key_size: AesKeySize,
+    key_size: common::AesKeySize,
     /// Fuzzed parameters for the AES operation.
     cmdreq_data: FuzzAesEncryptDecryptReq,
-}
-
-#[derive(Arbitrary, Debug)]
-enum AesKeySize {
-    Aes128,
-    Aes192,
-    Aes256,
-}
-
-impl AesKeySize {
-    fn to_tbor(&self) -> u8 {
-        match self {
-            Self::Aes128 => AES_KEY_SIZE_128,
-            Self::Aes192 => AES_KEY_SIZE_192,
-            Self::Aes256 => AES_KEY_SIZE_256,
-        }
-    }
 }
 
 #[derive(Arbitrary, Debug)]

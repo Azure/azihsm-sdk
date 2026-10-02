@@ -15,6 +15,9 @@ use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
@@ -68,6 +71,24 @@ impl FuzzRole {
         match self {
             FuzzRole::Co => SessionType::Authenticated,
             FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
+}
+
+/// TBOR AES key sizes supported by `AesGenerateKey`.
+#[derive(Arbitrary, Debug)]
+pub enum AesKeySize {
+    Aes128,
+    Aes192,
+    Aes256,
+}
+
+impl AesKeySize {
+    pub fn to_tbor(&self) -> u8 {
+        match self {
+            Self::Aes128 => AES_KEY_SIZE_128,
+            Self::Aes192 => AES_KEY_SIZE_192,
+            Self::Aes256 => AES_KEY_SIZE_256,
         }
     }
 }
