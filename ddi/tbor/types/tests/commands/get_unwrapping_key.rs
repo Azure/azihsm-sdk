@@ -70,7 +70,7 @@ fn get_unwrapping_key_is_stable() {
 
 /// Allows a Crypto-User with a rotated PSK to fetch the unwrapping key.
 #[test]
-fn get_unwrapping_key_available_to_crypto_user() {
+fn get_unwrapping_key_available_to_cu() {
     let ctx = TestCtx::new();
 
     // Provision/finalize the partition so the unwrapping key exists.
@@ -190,7 +190,7 @@ fn get_unwrapping_key_stable_across_co_sessions() {
 
 /// Returns the same partition unwrapping key to CO and CU sessions.
 #[test]
-fn get_unwrapping_key_same_for_co_and_crypto_user() {
+fn get_unwrapping_key_same_for_co_and_cu() {
     let ctx = TestCtx::new();
 
     // Finalize the partition and read the unwrapping key as CO.
