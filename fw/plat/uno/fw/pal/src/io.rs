@@ -95,9 +95,13 @@ impl UnoHsmIo {
         let io = Self {
             index: ADMIN_IO_INDEX,
         };
+        // CONTROLLER_ID holds the hardware axi_id (what IIC `recv` records for
+        // a host IO), so an internally created admin IO stores the same
+        // encoding for `pid()` to round-trip it back to `pid`.
+        let axi_id = crate::pal::pfn_to_axi_id(u8::from(pid)).unwrap_or(crate::pal::NO_PARTITION);
         io.io_meta()
             .ctlr
-            .write(IO_META_CTLR::CONTROLLER_ID.val(u8::from(pid) as u32));
+            .write(IO_META_CTLR::CONTROLLER_ID.val(axi_id as u32));
         io
     }
 
@@ -114,9 +118,15 @@ impl HsmIo for UnoHsmIo {
         self.index
     }
 
-    /// Returns the partition ID (controller_id from IO_META).
+    /// Returns the partition ID for this IO.
+    ///
+    /// IO_META records the routing axi_id the hardware reported; partitions
+    /// are indexed by the dense PcieFunction id, so translate here. An axi_id
+    /// naming no function yields an out-of-range id, which the partition
+    /// lookup rejects with `InvalidArg` rather than aliasing a valid slot.
     fn pid(&self) -> HsmPartId {
-        HsmPartId::from(self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8)
+        let axi_id = self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8;
+        HsmPartId::from(crate::pal::axi_id_to_pfn(axi_id).unwrap_or(crate::pal::NO_PARTITION))
     }
 
     /// Returns the queue ID from IO_META.
