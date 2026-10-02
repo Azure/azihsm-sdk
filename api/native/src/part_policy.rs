@@ -36,11 +36,7 @@ fn with_builder<F>(builder: *mut AzihsmPartPolicyBuilder, f: F) -> Result<(), Az
 where
     F: FnOnce(api::PartPolicyBuilder) -> api::PartPolicyBuilder,
 {
-    if builder.is_null() {
-        return Err(AzihsmStatus::InvalidArgument);
-    }
-    // Safety: non-null, caller guarantees it points at a live builder.
-    let b = unsafe { &mut *builder };
+let b = deref_mut_ptr(builder)?;
     let taken = std::mem::replace(&mut b.inner, api::PartPolicyBuilder::new());
     b.inner = f(taken);
     Ok(())
