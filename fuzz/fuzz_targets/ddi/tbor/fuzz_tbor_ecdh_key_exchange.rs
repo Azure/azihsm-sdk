@@ -74,8 +74,9 @@ struct FuzzInput {
     /// Seed used to deterministically fill the peer public-key buffer
     /// when `use_valid_peer_pub_key` is `false`.
     seed: u64,
-    /// Requested key scope for the derived secret, and for the
-    /// generated masked key when `use_valid_masked_key` is `true`.
+    /// Requested key scope for the derived secret. Generated input/peer
+    /// keys always use session scope, since `bootstrap_rotated_co` does
+    /// not provision partition or security-domain masking keys.
     key_scope: KeyScope,
     /// Selects the elliptic curve used for ECC key generation.
     curve: EccCurve,
@@ -109,12 +110,10 @@ fn seeded_bytes(seed: u64, len: usize) -> Vec<u8> {
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        let scope = input.key_scope.to_tbor();
-
         let (masked_key, peer_pub_key) = if input.use_valid_masked_key {
             let key_req = TborEccGenerateKeyReq {
                 session_id: session.session_id,
-                scope,
+                scope: KEY_SCOPE_SESSION,
                 curve: input.curve.to_tbor(),
                 key_usage: KEY_USAGE_DERIVE,
                 key_label: Vec::new(),
@@ -127,7 +126,7 @@ fuzz_target!(|input: FuzzInput| {
             let peer_pub_key = if input.use_valid_peer_pub_key {
                 let peer_key_req = TborEccGenerateKeyReq {
                     session_id: session.session_id,
-                    scope,
+                    scope: KEY_SCOPE_SESSION,
                     curve: input.curve.to_tbor(),
                     key_usage: KEY_USAGE_DERIVE,
                     key_label: Vec::new(),
@@ -151,17 +150,20 @@ fuzz_target!(|input: FuzzInput| {
 
         let req = TborEcdhDeriveReq {
             session_id: session.session_id,
-            scope,
+            scope: input.key_scope.to_tbor(),
             masked_key,
             peer_pub_key,
             key_label: input.cmdreq_data.key_label.clone(),
         };
         let result = ctx.tbor(&req);
 
-        if let Err(err) = &result {
-            if matches!(err, DdiError::DriverError(_)) {
-                panic!("Crash Detected: {err}");
-            }
+        match &result {
+            // Ephemeral/Local/SecurityDomain masking keys are not
+            // provisioned by `bootstrap_rotated_co`, so the FW is expected
+            // to reject those scopes.
+            Err(DdiError::TborStatus(TborStatus::UnsupportedKeyScope)) => {}
+            Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
+            _ => {}
         }
 
         ctx.session_close(session.session_id)
