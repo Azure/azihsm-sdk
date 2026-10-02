@@ -103,10 +103,10 @@ pub unsafe extern "C" fn azihsm_sess_ex_open(
 /// be NULL to omit it.
 #[repr(C)]
 pub struct AzihsmSessExPartInitParams {
-    /// Machine seed plaintext buffer.
-    pub mach_seed: *const AzihsmBuffer,
     /// Unified partition policy image buffer.
     pub part_policy: *const AzihsmBuffer,
+    /// Machine seed plaintext buffer.
+    pub mach_seed: *const AzihsmBuffer,
     /// POTA public-key thumbprint buffer.
     pub pota_thumbprint: *const AzihsmBuffer,
     /// SATA public-key thumbprint buffer.
@@ -224,8 +224,8 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         report_check?;
 
         let result = session.part_init_ex(
-            mach_seed,
             part_policy,
+            mach_seed,
             pota_thumbprint,
             sata_thumbprint,
             sapota_thumbprint,

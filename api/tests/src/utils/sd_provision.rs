@@ -475,8 +475,8 @@ pub(crate) fn finalized_co_session() -> HsmSession {
     let policy_bytes = policy.as_bytes();
     let init = session
         .part_init_ex(
-            &mach_seed(),
             policy_bytes,
+            &mach_seed(),
             &pota_thumbprint(),
             &sata_thumbprint(),
             None,
@@ -692,8 +692,8 @@ pub(crate) fn provision_backing_ex(
 
     let init = session
         .part_init_ex(
-            &mach_seed(),
             &policy,
+            &mach_seed(),
             &pota_thumbprint(),
             &sata_thumbprint(),
             None,

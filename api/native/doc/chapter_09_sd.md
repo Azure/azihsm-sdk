@@ -114,6 +114,11 @@ azihsm_status azihsm_sess_ex_part_init(
 
 ### azihsm_sess_ex_part_init_params
 
+Partition-policy inputs use the name `part_policy` and appear first in the
+provisioning, finalization, and security-domain backup input structures.
+Callers must rebuild against the updated header: moving these fields changes
+the C struct layouts, even though the function signatures are unchanged.
+
 Provisioning input buffers for
 [`azihsm_sess_ex_part_init`](#azihsm_sess_ex_part_init). Each field points
 to an [azihsm_buffer](#azihsm_buffer); `sapota_thumbprint` is optional and
@@ -121,8 +126,8 @@ may be NULL to omit it.
 
 ```cpp
 struct azihsm_sess_ex_part_init_params {
-    const struct azihsm_buffer *mach_seed;
     const struct azihsm_buffer *part_policy;
+    const struct azihsm_buffer *mach_seed;
     const struct azihsm_buffer *pota_thumbprint;
     const struct azihsm_buffer *sata_thumbprint;
     const struct azihsm_buffer *sapota_thumbprint;
@@ -131,8 +136,8 @@ struct azihsm_sess_ex_part_init_params {
 
  | Field             | Name                             | Description                              |
  | ----------------- | -------------------------------- | ---------------------------------------- |
- | mach_seed         | [azihsm_buffer*](#azihsm_buffer) | machine seed plaintext                   |
  | part_policy       | [azihsm_buffer*](#azihsm_buffer) | unified partition policy image           |
+ | mach_seed         | [azihsm_buffer*](#azihsm_buffer) | machine seed plaintext                   |
  | pota_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | POTA public-key thumbprint               |
  | sata_thumbprint   | [azihsm_buffer*](#azihsm_buffer) | SATA public-key thumbprint               |
  | sapota_thumbprint | [azihsm_buffer*](#azihsm_buffer) | optional SAPOTA thumbprint (may be NULL) |
@@ -283,17 +288,17 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_create_remote_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *receiver_evidence;
-    const struct azihsm_buffer *policy;
 };
 ```
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (276 B)             |
  | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence                      |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
 
 ## azihsm_sd_reseal_remote_backup
 
@@ -338,20 +343,20 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_reseal_remote_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *src_evidence;
     const struct azihsm_sd_evidence *dest_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *src_remote_backup;
 };
 ```
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
  | src_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | source (sender) attestation evidence               |
  | dest_evidence      | [azihsm_sd_evidence*](#azihsm_sd_evidence) | destination (receiver) attestation evidence        |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | source remote backup to reseal (161 B)             |
 
 ## azihsm_sd_restore_remote_backup
@@ -402,9 +407,9 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_restore_remote_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *sender_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *src_remote_backup;
     const struct azihsm_buffer *prev_sd_mk_backup;
 };
@@ -412,9 +417,9 @@ struct azihsm_sd_restore_remote_backup_params {
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
  | sender_evidence    | [azihsm_sd_evidence*](#azihsm_sd_evidence) | sender attestation evidence                        |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | remote backup to restore (161 B)                   |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (260 B)|
 
@@ -461,18 +466,18 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_create_peer_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *dst_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *pok_local_backup;
 };
 ```
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (276 B)             |
  | dst_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | destination (peer) attestation evidence            |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | pok_local_backup   | [azihsm_buffer*](#azihsm_buffer)           | device-local partition-owner-key backup (276 B)    |
 
 ## azihsm_sd_restore_peer_backup
@@ -524,9 +529,9 @@ Input buffers for
 
 ```cpp
 struct azihsm_sd_restore_peer_backup_params {
+    const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
     const struct azihsm_sd_evidence *src_evidence;
-    const struct azihsm_buffer *policy;
     const struct azihsm_buffer *pok_peer_backup;
     const struct azihsm_buffer *prev_sd_mk_backup;
 };
@@ -534,9 +539,9 @@ struct azihsm_sd_restore_peer_backup_params {
 
  | Field              | Name                                       | Description                                        |
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
+ | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
  | src_evidence       | [azihsm_sd_evidence*](#azihsm_sd_evidence) | source (peer) attestation evidence                 |
- | policy             | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | pok_peer_backup    | [azihsm_buffer*](#azihsm_buffer)           | peer backup to restore (161 B)                     |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (260 B)|
 

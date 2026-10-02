@@ -43,12 +43,12 @@ fn sd_restore_peer_backup_roundtrip() {
     let (masked, report) = masked_key_and_report(&session1);
     let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&masked, ev, &policy))
+        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&policy, &masked, ev))
         .expect("create remote backup");
     // Self-peer backup: seal to our own attested identity as destination.
     let pok_peer_backup = evidence
         .with_hsm_evidence(|dst| {
-            session1.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session1.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
     drop(session1);
@@ -60,9 +60,9 @@ fn sd_restore_peer_backup_roundtrip() {
     let restored = evidence
         .with_hsm_evidence(|src| {
             session2.sd_restore_peer_backup(
+                &policy,
                 &masked,
                 src,
-                &policy,
                 &pok_peer_backup,
                 &created.sd_mk_backup,
             )
@@ -96,19 +96,19 @@ fn sd_restore_peer_backup_is_one_shot() {
     let (masked, report) = masked_key_and_report(&session);
     let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&policy, &masked, ev))
         .expect("create remote backup");
     let pok_peer_backup = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
 
     let restored = evidence.with_hsm_evidence(|src| {
         session.sd_restore_peer_backup(
+            &policy,
             &masked,
             src,
-            &policy,
             &pok_peer_backup,
             &created.sd_mk_backup,
         )
@@ -138,7 +138,7 @@ fn sd_restore_peer_backup_rejects_without_peer_cloning() {
     let pok_peer_backup = [0u8; POK_REMOTE_BACKUP_LEN];
     let prev_sd_mk_backup = [0u8; SD_MK_BACKUP_LEN];
     let restored = evidence.with_hsm_evidence(|src| {
-        session.sd_restore_peer_backup(&masked, src, &policy, &pok_peer_backup, &prev_sd_mk_backup)
+        session.sd_restore_peer_backup(&policy, &masked, src, &pok_peer_backup, &prev_sd_mk_backup)
     });
     assert!(
         matches!(restored, Err(HsmError::SdPeerCloningNotAllowed)),

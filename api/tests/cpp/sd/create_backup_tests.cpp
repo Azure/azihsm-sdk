@@ -170,9 +170,9 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_roundtrip)
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
         };
 
         std::vector<uint8_t> pok_remote;
@@ -228,9 +228,9 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_is_one_shot)
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
         };
 
         // First create succeeds and sizes the output vectors.
@@ -313,9 +313,9 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_rejects_aliased_output_buffer
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
         };
 
         // Pass the same output buffer for the remote and local backups.

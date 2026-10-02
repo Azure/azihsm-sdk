@@ -50,9 +50,9 @@ bool create_sd_capture(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
+        &policy_buf,
         &masked_buf,
         &receiver,
-        &policy_buf,
     };
 
     std::vector<uint8_t> remote;
