@@ -45,6 +45,8 @@ use std::time::Instant;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_mbor_types::DdiApiRev;
+use azihsm_ddi_mbor_types::DdiCloseSessionCmdReq;
+use azihsm_ddi_mbor_types::DdiCloseSessionReq;
 use azihsm_ddi_mbor_types::DdiGetApiRevCmdReq;
 use azihsm_ddi_mbor_types::DdiGetApiRevReq;
 use azihsm_ddi_mbor_types::DdiOp;
@@ -489,13 +491,19 @@ fn unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock() 
         .expect("failed to connect the replacement client")
         .expect("AF_VSOCK loopback vanished mid-test");
 
-    let close_req = DdiGetApiRevCmdReq {
+    // Use a real `CloseSession` request (not `GetApiRev`): `GetApiRev`
+    // maps to `SessionControlKind::NoSession`, which `record` never acts
+    // on and real firmware never pairs with a `sess_id`, so it wouldn't
+    // exercise `check`'s actual `Close`/`InSession` rejection path.
+    // `CloseSession` maps to `SessionControlKind::Close`, driving `check`
+    // through the same branch a stale close would take in production.
+    let close_req = DdiCloseSessionCmdReq {
         hdr: DdiReqHdr {
             rev: None,
-            op: DdiOp::GetApiRev,
+            op: DdiOp::CloseSession,
             sess_id: Some(1),
         },
-        data: DdiGetApiRevReq {},
+        data: DdiCloseSessionReq {},
         ext: None,
     };
     let mut cookie = None;
