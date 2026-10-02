@@ -87,6 +87,24 @@ cargo xtask copyright --fix
 ```
 It auto fixes copyright issues. This ensures all source code has correct copyright headers.
 
+### Generated C header
+The public C header (`api/native/include/azihsm_api.h`) is generated from the
+`azihsm_api_native` crate with cbindgen and checked into the repository for
+review and tooling. Whenever you change the native FFI (anything exported from
+`api/native/src`), regenerate and commit the header:
+```bash
+cargo xtask cbindgen --fix
+```
+Run `cargo xtask cbindgen` (no `--fix`) to verify the committed header is up to
+date; `cargo xtask precheck --cbindgen` runs the same check in CI and fails the
+build if the header has drifted from the Rust source. This requires
+`clang-format-18` (one of the packages listed under Initial Setup) and the
+pinned cbindgen installed by `cargo xtask precheck --setup`.
+On Windows, both header generation (including `--fix`) and freshness checking
+are skipped with an explicit message; neither cbindgen nor clang-format is run,
+and the checked-in header is left unchanged. Regenerate using Linux or WSL.
+Linux CI continues to enforce that the checked-in header is up to date.
+
 ## Running all of the above checks
 Before running any commands below, ensure you have finished the initial setup steps.
 

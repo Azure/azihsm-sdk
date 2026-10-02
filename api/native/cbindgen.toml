@@ -3,11 +3,11 @@
 
 language = "C"
 
-header = "/*\r * Copyright (c) Microsoft Corporation.\r * Licensed under the MIT License\r */"
+header = "/*\n * Copyright (c) Microsoft Corporation.\n * Licensed under the MIT License.\n */"
 
 cpp_compat = true
 
-include_guard = "__AZIHSM_API_H__"
+include_guard = "AZIHSM_API_H"
 
 documentation_style = "c"
 
@@ -32,7 +32,7 @@ usize_is_size_t = true
 
 # A list of items to not include in the generated bindings
 # default: []
-exclude = []
+exclude = ["AzihsmWideChar"]
 include = [
   "AzihsmAlgoAesCbcParams",
   "AzihsmAlgoAesGcmParams",
@@ -126,7 +126,6 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmSessionPsk" = "azihsm_session_psk"
 "AzihsmStatus" = "azihsm_status"
 "AzihsmStr" = "azihsm_str"
-"AzihsmWideChar" = "azihsm_char"
 "HsmEccCurve" = "azihsm_ecc_curve"
 "HsmError" = "azihsm_status"
 "HsmKeyClass" = "azihsm_key_class"
@@ -135,6 +134,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmPartType" = "azihsm_part_type"
 "HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 "HsmSessionExType" = "azihsm_session_ex_type"
+"PSK_LEN" = "AZIHSM_PSK_LEN"
 
 [defines]
 "target_os = linux" = "__linux__ "

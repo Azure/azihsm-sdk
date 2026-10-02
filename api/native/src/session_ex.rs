@@ -20,7 +20,7 @@ use super::*;
 pub struct AzihsmSessionPsk {
     /// PSK slot: 0 = Crypto Officer, 1 = Crypto User.
     pub psk_id: u8,
-    /// Optional PSK buffer (exactly `PSK_LEN` bytes); NULL selects the
+    /// Optional PSK buffer (exactly `AZIHSM_PSK_LEN` bytes); NULL selects the
     /// partition default PSK for the slot.
     pub psk: *const AzihsmBuffer,
 }
@@ -45,7 +45,7 @@ pub struct AzihsmSessionPsk {
 ///
 /// - `dev_handle` must be a valid partition handle.
 /// - `psk` must be a valid pointer to an `azihsm_session_psk` whose `psk`
-///   field is NULL or a valid `azihsm_buffer` holding exactly `PSK_LEN`
+///   field is NULL or a valid `azihsm_buffer` holding exactly `AZIHSM_PSK_LEN`
 ///   bytes.
 /// - `sess_handle` must be a valid pointer to memory where the session handle
 ///   will be written.
@@ -351,7 +351,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
 /// before provisioning.
 ///
 /// @param[in] sess_handle Handle to the security-domain session
-/// @param[in] new_psk New PSK buffer; must be exactly `PSK_LEN` (32 B)
+/// @param[in] new_psk New PSK buffer; must be exactly `AZIHSM_PSK_LEN` (32 B)
 ///
 /// @return `AzihsmStatus` indicating the result of the operation
 ///
@@ -359,7 +359,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
 ///
 /// - `sess_handle` must be a valid security-domain session handle.
 /// - `new_psk` must be a valid pointer to an `azihsm_buffer` whose
-///   backing storage holds exactly `PSK_LEN` bytes.
+///   backing storage holds exactly `AZIHSM_PSK_LEN` bytes.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_ex_psk_change(
