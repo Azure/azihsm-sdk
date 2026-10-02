@@ -623,6 +623,52 @@ TEST_F(azihsm_sess_ex, part_final_size_probe_precedes_policy_parse)
         EXPECT_GT(local_mk_backup.len, 0u);
     });
 }
+
+TEST_F(azihsm_sess_ex, part_final_rejects_bad_part_policy_len)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_handle sess_handle = open_sd_session(part_handle);
+        if (sess_handle == 0)
+        {
+            return;
+        }
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        std::vector<uint8_t> policy(32, 0);
+        std::vector<uint8_t> cert(1, 0);
+        azihsm_buffer policy_buf{ policy.data(), static_cast<uint32_t>(policy.size()) };
+        azihsm_buffer cert_buf{ cert.data(), static_cast<uint32_t>(cert.size()) };
+
+        azihsm_sess_ex_part_final_params params{};
+        params.part_policy = &policy_buf;
+        params.pta_cert_chain = &cert_buf;
+        params.pta_cert_chain_len = 1;
+        params.prev_local_mk_backup = nullptr;
+
+        azihsm_buffer local_mk_backup{ nullptr, 0 };
+        ASSERT_EQ(
+            azihsm_sess_ex_part_final(sess_handle, &params, &local_mk_backup),
+            AZIHSM_STATUS_BUFFER_TOO_SMALL
+        );
+        ASSERT_GT(local_mk_backup.len, 0u);
+
+        std::vector<uint8_t> backup(local_mk_backup.len, 0);
+        local_mk_backup.ptr = backup.data();
+        ASSERT_EQ(
+            azihsm_sess_ex_part_final(sess_handle, &params, &local_mk_backup),
+            AZIHSM_STATUS_INVALID_ARGUMENT
+        );
+    });
+}
 #endif // !defined(AZIHSM_FEATURE_MOCK)
 
 // The typed partition-policy builder FFI is pure host-side serialization and
