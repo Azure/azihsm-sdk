@@ -744,6 +744,16 @@ typedef uint32_t azihsm_part_type;
 #endif // __cplusplus
 
 /*
+ Opaque partition-policy builder handle.
+
+ Created by [`azihsm_part_policy_builder_new`], populated through the
+ `azihsm_part_policy_builder_set_*` setters, serialized with
+ [`azihsm_part_policy_build`], and released with
+ [`azihsm_part_policy_builder_free`].
+ */
+struct azihsm_part_policy_builder;
+
+/*
  Error type used throughout the native API.
 
  An alias for `HsmError` that represents all possible error conditions
@@ -2240,6 +2250,239 @@ azihsm_status azihsm_generate_key_report(
  This function is unsafe because it dereferences raw pointers.
  */
 azihsm_status azihsm_key_get_prop(azihsm_handle key_handle, struct azihsm_key_prop *key_prop);
+
+/*
+ @brief Allocate a new partition-policy builder
+
+ On success, writes a handle to `*out_builder` whose policy starts from
+ a version defaulting to `major = 1, minor = 0` with every other field
+ zeroed; set the required POTA and SATA keys and any optional fields
+ through the `azihsm_part_policy_builder_set_*` functions, then serialize
+ it with `azihsm_part_policy_build`. Release it with
+ `azihsm_part_policy_builder_free`.
+
+ A key / `info` / backing-id that does not satisfy its field's length
+ requirement is rejected at `azihsm_part_policy_build` time (returning
+ `AZIHSM_STATUS_INVALID_ARGUMENT`) rather than silently truncated or
+ padded.
+ Missing either POTA or SATA key also causes `azihsm_part_policy_build`
+ to return `AZIHSM_STATUS_INVALID_ARGUMENT`.
+ Unsupported major versions and reserved flag bits are rejected at
+ build time as well.
+
+ @param[out] out_builder Receives the non-NULL builder handle on
+             success; left unmodified on failure.
+
+ @return `AZIHSM_STATUS_SUCCESS` on success, or
+         `AZIHSM_STATUS_INVALID_ARGUMENT` if `out_builder` is NULL.
+
+ # Safety
+
+ - `out_builder` must be a valid, writable pointer to storage for one
+   `azihsm_part_policy_builder *`.
+ */
+azihsm_status azihsm_part_policy_builder_new(struct azihsm_part_policy_builder **out_builder);
+
+/*
+ @brief Free a partition-policy builder
+
+ Releases a handle returned by `azihsm_part_policy_builder_new`.
+ Passing NULL is a no-op. The handle must not be used afterwards.
+
+ @param[in] builder Builder handle to free (may be NULL)
+
+ # Safety
+
+ - `builder` must be NULL or a handle returned by
+   `azihsm_part_policy_builder_new` that has not already been freed.
+ */
+void azihsm_part_policy_builder_free(struct azihsm_part_policy_builder *builder);
+
+/*
+ @brief Set the policy version (`major.minor`)
+
+ Major version must be 1; any minor version is accepted. An unsupported
+ major version is rejected at `azihsm_part_policy_build` time.
+
+ @param[in] builder Builder handle
+ @param[in] major Major version number
+ @param[in] minor Minor version number
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ */
+azihsm_status azihsm_part_policy_builder_set_version(
+    struct azihsm_part_policy_builder *builder,
+    uint8_t major,
+    uint8_t minor
+);
+
+/*
+ @brief Set the POTA (Partition Owner Trust Anchor) public key
+
+ @param[in] builder Builder handle
+ @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
+ @param[in] key Raw public-key bytes
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
+         handle / buffer
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
+ */
+azihsm_status azihsm_part_policy_builder_set_pota_key(
+    struct azihsm_part_policy_builder *builder,
+    uint16_t kind,
+    const struct azihsm_buffer *key
+);
+
+/*
+ @brief Set the SATA (Sealing Authority Trust Anchor) public key
+
+ @param[in] builder Builder handle
+ @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
+ @param[in] key Raw public-key bytes
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
+         handle / buffer
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
+ */
+azihsm_status azihsm_part_policy_builder_set_sata_key(
+    struct azihsm_part_policy_builder *builder,
+    uint16_t kind,
+    const struct azihsm_buffer *key
+);
+
+/*
+ @brief Set the SAPOTA (Sealing Authority's POTA) public key
+
+ @param[in] builder Builder handle
+ @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
+ @param[in] key Raw public-key bytes
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
+         handle / buffer
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
+ */
+azihsm_status azihsm_part_policy_builder_set_sapota_key(
+    struct azihsm_part_policy_builder *builder,
+    uint16_t kind,
+    const struct azihsm_buffer *key
+);
+
+/*
+ @brief Set the backing-partition identifier
+
+ @param[in] builder Builder handle
+ @param[in] id Backing-partition identifier bytes
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
+         handle / buffer
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
+ */
+azihsm_status azihsm_part_policy_builder_set_backup_part_id(
+    struct azihsm_part_policy_builder *builder,
+    const struct azihsm_buffer *id
+);
+
+/*
+ @brief Set the backing-partition public key
+
+ @param[in] builder Builder handle
+ @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
+ @param[in] key Raw public-key bytes
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
+         handle / buffer
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
+ */
+azihsm_status azihsm_part_policy_builder_set_backup_part_pub_key(
+    struct azihsm_part_policy_builder *builder,
+    uint16_t kind,
+    const struct azihsm_buffer *key
+);
+
+/*
+ @brief Set the caller-provided opaque `info` field
+
+ @param[in] builder Builder handle
+ @param[in] info Opaque info bytes
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
+         handle / buffer
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - the buffer pointer must be NULL or point to a valid `azihsm_buffer`.
+ */
+azihsm_status azihsm_part_policy_builder_set_info(
+    struct azihsm_part_policy_builder *builder,
+    const struct azihsm_buffer *info
+);
+
+/*
+ @brief Set the policy flag bits
+
+ Bits 0-2 are supported; reserved bits 3-7 are rejected at
+ `azihsm_part_policy_build` time.
+
+ @param[in] builder Builder handle
+ @param[in] flags Raw flag bits (see the `PolicyFlags` definition)
+ @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ */
+azihsm_status azihsm_part_policy_builder_set_flags(
+    struct azihsm_part_policy_builder *builder,
+    uint8_t flags
+);
+
+/*
+ @brief Serialize the policy into its canonical wire image
+
+ Writes exactly `PART_POLICY_LEN` bytes — the image accepted by
+ `azihsm_sess_ex_part_init` / `azihsm_sess_ex_part_final` — into
+ `out`. If `out` is too small, sets `out.len` to the required size and
+ returns `AZIHSM_STATUS_BUFFER_TOO_SMALL` without writing. The builder is left
+ usable (unchanged) for further serialization.
+ Both POTA and SATA keys must be set; otherwise returns
+ `AZIHSM_STATUS_INVALID_ARGUMENT`, even for a size probe.
+ Unsupported major versions and reserved flag bits also return
+ `AZIHSM_STATUS_INVALID_ARGUMENT` before writing output.
+
+ @param[in] builder Builder handle
+ @param[out] out Buffer to receive the serialized policy image
+ @return `AZIHSM_STATUS_SUCCESS`, `AZIHSM_STATUS_INVALID_ARGUMENT` on a
+         NULL or misaligned handle / buffer, or
+         `AZIHSM_STATUS_BUFFER_TOO_SMALL` if `out` is too small
+
+ # Safety
+
+ - `builder` must be a live handle from `azihsm_part_policy_builder_new`.
+ - `out` must be a valid pointer to an `azihsm_buffer` with writable
+   backing storage of its advertised length.
+ */
+azihsm_status azihsm_part_policy_build(
+    struct azihsm_part_policy_builder *builder,
+    struct azihsm_buffer *out
+);
 
 /*
  Get the list of HSM partitions

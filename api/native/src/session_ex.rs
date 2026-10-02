@@ -223,6 +223,12 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         csr_check?;
         report_check?;
 
+        // Parse the opaque policy image into a typed `PartPolicy`. This
+        // runs after the output-buffer probe so a size probe still reports
+        // `BUFFER_TOO_SMALL`; a wrong-length policy is rejected here.
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+
         let result = session.part_init_ex(
             part_policy,
             mach_seed,
@@ -304,7 +310,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         let session = api::HsmSession::try_from(sess_handle)?;
         let params = deref_ptr(params)?;
 
-        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
+        let part_policy_bytes: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let prev_local_mk_backup = buffer_to_optional_slice(params.prev_local_mk_backup)?;
 
         // Build the PTA cert chain (borrowing, not copying) from the C
@@ -334,6 +340,14 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         validate_ptr(local_mk_backup)?;
         let local_mk_backup = deref_mut_ptr(local_mk_backup)?;
         validate_output_buffer(local_mk_backup, api::LOCAL_MK_BACKUP_LEN)?;
+
+        // Parse the opaque policy image into a typed `PartPolicy` at the
+        // untrusted C boundary. Done after the output-buffer probe so a
+        // size query with a wrong-length policy still reports
+        // `AZIHSM_BUFFER_TOO_SMALL` (matching `part_init`) rather than
+        // `AZIHSM_INVALID_ARGUMENT`.
+        let part_policy = api::PartPolicy::ref_from_wire(part_policy_bytes)
+            .ok_or(AzihsmStatus::InvalidArgument)?;
 
         let result = session.part_final_ex(part_policy, &certs, prev_local_mk_backup)?;
 

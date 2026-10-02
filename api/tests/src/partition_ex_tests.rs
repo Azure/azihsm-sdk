@@ -16,7 +16,6 @@ use azihsm_api::*;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::MAX_CERTS;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
@@ -41,26 +40,13 @@ fn one_cert() -> Vec<u8> {
 
 // ── PartInit ────────────────────────────────────────────────────────────────
 
-/// A wrong-length `part_policy` is rejected up front, before any device
-/// round-trip.
-#[test]
-fn part_init_rejects_bad_part_policy_len() {
-    let _guard = PARTITION_LOCK.lock();
-    let session = new_co_session();
-    let (mach_seed, pota, sata) = valid_part_init_inputs();
-    let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
-
-    let res = session.part_init_ex(&bad_policy, &mach_seed, &pota, &sata, None);
-    assert!(matches!(res, Err(HsmError::InvalidArgument)));
-}
-
 /// A wrong-length `pota_thumbprint` is rejected.
 #[test]
 fn part_init_rejects_bad_pota_thumbprint_len() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
     let (mach_seed, _pota, sata) = valid_part_init_inputs();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let bad_pota = vec![0u8; POTA_THUMBPRINT_LEN + 1];
 
     let res = session.part_init_ex(&policy, &mach_seed, &bad_pota, &sata, None);
@@ -73,7 +59,7 @@ fn part_init_rejects_bad_sata_thumbprint_len() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
     let (mach_seed, pota, _sata) = valid_part_init_inputs();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let bad_sata = vec![0u8; SATA_THUMBPRINT_LEN + 1];
 
     let res = session.part_init_ex(&policy, &mach_seed, &pota, &bad_sata, None);
@@ -86,24 +72,10 @@ fn part_init_rejects_bad_sapota_thumbprint_len() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
     let (mach_seed, pota, sata) = valid_part_init_inputs();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let bad_sapota = vec![0u8; SAPOTA_THUMBPRINT_LEN + 1];
 
     let res = session.part_init_ex(&policy, &mach_seed, &pota, &sata, Some(&bad_sapota));
-    assert!(matches!(res, Err(HsmError::InvalidArgument)));
-}
-
-/// `PartFinal` rejects a wrong-length `part_policy` before any device
-/// round-trip.
-#[test]
-fn part_final_rejects_bad_part_policy_len() {
-    let _guard = PARTITION_LOCK.lock();
-    let session = new_co_session();
-    let bad_policy = vec![0u8; PART_POLICY_LEN - 1];
-
-    let cert = one_cert();
-    let chain = [HsmCert { cert: &cert }];
-    let res = session.part_final_ex(&bad_policy, &chain, None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
 }
 
@@ -112,7 +84,7 @@ fn part_final_rejects_bad_part_policy_len() {
 fn part_final_rejects_empty_cert_descriptors() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
 
     let res = session.part_final_ex(&policy, &[], None);
     assert!(matches!(res, Err(HsmError::InvalidArgument)));
@@ -125,7 +97,7 @@ fn part_final_rejects_empty_cert_descriptors() {
 fn part_final_rejects_empty_cert() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let empty_cert: Vec<u8> = Vec::new();
     let chain = [HsmCert {
         cert: empty_cert.as_slice(),
@@ -140,7 +112,7 @@ fn part_final_rejects_empty_cert() {
 fn part_final_rejects_too_many_cert_descriptors() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let cert = one_cert();
     let too_many = vec![
         HsmCert {
@@ -160,7 +132,7 @@ fn part_final_rejects_too_many_cert_descriptors() {
 fn part_final_rejects_wrong_len_prev_local_mk_backup() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let wrong_len = vec![0u8; LOCAL_MK_BACKUP_LEN - 1];
 
     let cert = one_cert();
@@ -182,7 +154,7 @@ fn part_init_valid_inputs_pass_host_guards() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
     let (mach_seed, pota, sata) = valid_part_init_inputs();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
 
     let res = session.part_init_ex(&policy, &mach_seed, &pota, &sata, None);
     assert!(!matches!(res, Err(HsmError::InvalidArgument)));
@@ -198,7 +170,7 @@ fn part_init_valid_inputs_pass_host_guards() {
 fn part_final_valid_inputs_pass_host_guards() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
-    let policy = vec![0u8; PART_POLICY_LEN];
+    let policy = PartPolicy::default();
     let cert = one_cert();
     let chain = [HsmCert { cert: &cert }];
 

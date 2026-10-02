@@ -182,7 +182,7 @@ impl HsmSession {
     /// session returns [`HsmError::InvalidSession`].
     pub fn part_init_ex(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         mach_seed: &[u8],
         pota_thumbprint: &[u8],
         sata_thumbprint: &[u8],
@@ -212,7 +212,7 @@ impl HsmSession {
     /// session; a V1 session returns [`HsmError::InvalidSession`].
     pub fn part_final_ex(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         pta_cert_chain: &[HsmCert<'_>],
         prev_local_mk_backup: Option<&[u8]>,
     ) -> HsmResult<HsmPartFinalExResult> {
