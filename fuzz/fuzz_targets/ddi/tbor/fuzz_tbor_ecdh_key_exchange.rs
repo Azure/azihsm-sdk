@@ -155,7 +155,7 @@ fuzz_target!(|input: FuzzInput| {
                 MASKED_SECRET_MIN_LEN - 32 + input.curve.coord_len(),
                 "masked secret length must match the curve secret length"
             ),
-            Ok(resp) => panic!("invalid ECDH request unexpectedly succeeded"),
+            Ok(_) => panic!("invalid ECDH request unexpectedly succeeded"),
             Err(err) if valid_keys && session_scope => panic!("valid ECDH request failed: {err}"),
             Err(err) if valid_keys => assert!(
                 matches!(err, DdiError::TborStatus(TborStatus::UnsupportedKeyScope)),

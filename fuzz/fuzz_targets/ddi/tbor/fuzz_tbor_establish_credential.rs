@@ -201,7 +201,7 @@ pub fn fuzz_tbor_establish_credential(input: FuzzInput) {
                     "PartInit must return a PTA report"
                 );
             }
-            (Ok(resp), false) => {
+            (Ok(_), false) => {
                 panic!("invalid PartInit request unexpectedly succeeded")
             }
             (Err(err), true) => panic!("valid PartInit request failed: {err}"),

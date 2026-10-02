@@ -22,10 +22,12 @@ use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
@@ -332,6 +334,18 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
         }
         (expected, actual) => panic!("operation {expected:?} decoded as {actual:?}"),
     }
+}
+
+/// Fixed `PartInit` machine seed (`0x40 + i`), mirroring the canonical
+/// fixture used by the `PartInit` integration suite.
+pub fn mach_seed() -> [u8; MACH_SEED_LEN] {
+    core::array::from_fn(|i| 0x40 + i as u8)
+}
+
+/// Fixed `PartInit` POTA thumbprint (`0x80 ^ i`), mirroring the canonical
+/// fixture used by the `PartInit` integration suite.
+pub fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
+    core::array::from_fn(|i| 0x80 ^ i as u8)
 }
 
 /// Fill a 96-byte `PolicyPubKey::data` slot with a deterministic

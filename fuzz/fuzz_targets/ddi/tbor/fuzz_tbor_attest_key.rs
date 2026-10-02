@@ -125,14 +125,6 @@ enum Expected {
     Rejected,
 }
 
-fn mach_seed() -> [u8; MACH_SEED_LEN] {
-    core::array::from_fn(|i| 0x40 + i as u8)
-}
-
-fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
-    core::array::from_fn(|i| 0x80 ^ i as u8)
-}
-
 /// Drive `PartInit` → `PartFinal` so the partition is `Initialized`: this
 /// provisions the PID key that signs reports plus the Ephemeral/Local
 /// masking keys that `KeyReport` unmasks with.
@@ -140,7 +132,12 @@ fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
     let pota = CaKey::generate();
     let policy = common::known_good_part_policy(pota.raw_pub());
     let init = ctx
-        .part_init(session, &mach_seed(), &policy, &pota_thumbprint())
+        .part_init(
+            session,
+            &common::mach_seed(),
+            &policy,
+            &common::pota_thumbprint(),
+        )
         .expect("PartInit should succeed");
     let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(session, &policy, &[], &chain.der_items())
@@ -433,7 +430,7 @@ fuzz_target!(|input: FuzzInput| {
                 matches!(err, DdiError::TborStatus(_)),
                 "invalid masked key must be rejected by firmware, got {err}"
             ),
-            (Ok(resp), _) => {
+            (Ok(_), _) => {
                 panic!("KeyReport unexpectedly succeeded for an invalid key")
             }
         }

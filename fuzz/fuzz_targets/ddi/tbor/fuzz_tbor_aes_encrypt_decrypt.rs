@@ -88,7 +88,7 @@ fuzz_target!(|input: FuzzInput| {
                     assert_eq!(decrypted.iv, resp.iv, "decrypt chaining IV must match");
                 }
             }
-            (Ok(resp), false) => panic!("invalid AES request unexpectedly succeeded"),
+            (Ok(_), false) => panic!("invalid AES request unexpectedly succeeded"),
             (Err(err), true) => panic!("valid AES request failed: {err}"),
             (Err(_), false) => {}
         }

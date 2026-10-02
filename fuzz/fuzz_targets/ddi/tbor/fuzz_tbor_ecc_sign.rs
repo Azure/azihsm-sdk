@@ -182,7 +182,7 @@ fuzz_target!(|input: FuzzInput| {
                     "signature must verify under the generated public key"
                 );
             }
-            (Ok(resp), false) => {
+            (Ok(_), false) => {
                 panic!("invalid ECC sign request unexpectedly succeeded")
             }
             (Err(err), true) => panic!("valid ECC sign request failed: {err}"),
