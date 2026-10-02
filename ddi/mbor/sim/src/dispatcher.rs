@@ -1102,6 +1102,12 @@ impl Dispatcher {
             .decode_data::<DdiAttestKeyReq>()
             .map_err(|_| ManticoreError::CborDecodeError)?;
 
+        // Real hardware requires report_data to be exactly MAX_REPORT_DATA_SIZE bytes;
+        // shorter payloads must be rejected rather than silently zero-padded.
+        if req.report_data.len() != DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
+            Err(ManticoreError::InvalidArgument)?
+        }
+
         let session_id = hdr.sess_id.ok_or(ManticoreError::SessionExpected)?;
 
         let app_session = self.function.get_user_session(session_id, false)?;
