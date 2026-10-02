@@ -42,7 +42,6 @@ use azihsm_ddi_tbor_types::KEY_REPORT_MASKED_KEY_MAX_LEN;
 
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
-use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// Sample caller-supplied report data bound into the report payload.

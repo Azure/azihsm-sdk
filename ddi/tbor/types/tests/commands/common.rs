@@ -4,6 +4,7 @@
 //! Common constants and helpers for TBOR command tests.
 
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
