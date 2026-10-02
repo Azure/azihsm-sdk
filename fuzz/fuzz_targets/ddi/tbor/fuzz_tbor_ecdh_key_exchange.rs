@@ -118,9 +118,10 @@ fuzz_target!(|input: FuzzInput| {
                     .expect("session-scoped ECC peer key generation should succeed")
                     .pub_key
             } else {
-                // Deterministically generate a buffer sized to the maximum
-                // peer public-key length using the provided seed.
-                seeded_bytes(input.seed, ECDH_PEER_PUB_MAX_LEN)
+                // Deterministically generate a buffer sized to the selected
+                // curve's exact wire public-key length, so the handler's
+                // length gate passes and malformed-point handling is reached.
+                seeded_bytes(input.seed, input.curve.wire_pub_key_len())
             };
 
             (masked_key, peer_pub_key)

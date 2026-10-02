@@ -126,6 +126,16 @@ impl EccCurve {
             Self::P521 => 136,
         }
     }
+
+    /// Wire `x ‖ y` public-key length, each coordinate padded to the wire
+    /// coordinate width (P-521: 66 -> 68 bytes).
+    pub fn wire_pub_key_len(self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
+        }
+    }
 }
 
 /// TBOR AES key sizes supported by `AesGenerateKey`.
