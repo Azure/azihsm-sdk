@@ -297,8 +297,9 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_flags(
 ///
 /// @param[in] builder Builder handle
 /// @param[out] out Buffer to receive the serialized policy image
-/// @return `AZIHSM_SUCCESS`, `AZIHSM_INVALID_ARGUMENT` on a NULL handle /
-///         buffer, or `AZIHSM_BUFFER_TOO_SMALL` if `out` is too small
+/// @return `AZIHSM_STATUS_SUCCESS`, `AZIHSM_STATUS_INVALID_ARGUMENT` on a
+///         NULL or misaligned handle / buffer, or
+///         `AZIHSM_STATUS_BUFFER_TOO_SMALL` if `out` is too small
 ///
 /// # Safety
 ///
@@ -312,11 +313,7 @@ pub unsafe extern "C" fn azihsm_part_policy_build(
     out: *mut AzihsmBuffer,
 ) -> AzihsmStatus {
     abi_boundary(|| {
-        if builder.is_null() {
-            return Err(AzihsmStatus::InvalidArgument);
-        }
-        // Safety: non-null, caller guarantees it points at a live builder.
-        let b = unsafe { &mut *builder };
+        let b = deref_mut_ptr(builder)?;
         let output = deref_mut_ptr(out)?;
         let policy = b.inner.clone().build()?;
         copy_to_buffer(output, policy.as_bytes())

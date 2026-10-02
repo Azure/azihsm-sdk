@@ -647,6 +647,22 @@ TEST(azihsm_part_policy_builder, null_handle_rejected)
     azihsm_part_policy_builder_free(nullptr);
 }
 
+TEST(azihsm_part_policy_builder, misaligned_handle_rejected)
+{
+    AzihsmPartPolicyBuilder *builder = nullptr;
+    ASSERT_EQ(azihsm_part_policy_builder_new(&builder), AZIHSM_STATUS_SUCCESS);
+    ASSERT_NE(builder, nullptr);
+    auto guard =
+        scope_guard::make_scope_exit([&builder] { azihsm_part_policy_builder_free(builder); });
+    auto *misaligned =
+        reinterpret_cast<AzihsmPartPolicyBuilder *>(reinterpret_cast<uint8_t *>(builder) + 1);
+
+    EXPECT_EQ(azihsm_part_policy_builder_set_flags(misaligned, 0), AZIHSM_STATUS_INVALID_ARGUMENT);
+    azihsm_buffer out{ nullptr, 0 };
+    EXPECT_EQ(azihsm_part_policy_build(misaligned, &out), AZIHSM_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(out.len, 0u);
+}
+
 // The two-call size-probe contract: a zero-capacity buffer reports the
 // required length, and a correctly-sized buffer then serializes the image.
 TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)

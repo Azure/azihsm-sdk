@@ -333,8 +333,8 @@ azihsm_status azihsm_part_policy_build(
 **Returns**
 
 `AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_INVALID_ARGUMENT` on a
-NULL handle or buffer, or `AZIHSM_STATUS_BUFFER_TOO_SMALL` if `out` is too
-small (with `out.len` set to the required size).
+NULL or misaligned handle or buffer, or `AZIHSM_STATUS_BUFFER_TOO_SMALL` if
+`out` is too small (with `out.len` set to the required size).
 
 ## azihsm_sess_ex_psk_change
 
