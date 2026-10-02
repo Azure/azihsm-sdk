@@ -8,8 +8,6 @@ mod common;
 
 use azihsm_crypto::AesKey;
 use azihsm_crypto::AesKeyWrapPadAlgo;
-use azihsm_crypto::EccPublicKey;
-use azihsm_crypto::EcdsaAlgo;
 use azihsm_crypto::Encrypter;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::HashAlgo;
@@ -18,8 +16,12 @@ use azihsm_crypto::KeyGenerationOp;
 use azihsm_crypto::RsaEncryptAlgo;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
-use azihsm_crypto::VerifyOp;
 use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_mbor_sim::attestation::KeyAttester;
+use azihsm_ddi_mbor_sim::crypto::ecc::EccOp;
+use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
+use azihsm_ddi_mbor_sim::report::CoseSign1Object;
+use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
@@ -111,8 +113,6 @@ struct FuzzKeyReportData {
 }
 
 const RSA_OAEP_SHA256: u8 = 1;
-const COSE_SIGN1_TAG: u8 = 0xD2;
-const PID_SIGNATURE_LEN: usize = 96;
 
 /// Outcome the firmware must produce for the masked key being attested.
 enum Expected {
@@ -273,123 +273,105 @@ fn import_rsa_key(ctx: &TestCtx, session_id: u16, scope: u8) -> Vec<u8> {
     .masked_key
 }
 
-/// Read a CBOR item head at `pos`, returning `(major_type, argument)`.
-fn cbor_head(buf: &[u8], pos: &mut usize) -> (u8, usize) {
-    let initial = buf[*pos];
-    *pos += 1;
-    let extra = match initial & 0x1F {
-        n @ 0..=23 => return (initial >> 5, n as usize),
-        24 => 1,
-        25 => 2,
-        26 => 4,
-        other => panic!("unsupported CBOR additional info {other}"),
-    };
-    let arg = buf[*pos..*pos + extra]
-        .iter()
-        .fold(0usize, |acc, b| (acc << 8) | *b as usize);
-    *pos += extra;
-    (initial >> 5, arg)
-}
+/// Walk a COSE_Key CBOR map and return its `(x, y)` byte strings
+/// (labels -2 / -3). Mirrors the integration-suite helper in
+/// `ddi/tbor/types/tests/commands/key_report.rs`.
+fn cose_key_xy(cose_key: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    use minicbor::data::Type as CborType;
 
-fn cbor_bstr<'a>(buf: &'a [u8], pos: &mut usize) -> &'a [u8] {
-    let (major, len) = cbor_head(buf, pos);
-    assert_eq!(major, 2, "expected CBOR byte string");
-    let bytes = &buf[*pos..*pos + len];
-    *pos += len;
-    bytes
-}
-
-fn push_cbor_bstr(out: &mut Vec<u8>, bytes: &[u8]) {
-    match bytes.len() {
-        n @ 0..=23 => out.push(0x40 | n as u8),
-        n @ 24..=0xFF => out.extend([0x58, n as u8]),
-        n => out.extend([0x59, (n >> 8) as u8, n as u8]),
+    let mut decoder = minicbor::Decoder::new(cose_key);
+    let entries = decoder
+        .map()
+        .expect("COSE_Key is a CBOR map")
+        .expect("COSE_Key map length is known");
+    let (mut x_bytes, mut y_bytes): (Option<Vec<u8>>, Option<Vec<u8>>) = (None, None);
+    for _ in 0..entries {
+        let label_ty = decoder.datatype().expect("COSE_Key entry has datatype");
+        let label = match label_ty {
+            CborType::I8 | CborType::I16 | CborType::I32 | CborType::I64 => {
+                decoder.i64().expect("COSE_Key label decodes as int")
+            }
+            CborType::U8 | CborType::U16 | CborType::U32 | CborType::U64 => {
+                decoder.u64().expect("COSE_Key label decodes as uint") as i64
+            }
+            other => panic!("unexpected COSE_Key label type {other:?}"),
+        };
+        match label {
+            -2 => x_bytes = Some(decoder.bytes().expect("pk_x bytes").to_vec()),
+            -3 => y_bytes = Some(decoder.bytes().expect("pk_y bytes").to_vec()),
+            _ => decoder.skip().expect("skip non-XY label value"),
+        }
     }
-    out.extend_from_slice(bytes);
+    (
+        x_bytes.expect("COSE_Key carries pk_x (label -2)"),
+        y_bytes.expect("COSE_Key carries pk_y (label -3)"),
+    )
 }
 
 /// Verify a `KeyReport` COSE_Sign1 under the partition's PID public key
-/// (slot-0 cert-chain leaf) and check that it binds `report_data` and the
-/// attested ECC key's public point.
+/// (slot-0 cert-chain leaf), then decode the payload and check that it
+/// binds the exact `report_data` and the attested ECC key's public
+/// point. Mirrors `verify_key_report` in
+/// `ddi/tbor/types/tests/commands/key_report.rs`, which this fuzz target
+/// exercises the same handler as (`KeyReport`).
 fn verify_key_report(
     ctx: &TestCtx,
     report: &[u8],
-    report_data: &[u8],
+    expected_report_data: &[u8; KEY_REPORT_DATA_LEN],
     pub_key_le: &[u8],
     coord_len: usize,
 ) {
-    // COSE_Sign1 = 18([ protected, {}, payload, signature ]).
-    assert_eq!(
-        report.first(),
-        Some(&COSE_SIGN1_TAG),
-        "report must be tagged COSE_Sign1"
-    );
-    let mut pos = 1;
-    assert_eq!(
-        cbor_head(report, &mut pos),
-        (4, 4),
-        "COSE_Sign1 is a 4-array"
-    );
-    let protected = cbor_bstr(report, &mut pos);
-    assert_eq!(
-        cbor_head(report, &mut pos),
-        (5, 0),
-        "unprotected header is {{}}"
-    );
-    let payload = cbor_bstr(report, &mut pos);
-    let signature = cbor_bstr(report, &mut pos);
-    assert_eq!(pos, report.len(), "no trailing bytes after COSE_Sign1");
-    assert_eq!(
-        signature.len(),
-        PID_SIGNATURE_LEN,
-        "PID signature is raw P-384 r ‖ s"
-    );
-
-    // Sig_structure = [ "Signature1", protected, h'', payload ].
-    let mut tbs = vec![0x84, 0x6A];
-    tbs.extend_from_slice(b"Signature1");
-    push_cbor_bstr(&mut tbs, protected);
-    tbs.push(0x40);
-    push_cbor_bstr(&mut tbs, payload);
-
+    // 1. PID pubkey from the slot-0 chain leaf.
     let info = ctx.cert_chain_info().expect("GetCertChainInfo");
     let num_certs = info.data.num_certs;
     assert!(num_certs >= 1, "cert chain must contain the PID leaf");
     let leaf = ctx
         .get_certificate(num_certs - 1)
         .expect("GetCertificate(PID leaf)");
-    let leaf = X509Certificate::from_der(leaf.data.certificate.as_slice())
-        .expect("PID leaf parses as X.509");
-    let pid_spki = leaf.get_public_key_der().expect("PID leaf SPKI");
-    let pid_pub = EccPublicKey::from_bytes(&pid_spki).expect("PID public key imports");
-    let verified = VerifyOp::verify(
-        &mut EcdsaAlgo::new(HashAlgo::sha384()),
-        &pid_pub,
-        &tbs,
-        signature,
-    )
-    .expect("PID signature verification should run");
-    assert!(
-        verified,
-        "KeyReport must be signed by the partition PID key"
+    let leaf_bytes = leaf.data.certificate.as_slice();
+    let leaf = X509Certificate::from_der(leaf_bytes).expect("PID leaf parses as X.509");
+    let pid_spki = leaf.get_public_key_der().expect("PID leaf SPKI extracts");
+    let pid_pub =
+        SimEccPublicKey::from_der(&pid_spki, None).expect("PID pubkey loads from leaf SPKI");
+
+    // 2. COSE_Sign1 signature verify under PID pubkey.
+    let attester = KeyAttester::parse(report).expect("report parses as COSE_Sign1");
+    attester
+        .verify(&pid_pub)
+        .expect("KeyReport must be signed by the partition PID key");
+
+    // 3. Decode the payload and cross-bind the exact `report_data` and the
+    //    embedded COSE_Key to the sealed/generated public point.
+    let cose = CoseSign1Object::decode(report).expect("re-decode COSE_Sign1 envelope");
+    let decoded: KeyAttestationReport =
+        minicbor::decode(cose.payload).expect("report payload decodes as KeyAttestationReport");
+
+    assert_eq!(
+        &decoded.report_data[..],
+        &expected_report_data[..],
+        "report_data must round-trip into the report payload",
     );
 
-    let contains = |needle: &[u8]| payload.windows(needle.len()).any(|w| w == needle);
-    assert!(
-        contains(report_data),
-        "report payload must bind report_data"
-    );
+    let cose_key = &decoded.public_key[..decoded.public_key_size as usize];
+    let (x_be, y_be) = cose_key_xy(cose_key);
 
-    // COSE_Key coordinates are big-endian; the wire public key is LE `x ‖ y`.
-    let wire_coord_len = pub_key_le.len() / 2;
-    let x_be: Vec<u8> = pub_key_le[..coord_len].iter().rev().copied().collect();
-    let y_be: Vec<u8> = pub_key_le[wire_coord_len..wire_coord_len + coord_len]
-        .iter()
-        .rev()
-        .copied()
-        .collect();
-    assert!(contains(&x_be), "report must attest the key's X coordinate");
-    assert!(contains(&y_be), "report must attest the key's Y coordinate");
+    // COSE_Key coordinates are big-endian; the wire public key is LE
+    // `x ‖ y`, so reverse each COSE_Key coordinate and compare the exact
+    // byte strings against the corresponding wire half.
+    assert_eq!(x_be.len(), coord_len, "COSE_Key pk_x matches the curve width");
+    assert_eq!(y_be.len(), coord_len, "COSE_Key pk_y matches the curve width");
+    let x_le: Vec<u8> = x_be.iter().rev().copied().collect();
+    let y_le: Vec<u8> = y_be.iter().rev().copied().collect();
+    assert_eq!(
+        x_le.as_slice(),
+        &pub_key_le[..coord_len],
+        "attested COSE_Key pk_x must re-derive the key's X",
+    );
+    assert_eq!(
+        y_le.as_slice(),
+        &pub_key_le[coord_len..2 * coord_len],
+        "attested COSE_Key pk_y must re-derive the key's Y",
+    );
 }
 
 fuzz_target!(|input: FuzzInput| {

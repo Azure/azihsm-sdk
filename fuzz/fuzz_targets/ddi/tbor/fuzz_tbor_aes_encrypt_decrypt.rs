@@ -86,6 +86,26 @@ fuzz_target!(|input: FuzzInput| {
                         .expect("decrypting valid ciphertext should succeed");
                     assert_eq!(&decrypted.msg, msg, "AES round trip must recover plaintext");
                     assert_eq!(decrypted.iv, resp.iv, "decrypt chaining IV must match");
+                } else {
+                    // `op == AES_OP_DECRYPT`: re-encrypt the returned
+                    // plaintext under the same key/IV and confirm it
+                    // reproduces the original ciphertext (`msg`), so a
+                    // regression that returns arbitrary same-length bytes
+                    // for a decrypt can't pass on output length alone.
+                    let re_encrypted = ctx
+                        .tbor(&TborAesEncryptDecryptReq {
+                            session_id: session.session_id,
+                            masked_key,
+                            op: AES_OP_ENCRYPT,
+                            msg: resp.msg.clone(),
+                            iv: input.cmdreq_data.iv,
+                        })
+                        .expect("re-encrypting decrypted plaintext should succeed");
+                    assert_eq!(
+                        &re_encrypted.msg, msg,
+                        "AES round trip must reproduce original ciphertext"
+                    );
+                    assert_eq!(re_encrypted.iv, resp.iv, "encrypt chaining IV must match");
                 }
             }
             (Ok(_), false) => panic!("invalid AES request unexpectedly succeeded"),
