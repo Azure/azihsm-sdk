@@ -640,6 +640,9 @@ TEST(azihsm_part_policy_builder, null_handle_rejected)
     azihsm_buffer out{ nullptr, 0 };
     EXPECT_EQ(azihsm_part_policy_build(nullptr, &out), AZIHSM_STATUS_INVALID_ARGUMENT);
 
+    // A NULL out-handle pointer is rejected by the constructor.
+    EXPECT_EQ(azihsm_part_policy_builder_new(nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+
     // Freeing NULL is a documented no-op (must not crash).
     azihsm_part_policy_builder_free(nullptr);
 }
@@ -648,7 +651,8 @@ TEST(azihsm_part_policy_builder, null_handle_rejected)
 // required length, and a correctly-sized buffer then serializes the image.
 TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
 {
-    AzihsmPartPolicyBuilder *b = azihsm_part_policy_builder_new();
+    AzihsmPartPolicyBuilder *b = nullptr;
+    ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
 
@@ -681,7 +685,8 @@ TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
 // (truncation would yield a *different* key while reporting success).
 TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
 {
-    AzihsmPartPolicyBuilder *b = azihsm_part_policy_builder_new();
+    AzihsmPartPolicyBuilder *b = nullptr;
+    ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
 
@@ -702,7 +707,8 @@ TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
 // rejects every non-96-byte Ecc384 key.
 TEST(azihsm_part_policy_builder, wrong_length_ecc384_rejected_at_build)
 {
-    AzihsmPartPolicyBuilder *b = azihsm_part_policy_builder_new();
+    AzihsmPartPolicyBuilder *b = nullptr;
+    ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
 

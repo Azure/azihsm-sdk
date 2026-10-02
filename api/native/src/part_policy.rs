@@ -48,24 +48,39 @@ where
 
 /// @brief Allocate a new partition-policy builder
 ///
-/// The returned handle starts from a policy whose version defaults to
-/// `major = 1, minor = 0` with every other field zeroed; set the fields
-/// you need through the `azihsm_part_policy_builder_set_*` functions,
-/// then serialize it with `azihsm_part_policy_build`. Release it with
+/// On success, writes a handle to `*out_builder` whose policy starts from
+/// a version defaulting to `major = 1, minor = 0` with every other field
+/// zeroed; set the fields you need through the
+/// `azihsm_part_policy_builder_set_*` functions, then serialize it with
+/// `azihsm_part_policy_build`. Release it with
 /// `azihsm_part_policy_builder_free`.
 ///
-/// Oversized key / `info` / backing-id input is rejected at
-/// `azihsm_part_policy_build` time (returning `AZIHSM_INVALID_ARGUMENT`)
-/// rather than silently truncated.
+/// A key / `info` / backing-id that does not satisfy its field's length
+/// requirement is rejected at `azihsm_part_policy_build` time (returning
+/// `AZIHSM_STATUS_INVALID_ARGUMENT`) rather than silently truncated or
+/// padded.
 ///
-/// @return A non-NULL builder handle on success, or NULL on allocation
-///         failure.
+/// @param[out] out_builder Receives the non-NULL builder handle on
+///             success; left unmodified on failure.
+///
+/// @return `AZIHSM_STATUS_SUCCESS` on success, or
+///         `AZIHSM_STATUS_INVALID_ARGUMENT` if `out_builder` is NULL.
+///
+/// # Safety
+///
+/// - `out_builder` must be a valid, writable pointer to storage for one
+///   `AzihsmPartPolicyBuilder *`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
-pub extern "C" fn azihsm_part_policy_builder_new() -> *mut AzihsmPartPolicyBuilder {
-    Box::into_raw(Box::new(AzihsmPartPolicyBuilder {
-        inner: api::PartPolicyBuilder::new(),
-    }))
+pub unsafe extern "C" fn azihsm_part_policy_builder_new(
+    out_builder: *mut *mut AzihsmPartPolicyBuilder,
+) -> AzihsmStatus {
+    abi_boundary(|| {
+        let handle = Box::into_raw(Box::new(AzihsmPartPolicyBuilder {
+            inner: api::PartPolicyBuilder::new(),
+        }));
+        assign_ptr(out_builder, handle)
+    })
 }
 
 /// @brief Free a partition-policy builder

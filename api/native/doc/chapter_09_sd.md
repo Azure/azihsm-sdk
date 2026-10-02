@@ -240,13 +240,20 @@ The serialized image may then be passed as the `part_policy` buffer to
 Allocate a new partition-policy builder.
 
 ```cpp
-struct AzihsmPartPolicyBuilder *azihsm_part_policy_builder_new(void);
+azihsm_status azihsm_part_policy_builder_new(
+    struct AzihsmPartPolicyBuilder **out_builder);
 ```
+
+**Parameters**
+
+- `out_builder` — on success, receives a non-NULL opaque builder handle
+  that must be released with `azihsm_part_policy_builder_free`. Left
+  unmodified on failure.
 
 **Returns**
 
-A non-NULL opaque builder handle on success, or NULL on allocation
-failure.
+`AZIHSM_STATUS_SUCCESS` on success, or `AZIHSM_STATUS_INVALID_ARGUMENT`
+if `out_builder` is NULL.
 
 ### azihsm_part_policy_builder_free
 
@@ -264,11 +271,17 @@ Set individual policy fields. Each returns `AZIHSM_STATUS_SUCCESS`, or
 `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle or buffer. `kind` is the
 public-key kind discriminant (`0` = ECC P-384).
 
-Fixed-size fields reject oversized input rather than truncating it: if a
-key, `info`, or backing-partition id exceeds its slot, the setter still
+Fixed-size fields reject input that does not satisfy their length
+requirement rather than truncating or padding it: if a key, `info`, or
+backing-partition id violates its slot's length rule, the setter still
 returns `AZIHSM_STATUS_SUCCESS`, but the subsequent
-`azihsm_part_policy_build` fails with `AZIHSM_STATUS_INVALID_ARGUMENT`
-(truncating key material would silently yield a *different* key).
+`azihsm_part_policy_build` fails with `AZIHSM_STATUS_INVALID_ARGUMENT`.
+A *known* key kind must be exactly the length that kind requires — an
+ECC P-384 (`kind = 0`) key is `X || Y`, i.e. exactly 96 bytes — because
+the firmware rejects every other length; a shorter key that merely fits
+the slot is therefore rejected too. `info` and the backing-partition id
+must not exceed their respective slots (truncating key material would
+silently yield a *different* key).
 
 The `flags` byte passed to `azihsm_part_policy_builder_set_flags` is a
 bitfield:
