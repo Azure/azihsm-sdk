@@ -9,6 +9,7 @@
 use clap::Parser;
 
 use crate::audit::Audit;
+use crate::cbindgen::Cbindgen;
 use crate::clippy::Clippy;
 use crate::copyright::Copyright;
 use crate::coverage::Coverage;
@@ -29,6 +30,9 @@ struct Stage {
     /// Run copyright checks
     #[clap(long)]
     copyright: bool,
+    /// Run cbindgen committed-header check
+    #[clap(long)]
+    cbindgen: bool,
     /// Run validate members checks
     #[clap(long)]
     validate_members: bool,
@@ -66,6 +70,7 @@ impl Stage {
     fn merge(&mut self, other: &Stage) {
         self.setup = self.setup || other.setup;
         self.copyright = self.copyright || other.copyright;
+        self.cbindgen = self.cbindgen || other.cbindgen;
         self.validate_members = self.validate_members || other.validate_members;
         self.audit = self.audit || other.audit;
         self.fmt = self.fmt || other.fmt;
@@ -83,6 +88,7 @@ impl Stage {
         Stage {
             setup: false,
             copyright: false,
+            cbindgen: false,
             validate_members: false,
             audit: false,
             fmt: true,
@@ -101,6 +107,10 @@ impl Stage {
         Stage {
             setup: true,
             copyright: true,
+            // cbindgen is verified via the dedicated `--cbindgen` CI step rather
+            // than the cross-platform presets, since it hard-requires
+            // clang-format-18 (not available on all local/Windows setups).
+            cbindgen: false,
             validate_members: true,
             audit: true,
             fmt: true,
@@ -119,6 +129,8 @@ impl Stage {
         Stage {
             setup: true,
             copyright: true,
+            // See `full()`: verified via the dedicated `--cbindgen` CI step.
+            cbindgen: false,
             validate_members: true,
             audit: true,
             fmt: true,
@@ -237,6 +249,15 @@ impl Xtask for Precheck {
         // Run Copyright
         if stage.copyright {
             Copyright { fix: false }.run(ctx.clone())?;
+        }
+
+        // Verify the committed cbindgen header is up to date
+        if stage.cbindgen {
+            Cbindgen {
+                fix: false,
+                clang_format_executable: "clang-format-18".to_string(),
+            }
+            .run(ctx.clone())?;
         }
 
         // Run ValidateMembers
