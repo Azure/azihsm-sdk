@@ -67,7 +67,14 @@ include = [
   "HsmPartType",
 ]
 
-item_types = ["constants", "enums", "functions", "structs", "typedefs"]
+item_types = [
+  "constants",
+  "enums",
+  "functions",
+  "opaque",
+  "structs",
+  "typedefs",
+]
 
 [export.rename]
 "AES_GCM_IV_SIZE" = "AZIHSM_AES_GCM_IV_SIZE"
@@ -100,6 +107,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmOwnerBackupKeyConfig" = "azihsm_owner_backup_key_config"
 "AzihsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "AzihsmPartInfo" = "azihsm_part_info"
+"AzihsmPartPolicyBuilder" = "azihsm_part_policy_builder"
 "AzihsmPartProp" = "azihsm_part_prop"
 "AzihsmPartPropId" = "azihsm_part_prop_id"
 "AzihsmPartType" = "azihsm_part_type"

@@ -649,13 +649,13 @@ TEST(azihsm_part_policy_builder, null_handle_rejected)
 
 TEST(azihsm_part_policy_builder, misaligned_handle_rejected)
 {
-    AzihsmPartPolicyBuilder *builder = nullptr;
+    azihsm_part_policy_builder *builder = nullptr;
     ASSERT_EQ(azihsm_part_policy_builder_new(&builder), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(builder, nullptr);
     auto guard =
         scope_guard::make_scope_exit([&builder] { azihsm_part_policy_builder_free(builder); });
     auto *misaligned =
-        reinterpret_cast<AzihsmPartPolicyBuilder *>(reinterpret_cast<uint8_t *>(builder) + 1);
+        reinterpret_cast<azihsm_part_policy_builder *>(reinterpret_cast<uint8_t *>(builder) + 1);
 
     EXPECT_EQ(azihsm_part_policy_builder_set_flags(misaligned, 0), AZIHSM_STATUS_INVALID_ARGUMENT);
     azihsm_buffer out{ nullptr, 0 };
@@ -667,7 +667,7 @@ TEST(azihsm_part_policy_builder, misaligned_handle_rejected)
 // required length, and a correctly-sized buffer then serializes the image.
 TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
 {
-    AzihsmPartPolicyBuilder *b = nullptr;
+    azihsm_part_policy_builder *b = nullptr;
     ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
@@ -702,7 +702,7 @@ TEST(azihsm_part_policy_builder, build_round_trips_via_size_probe)
 // (truncation would yield a *different* key while reporting success).
 TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
 {
-    AzihsmPartPolicyBuilder *b = nullptr;
+    azihsm_part_policy_builder *b = nullptr;
     ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });
@@ -724,7 +724,7 @@ TEST(azihsm_part_policy_builder, oversized_key_rejected_at_build)
 // rejects every non-96-byte Ecc384 key.
 TEST(azihsm_part_policy_builder, wrong_length_ecc384_rejected_at_build)
 {
-    AzihsmPartPolicyBuilder *b = nullptr;
+    azihsm_part_policy_builder *b = nullptr;
     ASSERT_EQ(azihsm_part_policy_builder_new(&b), AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(b, nullptr);
     auto guard = scope_guard::make_scope_exit([&b] { azihsm_part_policy_builder_free(b); });

@@ -222,8 +222,8 @@ Typical use:
 1. [`azihsm_part_policy_builder_new`](#azihsm_part_policy_builder_new)
    allocates a builder (its version defaults to `major = 1, minor = 0`,
    with every other field zeroed).
-2. Populate the fields with the `azihsm_part_policy_builder_set_*`
-   setters.
+2. Set both required POTA and SATA keys with the
+   `azihsm_part_policy_builder_set_*` setters, plus any optional fields.
 3. [`azihsm_part_policy_build`](#azihsm_part_policy_build) serializes the
    image into a caller-provided [azihsm_buffer](#azihsm_buffer); it
    follows the same two-call size-probe contract as other output buffers
@@ -241,7 +241,7 @@ Allocate a new partition-policy builder.
 
 ```cpp
 azihsm_status azihsm_part_policy_builder_new(
-    struct AzihsmPartPolicyBuilder **out_builder);
+    struct azihsm_part_policy_builder **out_builder);
 ```
 
 **Parameters**
@@ -261,7 +261,7 @@ Release a builder handle. Passing NULL is a no-op.
 
 ```cpp
 void azihsm_part_policy_builder_free(
-    struct AzihsmPartPolicyBuilder *builder
+    struct azihsm_part_policy_builder *builder
     );
 ```
 
@@ -270,6 +270,13 @@ void azihsm_part_policy_builder_free(
 Set individual policy fields. Each returns `AZIHSM_STATUS_SUCCESS`, or
 `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle or buffer. `kind` is the
 public-key kind discriminant (`0` = ECC P-384).
+
+Both POTA and SATA keys are mandatory: call
+`azihsm_part_policy_builder_set_pota_key` and
+`azihsm_part_policy_builder_set_sata_key` before building. If either key
+is unset, `azihsm_part_policy_build` returns
+`AZIHSM_STATUS_INVALID_ARGUMENT`, including for size probes.
+SAPOTA and backing-partition keys remain optional.
 
 Fixed-size fields reject input that does not satisfy their length
 requirement rather than truncating or padding it: if a key, `info`, or
@@ -298,25 +305,25 @@ Setting any reserved bit causes `azihsm_sess_ex_part_init` /
 
 ```cpp
 azihsm_status azihsm_part_policy_builder_set_version(
-    struct AzihsmPartPolicyBuilder *builder, uint8_t major, uint8_t minor);
+    struct azihsm_part_policy_builder *builder, uint8_t major, uint8_t minor);
 azihsm_status azihsm_part_policy_builder_set_pota_key(
-    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
     const struct azihsm_buffer *key);
 azihsm_status azihsm_part_policy_builder_set_sata_key(
-    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
     const struct azihsm_buffer *key);
 azihsm_status azihsm_part_policy_builder_set_sapota_key(
-    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
     const struct azihsm_buffer *key);
 azihsm_status azihsm_part_policy_builder_set_backup_part_id(
-    struct AzihsmPartPolicyBuilder *builder, const struct azihsm_buffer *id);
+    struct azihsm_part_policy_builder *builder, const struct azihsm_buffer *id);
 azihsm_status azihsm_part_policy_builder_set_backup_part_pub_key(
-    struct AzihsmPartPolicyBuilder *builder, uint16_t kind,
+    struct azihsm_part_policy_builder *builder, uint16_t kind,
     const struct azihsm_buffer *key);
 azihsm_status azihsm_part_policy_builder_set_info(
-    struct AzihsmPartPolicyBuilder *builder, const struct azihsm_buffer *info);
+    struct azihsm_part_policy_builder *builder, const struct azihsm_buffer *info);
 azihsm_status azihsm_part_policy_builder_set_flags(
-    struct AzihsmPartPolicyBuilder *builder, uint8_t flags);
+    struct azihsm_part_policy_builder *builder, uint8_t flags);
 ```
 
 ### azihsm_part_policy_build
@@ -325,7 +332,7 @@ Serialize the policy into its canonical wire image.
 
 ```cpp
 azihsm_status azihsm_part_policy_build(
-    struct AzihsmPartPolicyBuilder *builder,
+    struct azihsm_part_policy_builder *builder,
     struct azihsm_buffer *out
     );
 ```
@@ -335,6 +342,8 @@ azihsm_status azihsm_part_policy_build(
 `AZIHSM_STATUS_SUCCESS` on success, `AZIHSM_STATUS_INVALID_ARGUMENT` on a
 NULL or misaligned handle or buffer, or `AZIHSM_STATUS_BUFFER_TOO_SMALL` if
 `out` is too small (with `out.len` set to the required size).
+Missing a required POTA or SATA key, or a previously recorded setter
+validation error, also returns `AZIHSM_STATUS_INVALID_ARGUMENT`.
 
 ## azihsm_sess_ex_psk_change
 

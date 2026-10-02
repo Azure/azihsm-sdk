@@ -46,15 +46,17 @@ where
 ///
 /// On success, writes a handle to `*out_builder` whose policy starts from
 /// a version defaulting to `major = 1, minor = 0` with every other field
-/// zeroed; set the fields you need through the
-/// `azihsm_part_policy_builder_set_*` functions, then serialize it with
-/// `azihsm_part_policy_build`. Release it with
+/// zeroed; set the required POTA and SATA keys and any optional fields
+/// through the `azihsm_part_policy_builder_set_*` functions, then serialize
+/// it with `azihsm_part_policy_build`. Release it with
 /// `azihsm_part_policy_builder_free`.
 ///
 /// A key / `info` / backing-id that does not satisfy its field's length
 /// requirement is rejected at `azihsm_part_policy_build` time (returning
 /// `AZIHSM_STATUS_INVALID_ARGUMENT`) rather than silently truncated or
 /// padded.
+/// Missing either POTA or SATA key also causes `azihsm_part_policy_build`
+/// to return `AZIHSM_STATUS_INVALID_ARGUMENT`.
 ///
 /// @param[out] out_builder Receives the non-NULL builder handle on
 ///             success; left unmodified on failure.
@@ -65,7 +67,7 @@ where
 /// # Safety
 ///
 /// - `out_builder` must be a valid, writable pointer to storage for one
-///   `AzihsmPartPolicyBuilder *`.
+///   `azihsm_part_policy_builder *`.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_part_policy_builder_new(
@@ -106,7 +108,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_free(builder: *mut AzihsmPar
 /// @param[in] builder Builder handle
 /// @param[in] major Major version number
 /// @param[in] minor Minor version number
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL handle
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle
 ///
 /// # Safety
 ///
@@ -126,7 +128,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_version(
 /// @param[in] builder Builder handle
 /// @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
 /// @param[in] key Raw public-key bytes
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
 ///
 /// # Safety
@@ -151,7 +153,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_pota_key(
 /// @param[in] builder Builder handle
 /// @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
 /// @param[in] key Raw public-key bytes
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
 ///
 /// # Safety
@@ -176,7 +178,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_sata_key(
 /// @param[in] builder Builder handle
 /// @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
 /// @param[in] key Raw public-key bytes
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
 ///
 /// # Safety
@@ -200,7 +202,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_sapota_key(
 ///
 /// @param[in] builder Builder handle
 /// @param[in] id Backing-partition identifier bytes
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
 ///
 /// # Safety
@@ -224,7 +226,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_backup_part_id(
 /// @param[in] builder Builder handle
 /// @param[in] kind Key-kind discriminant (e.g. 0 = ECC P-384)
 /// @param[in] key Raw public-key bytes
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
 ///
 /// # Safety
@@ -250,7 +252,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_backup_part_pub_key(
 ///
 /// @param[in] builder Builder handle
 /// @param[in] info Opaque info bytes
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL
 ///         handle / buffer
 ///
 /// # Safety
@@ -273,7 +275,7 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_info(
 ///
 /// @param[in] builder Builder handle
 /// @param[in] flags Raw flag bits (see the `PolicyFlags` definition)
-/// @return `AZIHSM_SUCCESS`, or `AZIHSM_INVALID_ARGUMENT` on a NULL handle
+/// @return `AZIHSM_STATUS_SUCCESS`, or `AZIHSM_STATUS_INVALID_ARGUMENT` on a NULL handle
 ///
 /// # Safety
 ///
@@ -292,8 +294,10 @@ pub unsafe extern "C" fn azihsm_part_policy_builder_set_flags(
 /// Writes exactly `PART_POLICY_LEN` bytes — the image accepted by
 /// `azihsm_sess_ex_part_init` / `azihsm_sess_ex_part_final` — into
 /// `out`. If `out` is too small, sets `out.len` to the required size and
-/// returns `AZIHSM_BUFFER_TOO_SMALL` without writing. The builder is left
+/// returns `AZIHSM_STATUS_BUFFER_TOO_SMALL` without writing. The builder is left
 /// usable (unchanged) for further serialization.
+/// Both POTA and SATA keys must be set; otherwise returns
+/// `AZIHSM_STATUS_INVALID_ARGUMENT`, even for a size probe.
 ///
 /// @param[in] builder Builder handle
 /// @param[out] out Buffer to receive the serialized policy image

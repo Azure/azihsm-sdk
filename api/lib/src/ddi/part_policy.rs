@@ -30,12 +30,13 @@ use crate::error::HsmError;
 
 /// Fluent builder for [`PartPolicy`].
 ///
-/// Construct one with [`new`](Self::new), set the fields you need through
-/// the typed setters, then call [`build`](Self::build) to obtain the
+/// Construct one with [`new`](Self::new), set the required POTA and SATA
+/// keys and any optional fields through the typed setters, then call
+/// [`build`](Self::build) to obtain the
 /// owned [`PartPolicy`].  Public-key setters copy the supplied raw bytes
 /// into the fixed [`POLICY_MAX_KEY_LEN`] slot and record the active
 /// length.  A known key kind must be the exact length the firmware
-/// requires (an [`PolicyKeyKind::Ecc384`] key is `X ‖ Y`, i.e. exactly
+/// requires (a [`PolicyKeyKind::Ecc384`] key is `X ‖ Y`, i.e. exactly
 /// [`POLICY_MAX_KEY_LEN`] bytes); a wrong-length or oversized key is
 /// rejected (not truncated): the first such error is captured and
 /// surfaced by [`build`](Self::build) as [`HsmError::InvalidArgument`],
@@ -51,9 +52,9 @@ pub struct PartPolicyBuilder {
 impl PartPolicyBuilder {
     /// Start a new builder.
     ///
-    /// Seeds [`version`](PartPolicy::version) to `major =
-    /// `[`POLICY_VERSION_MAJOR`]`, minor = 0` and leaves every other field
-    /// zeroed.
+    /// Seeds [`version`](PartPolicy::version) to a major version of
+    /// [`POLICY_VERSION_MAJOR`] and `minor = 0`, leaving every other field
+    /// zeroed. POTA and SATA keys must be set before building.
     pub fn new() -> Self {
         let mut policy = PartPolicy::zeroed();
         policy.version = PolicyVer {
@@ -71,7 +72,7 @@ impl PartPolicyBuilder {
     /// recording the active length.
     ///
     /// Enforces the exact on-wire length the firmware requires for a
-    /// *known* key kind (an [`PolicyKeyKind::Ecc384`] key is `X ‖ Y`, so
+    /// *known* key kind (a [`PolicyKeyKind::Ecc384`] key is `X ‖ Y`, so
     /// exactly [`POLICY_MAX_KEY_LEN`] bytes); firmware unconditionally
     /// rejects every other length, so accepting a short key here would
     /// report success for a policy guaranteed to fail provisioning.  For
