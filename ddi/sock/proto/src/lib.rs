@@ -47,7 +47,8 @@
 //! Data = field payloads located by (offset, length) in the data section
 //! ```
 //!
-//! v1 request fields: [`FieldId::Sqe`] (64 B) + [`FieldId::Payload`].
+//! v1 request fields: [`FieldId::Sqe`] (64 B) + [`FieldId::Payload`] +
+//! optional [`FieldId::Oob`].
 //! v1 response fields: [`FieldId::Cqe`] (16 B) + [`FieldId::Payload`].
 
 use std::io::Read;
@@ -115,6 +116,9 @@ pub enum FieldId {
     /// is the source-buffer content; on a response it is the
     /// destination-buffer content the firmware produced.
     Payload = 3,
+
+    /// Out-of-band SGL descriptors and their associated data buffers.
+    Oob = 4,
 }
 
 impl FieldId {
@@ -127,6 +131,7 @@ impl FieldId {
             1 => Some(Self::Sqe),
             2 => Some(Self::Cqe),
             3 => Some(Self::Payload),
+            4 => Some(Self::Oob),
             _ => None,
         }
     }
@@ -165,6 +170,19 @@ pub struct Request {
 
     /// Source DDI body bytes (MBOR or TBOR encoded).
     pub payload: Vec<u8>,
+
+    /// Out-of-band buffers referenced by the SQE descriptor page.
+    pub oob: Vec<OobItem>,
+}
+
+/// One out-of-band NVMe SGL descriptor and the data it references.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OobItem {
+    /// Original 16-byte descriptor. The server replaces its address before
+    /// submitting the SQE to its local HSM implementation.
+    pub descriptor: [u8; 16],
+    /// Bytes referenced by the descriptor.
+    pub data: Vec<u8>,
 }
 
 /// A response frame: the completion entry plus its destination-buffer
@@ -256,9 +274,11 @@ impl Request {
     /// Encode this request as a complete length-delimited frame.
     pub fn encode(&self) -> Result<Vec<u8>, ProtoError> {
         let sqe_bytes = dwords_to_le_bytes(&self.sqe);
+        let oob = encode_oob(&self.oob)?;
         let fields = [
             (FieldId::Sqe, sqe_bytes.as_slice()),
             (FieldId::Payload, self.payload.as_slice()),
+            (FieldId::Oob, oob.as_slice()),
         ];
         encode_frame(Kind::Request, 0, &fields)
     }
@@ -268,7 +288,12 @@ impl Request {
         let frame = Frame::parse(body, Kind::Request)?;
         let sqe = frame.dword16(FieldId::Sqe)?;
         let payload = frame.bytes(FieldId::Payload)?.to_vec();
-        Ok(Self { sqe, payload })
+        let oob = frame
+            .optional_bytes(FieldId::Oob)
+            .map(decode_oob)
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Self { sqe, payload, oob })
     }
 
     /// Write a complete length-delimited request frame to `w`.
@@ -280,6 +305,78 @@ impl Request {
     pub fn read_from(r: &mut impl Read) -> Result<Self, ProtoError> {
         Self::decode(&read_framed(r)?)
     }
+}
+
+fn encode_oob(items: &[OobItem]) -> Result<Vec<u8>, ProtoError> {
+    let count = u32::try_from(items.len()).map_err(|_| ProtoError::TooLarge(u32::MAX))?;
+    let mut out = Vec::new();
+    out.extend_from_slice(&count.to_le_bytes());
+    for item in items {
+        let len = u32::try_from(item.data.len()).map_err(|_| ProtoError::TooLarge(u32::MAX))?;
+        let descriptor_len = u32::from_le_bytes([
+            item.descriptor[8],
+            item.descriptor[9],
+            item.descriptor[10],
+            item.descriptor[11],
+        ]);
+        if descriptor_len != len {
+            return Err(ProtoError::Malformed(
+                "OOB descriptor length does not match data",
+            ));
+        }
+        out.extend_from_slice(&item.descriptor);
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(&item.data);
+    }
+    Ok(out)
+}
+
+fn decode_oob(mut bytes: &[u8]) -> Result<Vec<OobItem>, ProtoError> {
+    let count_bytes = bytes
+        .get(..4)
+        .ok_or(ProtoError::Malformed("OOB field is missing its count"))?;
+    let count = u32::from_le_bytes([
+        count_bytes[0],
+        count_bytes[1],
+        count_bytes[2],
+        count_bytes[3],
+    ]) as usize;
+    bytes = &bytes[4..];
+    if count > bytes.len() / 20 {
+        return Err(ProtoError::Malformed("OOB item count is invalid"));
+    }
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        let descriptor: [u8; 16] = bytes
+            .get(..16)
+            .ok_or(ProtoError::Malformed("OOB descriptor is truncated"))?
+            .try_into()
+            .map_err(|_| ProtoError::Malformed("OOB descriptor is truncated"))?;
+        let len_bytes = bytes
+            .get(16..20)
+            .ok_or(ProtoError::Malformed("OOB item length is truncated"))?;
+        let len =
+            u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+        bytes = &bytes[20..];
+        let data = bytes
+            .get(..len)
+            .ok_or(ProtoError::Malformed("OOB item data is truncated"))?
+            .to_vec();
+        let descriptor_len =
+            u32::from_le_bytes([descriptor[8], descriptor[9], descriptor[10], descriptor[11]])
+                as usize;
+        if descriptor_len != len {
+            return Err(ProtoError::Malformed(
+                "OOB descriptor length does not match data",
+            ));
+        }
+        bytes = &bytes[len..];
+        items.push(OobItem { descriptor, data });
+    }
+    if !bytes.is_empty() {
+        return Err(ProtoError::Malformed("OOB field has trailing data"));
+    }
+    Ok(items)
 }
 
 impl Response {
@@ -481,6 +578,15 @@ impl<'a> Frame<'a> {
         Err(ProtoError::Malformed("required field missing"))
     }
 
+    fn optional_bytes(&self, id: FieldId) -> Option<&'a [u8]> {
+        self.toc.iter().find_map(|entry| {
+            (FieldId::from_u16(entry.field_id) == Some(id)).then(|| {
+                let start = entry.offset as usize;
+                &self.data[start..start + entry.length as usize]
+            })
+        })
+    }
+
     /// Read a fixed 16-dword field (the SQE).
     fn dword16(&self, id: FieldId) -> Result<[u32; 16], ProtoError> {
         let bytes = self.bytes(id)?;
@@ -558,6 +664,7 @@ mod tests {
         let req = Request {
             sqe: sample_sqe(),
             payload: vec![1, 2, 3, 4, 5],
+            oob: Vec::new(),
         };
         let mut buf = Vec::new();
         req.write_to(&mut buf).unwrap();
@@ -565,6 +672,7 @@ mod tests {
         let got = Request::read_from(&mut buf.as_slice()).unwrap();
         assert_eq!(got.sqe, sample_sqe());
         assert_eq!(got.payload, vec![1, 2, 3, 4, 5]);
+        assert!(got.oob.is_empty());
     }
 
     #[test]
@@ -588,11 +696,43 @@ mod tests {
         let req = Request {
             sqe: [0u32; 16],
             payload: Vec::new(),
+            oob: Vec::new(),
         };
         let mut buf = Vec::new();
         req.write_to(&mut buf).unwrap();
         let got = Request::read_from(&mut buf.as_slice()).unwrap();
         assert!(got.payload.is_empty());
+    }
+
+    #[test]
+    fn oob_items_round_trip() {
+        let data = vec![1, 2, 3, 4];
+        let mut descriptor = [0u8; 16];
+        descriptor[8..12].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        let req = Request {
+            sqe: sample_sqe(),
+            payload: Vec::new(),
+            oob: vec![OobItem { descriptor, data }],
+        };
+
+        let got = Request::decode(&req.encode().unwrap()).unwrap();
+        assert_eq!(got.oob, req.oob);
+    }
+
+    #[test]
+    fn oob_rejects_invalid_count() {
+        let err = decode_oob(&u32::MAX.to_le_bytes()).unwrap_err();
+        assert!(matches!(err, ProtoError::Malformed(_)));
+    }
+
+    #[test]
+    fn oob_rejects_descriptor_length_mismatch() {
+        let item = OobItem {
+            descriptor: [0; 16],
+            data: vec![1],
+        };
+        let err = encode_oob(&[item]).unwrap_err();
+        assert!(matches!(err, ProtoError::Malformed(_)));
     }
 
     #[test]

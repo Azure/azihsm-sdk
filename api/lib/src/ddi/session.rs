@@ -19,6 +19,8 @@ use super::*;
 pub(crate) struct OpenSessionResult {
     /// Device-assigned session ID.
     pub(crate) sess_id: u16,
+    /// Opaque backend token bound to this session handle, when supported.
+    pub(crate) ddi_cookie: Option<DdiCookie>,
     /// Short application ID returned by the device.
     pub(crate) short_app_id: u8,
     /// The 48-byte random seed used during credential encryption.
@@ -96,9 +98,13 @@ pub(crate) fn open_session(
         },
         ext: None,
     };
-    let resp = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
+    let mut ddi_cookie = None;
+    let resp = dev
+        .exec_op_mbor(&req, &mut ddi_cookie)
+        .map_err(HsmError::from)?;
     Ok(OpenSessionResult {
         sess_id: resp.data.sess_id,
+        ddi_cookie,
         short_app_id: resp.data.short_app_id,
         seed,
         bmk_session: resp.data.bmk_session.as_slice().to_vec(),
@@ -180,6 +186,7 @@ pub(crate) fn reopen_session(
     dev: &HsmDev,
     rev: HsmApiRev,
     sess_id: u16,
+    ddi_cookie: Option<DdiCookie>,
     creds: &HsmCredentials,
     seed: &[u8; 48],
     bmk_session: &[u8],
@@ -195,7 +202,10 @@ pub(crate) fn reopen_session(
         },
         ext: None,
     };
-    let resp = dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from)?;
+    let mut ddi_cookie = ddi_cookie;
+    let resp = dev
+        .exec_op_mbor(&req, &mut ddi_cookie)
+        .map_err(HsmError::from)?;
 
     // The device must confirm the same session ID we requested.
     if resp.data.sess_id != sess_id {

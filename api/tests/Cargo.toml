@@ -38,6 +38,8 @@ default = []
 emu = ["azihsm_api/emu"]
 mock = ["azihsm_api/mock"]
 res-test = ["azihsm_api/res-test", "dep:azihsm_res_test_dev"]
+sock = ["azihsm_api/sock"]
+vsock = ["azihsm_api/vsock"]
 
 [lints]
 workspace = true

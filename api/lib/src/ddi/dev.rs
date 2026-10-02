@@ -7,9 +7,12 @@
 //! through the DDI layer. It manages device enumeration, device handle wrapping,
 //! and device access operations.
 
+use std::cell::Cell;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::sync::LazyLock;
+
+use parking_lot::Mutex;
 
 use super::*;
 use crate::resiliency::HsmDdi;
@@ -81,6 +84,51 @@ impl From<HsmApiRev> for DdiApiRev {
 /// underlying device.
 #[derive(Debug)]
 pub(crate) struct HsmDev(AzishmDev);
+
+// Session-bound API operations traditionally pass `&mut None` through the
+// DDI layer. Scope the handle's backend cookie around those calls without
+// sharing it between concurrent sessions.
+thread_local! {
+    static ACTIVE_SESSION_COOKIE: Cell<Option<Option<DdiCookie>>> = const { Cell::new(None) };
+}
+
+pub(crate) fn with_session_cookie<R>(
+    cookie: &Mutex<Option<DdiCookie>>,
+    f: impl FnOnce() -> R,
+) -> R {
+    let previous = ACTIVE_SESSION_COOKIE.with(|active| active.replace(Some(*cookie.lock())));
+    struct RestoreCookie<'a> {
+        cookie: &'a Mutex<Option<DdiCookie>>,
+        previous: Option<Option<DdiCookie>>,
+    }
+    impl Drop for RestoreCookie<'_> {
+        fn drop(&mut self) {
+            let current = ACTIVE_SESSION_COOKIE.with(Cell::get);
+            if let Some(current) = current {
+                *self.cookie.lock() = current;
+            }
+            ACTIVE_SESSION_COOKIE.with(|active| active.set(self.previous));
+        }
+    }
+    let _restore = RestoreCookie { cookie, previous };
+    f()
+}
+
+impl HsmDev {
+    pub(crate) fn exec_op_mbor<T: DdiOpReq>(
+        &self,
+        req: &T,
+        cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        let Some(mut active_cookie) = ACTIVE_SESSION_COOKIE.with(Cell::get) else {
+            return self.0.exec_op_mbor(req, cookie);
+        };
+
+        let result = self.0.exec_op_mbor(req, &mut active_cookie);
+        ACTIVE_SESSION_COOKIE.with(|active| active.set(Some(active_cookie)));
+        result
+    }
+}
 
 impl Deref for HsmDev {
     type Target = AzishmDev;
