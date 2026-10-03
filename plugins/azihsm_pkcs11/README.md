@@ -19,7 +19,13 @@ the spec requires). Implemented so far:
   partition only if the device reports it is not yet provisioned (provisioning
   is one-shot per power cycle; a session is the repeatable per-login primitive).
 - **Host objects** — `C_CreateObject` / `C_DestroyObject` / `C_GetAttributeValue`
-  / `C_FindObjects*` against an in-memory object store (see the seam below).
+  / `C_SetAttributeValue` / `C_GetObjectSize` / `C_FindObjects*` against an
+  in-memory object store (see the seam below). `C_SetAttributeValue` changes
+  only the attributes PKCS#11 marks modifiable for the object's class (label,
+  ID, dates, usage flags), and applies a template all-or-nothing; on keys
+  `CKA_SENSITIVE` can only become TRUE and `CKA_EXTRACTABLE` only FALSE.
+  `C_GetObjectSize` reports the bytes of the attribute values plus the masked
+  key body. `C_CopyObject` is not implemented.
   A session object is destroyed when the session that created it closes;
   token objects outlive it. (`C_Logout` does not yet destroy private session
   objects — it only hides them until the next login.)
@@ -71,6 +77,7 @@ the spec requires). Implemented so far:
 | Framework | `azihsm_pkcs11_module.c`, `azihsm_pkcs11_slot.c`, `azihsm_pkcs11_session.c` | init, slots, sessions, login, operation state machine |
 | Host crypto | `azihsm_pkcs11_digest.c` | self-contained SHA-1/256/384/512 (PKCS#11 digests must work in public sessions; the SDK digest needs a login) |
 | Object store | `azihsm_pkcs11_objstore.h`, `azihsm_pkcs11_objstore_mem.c` | host-side objects behind a vtable seam (in-memory now; a persistent backend implements the same ops later) |
+| Object policy | `azihsm_pkcs11_attr_policy.c` | which attributes `C_SetAttributeValue` may change, per class; a device-free unit of its own |
 | Key operations | `azihsm_pkcs11_crypt.c`, `azihsm_pkcs11_template.c` | key-backed entry points: operation state and the masked-blob store/unmask flow (CK_RV only); the keygen template validation, key-family choice and cipher mechanism policy are a device-free unit of their own |
 | HSM binding | `azihsm_pkcs11_hsm.c`, `azihsm_pkcs11_key.c`, `azihsm_pkcs11_status.c`, `azihsm_pkcs11_config.c` | the only code that calls `azihsm_*` and maps `azihsm_status` → `CK_RV` |
 | Not implemented | `azihsm_pkcs11_stubs.c` (generated) | everything else → `CKR_FUNCTION_NOT_SUPPORTED` |
@@ -112,11 +119,13 @@ complete CK_RV matrix of the keygen template validation and defaults, the
 key-family choice and cipher mechanism policy, CK_GCM_PARAMS decoding, the
 GCM/XTS output-length plan and the status maps; built with UBSan, so the
 misaligned templates and parameter blocks it feeds the decoders are real
-checks). `integration-tests/cpp/` is the functional suite (GoogleTest,
+checks), and `tests/attr_policy_test.c` (every `C_SetAttributeValue` verdict,
+per object class). `integration-tests/cpp/` is the functional suite (GoogleTest,
 same shape as the OpenSSL provider's): it `dlopen`s the built module and
 drives the real Cryptoki ABI — keygen including the GCM/XTS key families,
 one-shot CBC, GCM and XTS round trips, the two-call sizing discipline, the
-operation state machine and init precedence — so it
+operation state machine and init precedence, attribute changes and object
+sizes — so it
 needs the mock- or hardware-backed build (see the CMakeLists.txt header for
 the build/run recipe; `AZIHSM_PKCS11_MODULE` points it at a module,
 `AZIHSM_PKCS11_TEST_PIN` overrides the simulator PIN). `tests/pkcs11test/` is

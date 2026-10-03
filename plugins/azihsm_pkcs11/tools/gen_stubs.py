@@ -39,6 +39,7 @@ IMPLEMENTED = {
     "C_GetSessionInfo", "C_Login", "C_Logout",
     "C_CreateObject", "C_DestroyObject", "C_FindObjectsInit",
     "C_FindObjects", "C_FindObjectsFinal", "C_GetAttributeValue",
+    "C_SetAttributeValue", "C_GetObjectSize",
     "C_DigestInit", "C_Digest", "C_DigestUpdate", "C_DigestFinal",
     "C_GenerateKey", "C_EncryptInit", "C_Encrypt",
     "C_DecryptInit", "C_Decrypt",

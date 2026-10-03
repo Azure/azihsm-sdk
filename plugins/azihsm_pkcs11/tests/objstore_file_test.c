@@ -22,9 +22,13 @@
 #include "azihsm_pkcs11_store_io.h"
 #include "azihsm_pkcs11_store_record.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -159,6 +163,47 @@ static int body_equals(
     }
     free(buf);
     return ok;
+}
+
+/*
+ * A set_attr check standing in for the attribute policy's latch rule: refuse
+ * to move CKA_SENSITIVE from TRUE back to FALSE, judged on what `read` sees.
+ * It also records whether the store's cross-process lock was held while it
+ * ran, by trying to take that lock through a fresh descriptor.
+ */
+typedef struct
+{
+    const char *lock_path;
+    int calls;
+    int lock_held;
+} latch_probe;
+
+static CK_RV latch_check(void *cctx, azihsm_pkcs11_objstore_reader read, void *rctx)
+{
+    latch_probe *p = (latch_probe *)cctx;
+    p->calls++;
+    int fd = open(p->lock_path, O_RDWR | O_CLOEXEC);
+    if (fd >= 0)
+    {
+        p->lock_held = (flock(fd, LOCK_EX | LOCK_NB) != 0) && (errno == EWOULDBLOCK);
+        close(fd); /* also drops the lock if the probe got it */
+    }
+    CK_BBOOL cur = CK_FALSE;
+    CK_ATTRIBUTE a = { CKA_SENSITIVE, &cur, sizeof(cur) };
+    CK_RV rv = read(rctx, &a);
+    if ((rv == CKR_OK) && cur)
+    {
+        return CKR_ATTRIBUTE_READ_ONLY;
+    }
+    return (rv == CKR_ATTRIBUTE_TYPE_INVALID) ? CKR_OK : rv;
+}
+
+static CK_RV refuse_check(void *cctx, azihsm_pkcs11_objstore_reader read, void *rctx)
+{
+    (void)read;
+    (void)rctx;
+    (*(int *)cctx)++;
+    return CKR_ACTION_PROHIBITED;
 }
 
 int main(void)
@@ -347,7 +392,7 @@ int main(void)
         { CKA_ID, idbytes, sizeof(idbytes) },
     };
     CHECK(
-        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, x, chg, 2) == CKR_OK,
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, x, chg, 2, NULL, NULL) == CKR_OK,
         "set_attr updates label + adds id"
     );
     CHECK(
@@ -381,7 +426,10 @@ int main(void)
     );
     /* A later set_attr must preserve the body (read-modify-rewrite). */
     CK_ATTRIBUTE chg2[] = { { CKA_LABEL, (void *)"x-again", 7 } };
-    CHECK(s.ops->set_attr(s.ctx, SLOT, CK_FALSE, x, chg2, 1) == CKR_OK, "second set_attr ok");
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, x, chg2, 1, NULL, NULL) == CKR_OK,
+        "second set_attr ok"
+    );
     CHECK(
         body_equals(cfg.store_dir, SLOT, x, body, sizeof(body)),
         "set_attr preserved the masked blob body"
@@ -432,10 +480,131 @@ int main(void)
         "get_key_body on a private object is INVALID when logged out"
     );
 
+    /* --- get_size: attribute values plus body, the same count on both backends --- */
+    CK_OBJECT_HANDLE sz_tok = 0, sz_sess = 0;
+    make_object(&s, SLOT, CK_FALSE, CK_TRUE, CK_FALSE, "sz", xval, sizeof(xval), CK_FALSE, &sz_tok);
+    make_object(
+        &s,
+        SLOT,
+        CK_FALSE,
+        CK_FALSE,
+        CK_FALSE,
+        "sz",
+        xval,
+        sizeof(xval),
+        CK_FALSE,
+        &sz_sess
+    );
+    const CK_ULONG sz_expect =
+        sizeof(CK_OBJECT_CLASS) + 2 * sizeof(CK_BBOOL) + (sizeof("sz") - 1) + sizeof(xval);
+    CK_ULONG sz_t = 0, sz_s = 0;
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, &sz_t) == CKR_OK && sz_t == sz_expect,
+        "get_size of a token object counts its attribute values"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_sess, &sz_s) == CKR_OK && sz_s == sz_expect,
+        "get_size of the same object as a session object agrees"
+    );
+    s.ops->set_key_body(s.ctx, SLOT, CK_FALSE, sz_tok, body, sizeof(body));
+    s.ops->set_key_body(s.ctx, SLOT, CK_FALSE, sz_sess, body, sizeof(body));
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, &sz_t) == CKR_OK &&
+            sz_t == sz_expect + sizeof(body) &&
+            s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_sess, &sz_s) == CKR_OK && sz_s == sz_t,
+        "get_size adds the key body on both backends"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, NULL) == CKR_ARGUMENTS_BAD &&
+            s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_sess, NULL) == CKR_ARGUMENTS_BAD,
+        "get_size with a NULL out -> ARGUMENTS_BAD"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT, CK_FALSE, priv, &sz_t) == CKR_OBJECT_HANDLE_INVALID &&
+            s.ops->get_size(s.ctx, SLOT, CK_TRUE, priv, &sz_t) == CKR_OK,
+        "get_size honours the private gate"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, SLOT + 1, CK_FALSE, sz_sess, &sz_t) == CKR_OBJECT_HANDLE_INVALID,
+        "get_size honours slot isolation"
+    );
+
+    /* A slot that never held a token object has no token directory; a token
+     * handle probed there names nothing, like any unknown handle. */
+    const CK_SLOT_ID EMPTY_SLOT = SLOT + 7;
+    CK_ATTRIBUTE elq = { CKA_LABEL, lbuf, sizeof(lbuf) };
+    CK_ATTRIBUTE relabel[] = { { CKA_LABEL, (void *)"nope", 4 } };
+    CK_ULONG probe_len = sizeof(kb_buf);
+    CHECK(
+        s.ops->get_attr(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, &elq, 1) == CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: get_attr on a token handle -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->set_attr(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, relabel, 1, NULL, NULL) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: set_attr -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->get_size(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, &sz_t) == CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: get_size -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->get_key_body(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, kb_buf, &probe_len) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: get_key_body -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->set_key_body(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok, body, sizeof(body)) ==
+            CKR_OBJECT_HANDLE_INVALID,
+        "empty slot: set_key_body -> OBJECT_HANDLE_INVALID"
+    );
+    CHECK(
+        s.ops->destroy(s.ctx, EMPTY_SLOT, CK_TRUE, sz_tok) == CKR_OBJECT_HANDLE_INVALID &&
+            s.ops->get_size(s.ctx, SLOT, CK_FALSE, sz_tok, &sz_t) == CKR_OK,
+        "empty slot: destroy -> OBJECT_HANDLE_INVALID, and the real object survives"
+    );
+    char empty_dir[512];
+    snprintf(empty_dir, sizeof(empty_dir), "%s/slot-%lu", root, (unsigned long)EMPTY_SLOT);
+    struct stat esb;
+    CHECK(
+        stat(empty_dir, &esb) != 0 && errno == ENOENT,
+        "empty slot: the probes created no token directory"
+    );
+
+    /* Session-object set_attr (the in-memory backend): several attributes at
+     * once, replacing one and adding one; an empty template changes nothing. */
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sz_sess, chg, 2, NULL, NULL) == CKR_OK,
+        "session set_attr updates label + adds id"
+    );
+    idq.ulValueLen = sizeof(lbuf);
+    CHECK(
+        read_label(&s, SLOT, CK_FALSE, sz_sess, lbuf, sizeof(lbuf), &llen) == CKR_OK && llen == 9 &&
+            memcmp(lbuf, "x-renamed", 9) == 0 &&
+            s.ops->get_attr(s.ctx, SLOT, CK_FALSE, sz_sess, &idq, 1) == CKR_OK &&
+            idq.ulValueLen == 2 && memcmp(lbuf, idbytes, 2) == 0,
+        "session set_attr: both attributes read back"
+    );
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sz_sess, NULL, 0, NULL, NULL) == CKR_OK,
+        "session set_attr with an empty template -> OK"
+    );
+    CK_ATTRIBUTE half_bad[] = { { CKA_LABEL, (void *)"never", 5 }, { CKA_ID, NULL, 4 } };
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sz_sess, half_bad, 2, NULL, NULL) ==
+                CKR_ATTRIBUTE_VALUE_INVALID &&
+            read_label(&s, SLOT, CK_FALSE, sz_sess, lbuf, sizeof(lbuf), &llen) == CKR_OK &&
+            llen == 9,
+        "session set_attr refusing a later entry leaves the earlier one unapplied"
+    );
+    s.ops->destroy(s.ctx, SLOT, CK_FALSE, sz_tok);
+    s.ops->destroy(s.ctx, SLOT, CK_FALSE, sz_sess);
+
     /* v1 refusal via set_attr: making an object that carries CKA_VALUE private. */
     CK_ATTRIBUTE mkpriv[] = { { CKA_PRIVATE, &ck_true, sizeof(CK_BBOOL) } };
     CHECK(
-        s.ops->set_attr(s.ctx, SLOT, CK_TRUE, x, mkpriv, 1) == CKR_TEMPLATE_INCONSISTENT,
+        s.ops->set_attr(s.ctx, SLOT, CK_TRUE, x, mkpriv, 1, NULL, NULL) ==
+            CKR_TEMPLATE_INCONSISTENT,
         "set_attr refuses to make a value-carrying object private"
     );
     CHECK(
@@ -447,6 +616,81 @@ int main(void)
         s.ops->destroy(s.ctx, SLOT, CK_FALSE, x) == CKR_OK,
         "cleanup: destroy the scratch object"
     );
+
+    /* --- set_attr check: decided under the store lock, on the current state.
+           A second store instance on the same directory stands in for another
+           process sharing the token. --- */
+    azihsm_pkcs11_objstore s2;
+    CHECK(azihsm_pkcs11_objstore_file_create(&s2, &cfg) == CKR_OK, "second store instance");
+    CK_OBJECT_HANDLE lt = 0;
+    make_object(&s, SLOT, CK_FALSE, CK_TRUE, CK_FALSE, "latch", NULL, 0, CK_FALSE, &lt);
+    CK_ATTRIBUTE unlatch[] = { { CKA_SENSITIVE, &ck_false, sizeof(CK_BBOOL) } };
+    CK_ATTRIBUTE latch[] = { { CKA_SENSITIVE, &ck_true, sizeof(CK_BBOOL) } };
+    char lock_path[512];
+    snprintf(lock_path, sizeof(lock_path), "%s/slot-%lu/.lock", root, (unsigned long)SLOT);
+    latch_probe probe = { lock_path, 0, 0 };
+
+    /* This instance's view before the write: not yet sensitive, so a check
+     * made here, outside the lock, would allow SENSITIVE=FALSE. */
+    CK_BBOOL seen = CK_TRUE;
+    CK_ATTRIBUTE sq = { CKA_SENSITIVE, &seen, sizeof(seen) };
+    CHECK(
+        s.ops->get_attr(s.ctx, SLOT, CK_FALSE, lt, &sq, 1) == CKR_ATTRIBUTE_TYPE_INVALID,
+        "race: object starts without CKA_SENSITIVE"
+    );
+    CHECK(
+        s2.ops->set_attr(s2.ctx, SLOT, CK_FALSE, lt, latch, 1, NULL, NULL) == CKR_OK,
+        "race: the other instance latches CKA_SENSITIVE=TRUE"
+    );
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, lt, unlatch, 1, latch_check, &probe) ==
+            CKR_ATTRIBUTE_READ_ONLY,
+        "race: the in-lock check sees the latch and refuses the stale reversal"
+    );
+    CHECK(probe.calls == 1 && probe.lock_held, "race: the check ran once, under the store lock");
+    seen = CK_FALSE;
+    sq.ulValueLen = sizeof(seen);
+    CHECK(
+        s.ops->get_attr(s.ctx, SLOT, CK_FALSE, lt, &sq, 1) == CKR_OK && seen == CK_TRUE,
+        "race: CKA_SENSITIVE is still TRUE on disk"
+    );
+
+    int refusals = 0;
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, lt, NULL, 0, refuse_check, &refusals) ==
+                CKR_ACTION_PROHIBITED &&
+            s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sess, NULL, 0, refuse_check, &refusals) ==
+                CKR_ACTION_PROHIBITED &&
+            refusals == 2,
+        "check runs for an empty template, token and session objects alike"
+    );
+    CK_ATTRIBUTE rename[] = { { CKA_LABEL, (void *)"refused", 7 } };
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, sess, rename, 1, refuse_check, &refusals) ==
+                CKR_ACTION_PROHIBITED &&
+            read_label(&s, SLOT, CK_FALSE, sess, lbuf, sizeof(lbuf), &llen) == CKR_OK &&
+            llen == 8 && memcmp(lbuf, "sess-obj", 8) == 0,
+        "a refusing check leaves a session object unchanged"
+    );
+    refusals = 0;
+    CHECK(
+        s.ops->set_attr(s.ctx, SLOT, CK_FALSE, 0xDEAD, rename, 1, refuse_check, &refusals) ==
+                CKR_OBJECT_HANDLE_INVALID &&
+            s.ops->set_attr(
+                s.ctx,
+                SLOT,
+                CK_FALSE,
+                lt | 0xDEAD,
+                rename,
+                1,
+                refuse_check,
+                &refusals
+            ) == CKR_OBJECT_HANDLE_INVALID &&
+            refusals == 0,
+        "unknown handles are reported before any check runs"
+    );
+    s.ops->destroy(s.ctx, SLOT, CK_FALSE, lt);
+    s2.ops->teardown(s2.ctx);
 
     /* --- counter-first no reuse: destroy then create gets a higher number --- */
     CK_OBJECT_HANDLE a = 0, b = 0;

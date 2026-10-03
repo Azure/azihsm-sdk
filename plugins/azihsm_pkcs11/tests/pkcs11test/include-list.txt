@@ -30,6 +30,7 @@ DataObjectTest.FindObject
 DataObjectTest.FindObjectInvalid
 DataObjectTest.GetMultipleAttributes
 DataObjectTest.GetMultipleAttributesInvalid
+DataObjectTest.GetSetAttributeInvalid
 Digests/DigestTest.CompareIncremental/1
 Digests/DigestTest.CompareIncremental/2
 Digests/DigestTest.CompareIncremental/3

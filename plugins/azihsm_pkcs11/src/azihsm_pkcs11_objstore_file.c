@@ -35,9 +35,11 @@
 #include "azihsm_pkcs11_store_record.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /*
  * Top-but-one bit of a CK_OBJECT_HANDLE marks an on-disk token object; the
@@ -180,6 +182,34 @@ static CK_RV token_dir(const file_store *st, CK_SLOT_ID slot, char *out, size_t 
         return CKR_FUNCTION_FAILED;
     }
     return CKR_OK;
+}
+
+/*
+ * Lock the token directory of `slot` for an operation on an existing object.
+ * A slot that has never held a token object has no directory, so it holds no
+ * object the handle could name: report CKR_OBJECT_HANDLE_INVALID, as for any
+ * other handle the store does not know, rather than the lock file's ENOENT.
+ */
+static CK_RV lock_token_dir(
+    const file_store *st,
+    CK_SLOT_ID slot,
+    char *dir,
+    size_t dirlen,
+    int *lock_fd
+)
+{
+    CK_RV rv = token_dir(st, slot, dir, dirlen);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    rv = azihsm_pkcs11_store_lock(dir, lock_fd);
+    struct stat sb;
+    if ((rv != CKR_OK) && (stat(dir, &sb) != 0) && (errno == ENOENT))
+    {
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+    return rv;
 }
 
 static void object_name(CK_ULONG num, char *out, size_t outlen)
@@ -419,13 +449,8 @@ static CK_RV file_destroy(void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, C
     }
 
     char dir[P11_FILE_TOKEN_DIR_LEN];
-    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
-    if (rv != CKR_OK)
-    {
-        return rv;
-    }
     int lock_fd = -1;
-    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    CK_RV rv = lock_token_dir(st, slot, dir, sizeof(dir), &lock_fd);
     if (rv != CKR_OK)
     {
         return rv;
@@ -447,50 +472,19 @@ static CK_RV file_destroy(void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, C
     return rv;
 }
 
-static CK_RV file_get_attr(
-    void *ctx,
-    CK_SLOT_ID slot,
-    CK_BBOOL user_logged_in,
-    CK_OBJECT_HANDLE h,
-    CK_ATTRIBUTE *tmpl,
-    CK_ULONG count
-)
+/* get_attr over a decoded record; the same §5.7.5 outcomes as the in-memory
+ * backend's read_attrs. */
+static CK_RV read_rec_attrs(const azihsm_pkcs11_rec_object *o, CK_ATTRIBUTE *tmpl, CK_ULONG count)
 {
-    file_store *st = (file_store *)ctx;
-    if ((h & P11_FILE_TOKEN_FLAG) == 0)
-    {
-        return st->mem.ops->get_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count);
-    }
-
-    char dir[P11_FILE_TOKEN_DIR_LEN];
-    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
-    if (rv != CKR_OK)
-    {
-        return rv;
-    }
-    int lock_fd = -1;
-    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
-    if (rv != CKR_OK)
-    {
-        return rv;
-    }
-    azihsm_pkcs11_rec_object o;
-    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
-    if (rv != CKR_OK)
-    {
-        azihsm_pkcs11_store_unlock(lock_fd);
-        return rv;
-    }
-
     /* Sensitive or non-extractable secret material must not be revealed
      * (identical rule to the in-memory backend). */
     CK_BBOOL sensitive =
-        rec_bool(&o, CKA_SENSITIVE, CK_FALSE) || !rec_bool(&o, CKA_EXTRACTABLE, CK_TRUE);
+        rec_bool(o, CKA_SENSITIVE, CK_FALSE) || !rec_bool(o, CKA_EXTRACTABLE, CK_TRUE);
 
     CK_RV ret = CKR_OK;
     for (CK_ULONG i = 0; i < count; i++)
     {
-        const azihsm_pkcs11_rec_attr *a = rec_find(&o, tmpl[i].type);
+        const azihsm_pkcs11_rec_attr *a = rec_find(o, tmpl[i].type);
         if (a == NULL)
         {
             tmpl[i].ulValueLen = CK_UNAVAILABLE_INFORMATION;
@@ -521,6 +515,46 @@ static CK_RV file_get_attr(
         }
         tmpl[i].ulValueLen = a->len;
     }
+    return ret;
+}
+
+/* The azihsm_pkcs11_objstore_reader a set_attr check sees a locked record through. */
+static CK_RV read_rec_one(void *rctx, CK_ATTRIBUTE *a)
+{
+    return read_rec_attrs((const azihsm_pkcs11_rec_object *)rctx, a, 1);
+}
+
+static CK_RV file_get_attr(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_ATTRIBUTE *tmpl,
+    CK_ULONG count
+)
+{
+    file_store *st = (file_store *)ctx;
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->get_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count);
+    }
+
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    int lock_fd = -1;
+    CK_RV rv = lock_token_dir(st, slot, dir, sizeof(dir), &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv != CKR_OK)
+    {
+        azihsm_pkcs11_store_unlock(lock_fd);
+        return rv;
+    }
+
+    CK_RV ret = read_rec_attrs(&o, tmpl, count);
     azihsm_pkcs11_record_free(&o);
     azihsm_pkcs11_store_unlock(lock_fd);
     return ret;
@@ -532,24 +566,14 @@ static CK_RV set_attr_token(
     CK_BBOOL user_logged_in,
     CK_OBJECT_HANDLE h,
     const CK_ATTRIBUTE *tmpl,
-    CK_ULONG count
+    CK_ULONG count,
+    azihsm_pkcs11_objstore_check check,
+    void *cctx
 )
 {
-    for (CK_ULONG i = 0; i < count; i++)
-    {
-        if (tmpl[i].ulValueLen > 0 && tmpl[i].pValue == NULL)
-        {
-            return CKR_ATTRIBUTE_VALUE_INVALID;
-        }
-    }
     char dir[P11_FILE_TOKEN_DIR_LEN];
-    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
-    if (rv != CKR_OK)
-    {
-        return rv;
-    }
     int lock_fd = -1;
-    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    CK_RV rv = lock_token_dir(st, slot, dir, sizeof(dir), &lock_fd);
     if (rv != CKR_OK)
     {
         return rv;
@@ -560,6 +584,19 @@ static CK_RV set_attr_token(
     {
         azihsm_pkcs11_store_unlock(lock_fd);
         return rv;
+    }
+    /* Decided on the record as loaded under the lock, so another process
+     * sharing the store cannot change it between the decision and the write. */
+    if (check != NULL)
+    {
+        rv = check(cctx, read_rec_one, &o);
+    }
+    for (CK_ULONG i = 0; i < count && rv == CKR_OK; i++)
+    {
+        if (tmpl[i].ulValueLen > 0 && tmpl[i].pValue == NULL)
+        {
+            rv = CKR_ATTRIBUTE_VALUE_INVALID;
+        }
     }
     /* Apply changes to the decoded copy only; the on-disk object is rewritten
      * once, so a mid-update failure leaves it unchanged (all-or-nothing). */
@@ -579,7 +616,7 @@ static CK_RV set_attr_token(
     {
         rv = CKR_TEMPLATE_INCONSISTENT;
     }
-    if (rv == CKR_OK)
+    if ((rv == CKR_OK) && (count > 0))
     {
         rv = rewrite_token_object(dir, h & ~P11_FILE_TOKEN_FLAG, &o);
     }
@@ -594,15 +631,18 @@ static CK_RV file_set_attr(
     CK_BBOOL user_logged_in,
     CK_OBJECT_HANDLE h,
     const CK_ATTRIBUTE *tmpl,
-    CK_ULONG count
+    CK_ULONG count,
+    azihsm_pkcs11_objstore_check check,
+    void *cctx
 )
 {
     file_store *st = (file_store *)ctx;
     if ((h & P11_FILE_TOKEN_FLAG) == 0)
     {
-        return st->mem.ops->set_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count);
+        return st->mem.ops
+            ->set_attr(st->mem.ctx, slot, user_logged_in, h, tmpl, count, check, cctx);
     }
-    return set_attr_token(st, slot, user_logged_in, h, tmpl, count);
+    return set_attr_token(st, slot, user_logged_in, h, tmpl, count, check, cctx);
 }
 
 /* ---- find (enumeration) ------------------------------------------------- */
@@ -865,13 +905,8 @@ static CK_RV set_key_body_token(
         return CKR_ARGUMENTS_BAD;
     }
     char dir[P11_FILE_TOKEN_DIR_LEN];
-    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
-    if (rv != CKR_OK)
-    {
-        return rv;
-    }
     int lock_fd = -1;
-    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    CK_RV rv = lock_token_dir(st, slot, dir, sizeof(dir), &lock_fd);
     if (rv != CKR_OK)
     {
         return rv;
@@ -935,17 +970,12 @@ static CK_RV get_key_body_token(
     CK_ULONG *len
 )
 {
-    char dir[P11_FILE_TOKEN_DIR_LEN];
-    CK_RV rv = token_dir(st, slot, dir, sizeof(dir));
-    if (rv != CKR_OK)
-    {
-        return rv;
-    }
     /* Brief lock: reading the record non-atomically vs. a concurrent
      * set_key_body would be safe (writes are atomic renames) but could return a
      * stale body; the lock matches get_attr's read-under-lock discipline. */
+    char dir[P11_FILE_TOKEN_DIR_LEN];
     int lock_fd = -1;
-    rv = azihsm_pkcs11_store_lock(dir, &lock_fd);
+    CK_RV rv = lock_token_dir(st, slot, dir, sizeof(dir), &lock_fd);
     if (rv != CKR_OK)
     {
         return rv;
@@ -1000,6 +1030,59 @@ static CK_RV file_get_key_body(
     return get_key_body_token(st, slot, user_logged_in, h, blob, len);
 }
 
+/* Counts the decoded record the way mem_get_size counts a live object, so a
+ * token object's size does not depend on the on-disk framing. */
+static CK_RV get_size_token(
+    file_store *st,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_ULONG *size
+)
+{
+    char dir[P11_FILE_TOKEN_DIR_LEN];
+    int lock_fd = -1;
+    CK_RV rv = lock_token_dir(st, slot, dir, sizeof(dir), &lock_fd);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    azihsm_pkcs11_rec_object o;
+    rv = load_visible_token_object(st, slot, user_logged_in, h, &o);
+    if (rv == CKR_OK)
+    {
+        CK_ULONG total = o.body_len;
+        for (CK_ULONG i = 0; i < o.attr_count; i++)
+        {
+            total += o.attrs[i].len;
+        }
+        *size = total;
+        azihsm_pkcs11_record_free(&o);
+    }
+    azihsm_pkcs11_store_unlock(lock_fd);
+    return rv;
+}
+
+static CK_RV file_get_size(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_ULONG *size
+)
+{
+    file_store *st = (file_store *)ctx;
+    if (size == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if ((h & P11_FILE_TOKEN_FLAG) == 0)
+    {
+        return st->mem.ops->get_size(st->mem.ctx, slot, user_logged_in, h, size);
+    }
+    return get_size_token(st, slot, user_logged_in, h, size);
+}
+
 static CK_RV file_persist(void *ctx)
 {
     (void)ctx;
@@ -1033,6 +1116,7 @@ static const azihsm_pkcs11_objstore_ops FILE_OPS = {
     .find_final = file_find_final,
     .set_key_body = file_set_key_body,
     .get_key_body = file_get_key_body,
+    .get_size = file_get_size,
     .teardown = file_teardown,
     .persist = file_persist, /* file backend flushes; contrast MEM_OPS (.persist = NULL) */
 };

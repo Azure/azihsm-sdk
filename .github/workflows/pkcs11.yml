@@ -112,11 +112,12 @@ jobs:
           "$out/objstore_file_test"
           "$out/objstore_stress_test"
 
-  # AES keygen-template and status-map unit test: a standalone C harness that
-  # links the two device-free translation units directly (no device, no
-  # libcrypto), so it needs only a compiler. Built with UBSan: the template
-  # decoder reads caller-supplied pointers that carry no alignment guarantee,
-  # and the harness feeds it a deliberately misaligned template.
+  # AES keygen-template and status-map unit test, and the C_SetAttributeValue
+  # policy test: standalone C harnesses that link the device-free translation
+  # units directly (no device, no libcrypto), so they need only a compiler.
+  # Built with UBSan: the template decoder reads caller-supplied pointers that
+  # carry no alignment guarantee, and the harness feeds it a deliberately
+  # misaligned template.
   template-unit-tests:
     runs-on: ubuntu-24.04
     steps:
@@ -132,6 +133,17 @@ jobs:
             src/azihsm_pkcs11_template.c src/azihsm_pkcs11_status.c \
             -o "$RUNNER_TEMP/aes_template_test"
           "$RUNNER_TEMP/aes_template_test"
+
+      - name: Build and run the C_SetAttributeValue policy unit test
+        run: |
+          set -euo pipefail
+          cd plugins/azihsm_pkcs11
+          gcc -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            -I include/pkcs11-v3.1 -I src \
+            tests/attr_policy_test.c \
+            src/azihsm_pkcs11_attr_policy.c src/azihsm_pkcs11_template.c \
+            -o "$RUNNER_TEMP/attr_policy_test"
+          "$RUNNER_TEMP/attr_policy_test"
 
   # Digest known-answer tests: a standalone C harness that links the digest
   # source directly (no device, no libcrypto), so it needs only a compiler.

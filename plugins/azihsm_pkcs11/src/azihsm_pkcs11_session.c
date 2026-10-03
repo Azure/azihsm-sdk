@@ -9,6 +9,7 @@
  * still unimplemented.
  */
 
+#include "azihsm_pkcs11_attr_policy.h"
 #include "azihsm_pkcs11_digest.h"
 #include "azihsm_pkcs11_hsm.h"
 #include "azihsm_pkcs11_internal.h"
@@ -534,6 +535,91 @@ CK_RV C_GetAttributeValue(
     CK_RV rv =
         g_azihsm_pkcs11.store.ops
             ->get_attr(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, hObject, pTemplate, ulCount);
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+/* The request C_SetAttributeValue hands the store to decide under its lock. */
+typedef struct
+{
+    const CK_ATTRIBUTE *tmpl;
+    CK_ULONG count;
+    CK_BBOOL rw_session;
+} setattr_request;
+
+static CK_RV setattr_check(void *cctx, azihsm_pkcs11_objstore_reader read, void *rctx)
+{
+    const setattr_request *r = (const setattr_request *)cctx;
+    return azihsm_pkcs11_setattr_check(r->tmpl, r->count, r->rw_session, read, rctx);
+}
+
+CK_RV C_SetAttributeValue(
+    CK_SESSION_HANDLE hSession,
+    CK_OBJECT_HANDLE hObject,
+    CK_ATTRIBUTE_PTR pTemplate,
+    CK_ULONG ulCount
+)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    if ((pTemplate == NULL_PTR) && (ulCount > 0))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    /*
+     * The store applies whatever it is given, so the policy decides over the
+     * whole template first. It runs inside set_attr rather than before it: the
+     * module lock serialises this process only, and the file backend's token
+     * objects are shared with other processes, so the latches must be judged
+     * on the object as locked for the write.
+     */
+    setattr_request req = { pTemplate,
+                            ulCount,
+                            ((s->flags & CKF_RW_SESSION) != 0) ? CK_TRUE : CK_FALSE };
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_RV rv = g_azihsm_pkcs11.store.ops->set_attr(
+        g_azihsm_pkcs11.store.ctx,
+        s->slot,
+        logged_in,
+        hObject,
+        pTemplate,
+        ulCount,
+        setattr_check,
+        &req
+    );
+    azihsm_pkcs11_unlock();
+    return rv;
+}
+
+CK_RV C_GetObjectSize(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ULONG_PTR pulSize)
+{
+    if (!g_azihsm_pkcs11.initialized)
+    {
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    }
+    if (pulSize == NULL_PTR)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    azihsm_pkcs11_lock();
+    azihsm_pkcs11_session_t *s = azihsm_pkcs11_session_lookup(hSession);
+    if (s == NULL)
+    {
+        azihsm_pkcs11_unlock();
+        return CKR_SESSION_HANDLE_INVALID;
+    }
+    CK_BBOOL logged_in = g_azihsm_pkcs11.slots[s->slot].user_logged_in ? CK_TRUE : CK_FALSE;
+    CK_RV rv = g_azihsm_pkcs11.store.ops
+                   ->get_size(g_azihsm_pkcs11.store.ctx, s->slot, logged_in, hObject, pulSize);
     azihsm_pkcs11_unlock();
     return rv;
 }
