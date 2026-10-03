@@ -20,6 +20,7 @@ use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
+use azihsm_ddi_tbor_types::SAPOTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::TborPartInitReq;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -51,10 +52,10 @@ const VALID_SATA_THUMBPRINT: [u8; SATA_THUMBPRINT_LEN] = {
 
 /// Fixed valid SAPOTA thumbprint, reusing the canonical SATA fixture
 /// shape (SAPOTA thumbprints share the same 48-byte length).
-const VALID_SAPOTA_THUMBPRINT: [u8; SATA_THUMBPRINT_LEN] = {
-    let mut v = [0u8; SATA_THUMBPRINT_LEN];
+const VALID_SAPOTA_THUMBPRINT: [u8; SAPOTA_THUMBPRINT_LEN] = {
+    let mut v = [0u8; SAPOTA_THUMBPRINT_LEN];
     let mut i = 0;
-    while i < SATA_THUMBPRINT_LEN {
+    while i < SAPOTA_THUMBPRINT_LEN {
         v[i] = 0x20 ^ i as u8;
         i += 1;
     }
@@ -92,7 +93,7 @@ pub struct PartInitCmdReqData {
     /// Raw 48-byte `sata_thumbprint`.
     pub sata_thumbprint: [u8; SATA_THUMBPRINT_LEN],
     /// Optional raw 48-byte `sapota_thumbprint`.
-    pub sapota_thumbprint: Option<[u8; SATA_THUMBPRINT_LEN]>,
+    pub sapota_thumbprint: Option<[u8; SAPOTA_THUMBPRINT_LEN]>,
 }
 
 /// Fuzz input for the TBOR `PartInit` DDI op (the TBOR equivalent of
