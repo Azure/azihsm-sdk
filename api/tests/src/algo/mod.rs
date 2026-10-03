@@ -3,7 +3,6 @@
 
 mod aes;
 mod ecc;
-#[cfg(not(feature = "session-ex-tests"))]
 mod hash;
 mod hmac;
 mod kdf;

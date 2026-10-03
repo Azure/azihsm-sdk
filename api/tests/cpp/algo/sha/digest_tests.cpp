@@ -9,9 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "handle/part_handle.hpp"
 #include "handle/part_list_handle.hpp"
-#include "handle/session_handle.hpp"
 #include "utils/auto_ctx.hpp"
 
 class azihsm_sha_digest : public ::testing::Test
@@ -261,10 +259,7 @@ TEST_F(azihsm_sha_digest, streaming_multiple_updates_all_algorithms)
 // Verifies SHA-256 one-shot digest succeeds for empty input.
 TEST_F(azihsm_sha_digest, empty_data_sha256)
 {
-    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
-        auto partition = PartitionHandle(path);
-        auto session = SessionHandle(partition.get());
-
+    part_list_.for_each_session([](azihsm_handle session) {
         azihsm_algo algo{};
         algo.id = AZIHSM_ALGO_ID_SHA256;
         algo.params = nullptr;
@@ -280,7 +275,7 @@ TEST_F(azihsm_sha_digest, empty_data_sha256)
         digest_buf.ptr = digest.data();
         digest_buf.len = static_cast<uint32_t>(digest.size());
 
-        auto err = azihsm_crypt_digest(session.get(), &algo, &data_buf, &digest_buf);
+        auto err = azihsm_crypt_digest(session, &algo, &data_buf, &digest_buf);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_EQ(digest_buf.len, 32u);
     });

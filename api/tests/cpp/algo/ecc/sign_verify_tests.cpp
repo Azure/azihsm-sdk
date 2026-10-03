@@ -1005,7 +1005,8 @@ TEST_F(azihsm_ecc_sign_verify, streaming_sign_consistency_with_single_shot)
     });
 }
 
-//! ECC key persistence tests for resiliency scenarios.
+#if !SESSION_EX_TESTS
+//! Legacy ECC key persistence tests for BMK/MOBK resiliency scenarios.
 //!
 //! These tests verify that ECC keys can be:
 //! 1. Generated and their masked blobs persisted to disk
@@ -1401,6 +1402,7 @@ TEST_F(azihsm_ecc_sign_verify, DISABLED_MANUAL_restore_key_and_verify)
     std::cout << std::endl;
     std::cout << "=== All verifications passed! ===" << std::endl;
 }
+#endif
 
 // Tests ECDSA signing fails when using a public key handle.
 TEST_F(azihsm_ecc_sign_verify, sign_with_public_key_fails)

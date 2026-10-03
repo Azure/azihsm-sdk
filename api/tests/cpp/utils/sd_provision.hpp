@@ -21,7 +21,7 @@ inline constexpr uint32_t kSdMkBackupLen = 260;       ///< masked SDMK / local_m
 /// Remote partition-owner-key backup: an HPKE-Auth seal (`enc(97) + ct(64)`).
 inline constexpr uint32_t kPokRemoteBackupLen = 161;
 
-// Security-domain provisioning helper for the sealing round-trip test.
+// Partition provisioning helpers for EX algorithm and security-domain tests.
 //
 // `SdSealingKeyGen` needs a partition in the `Initialized` state on a CO
 // session, reached via the full provisioning flow (rotate CO PSK ->
@@ -33,8 +33,8 @@ inline constexpr uint32_t kPokRemoteBackupLen = 161;
 // on the emu and hardware backends.
 #if !defined(AZIHSM_FEATURE_MOCK)
 
-/// Provision a freshly-reset partition's security domain and return a live,
-/// provisioned Crypto-Officer session handle (`Initialized` state):
+/// Initialize and finalize a freshly-reset partition and return a live
+/// Crypto-Officer session handle with the partition in the `Initialized` state:
 /// open CO under the default PSK, rotate it, reopen, `PartInit`, build a
 /// POTA-anchored root -> PTA chain from the CSR, then `PartFinal`.
 ///

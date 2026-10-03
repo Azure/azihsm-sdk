@@ -19,6 +19,14 @@ class azihsm_ecc_keyunwrap_semantic : public ::testing::Test
 {
   protected:
     PartitionListHandle part_list_ = PartitionListHandle{};
+
+    /// EX reports malformed wrapped-key structure as an invalid argument;
+    /// legacy reports the rejected device command.
+#if SESSION_EX_TESTS
+    static constexpr azihsm_status kMalformedWrappedKeyStatus = AZIHSM_STATUS_INVALID_ARGUMENT;
+#else
+    static constexpr azihsm_status kMalformedWrappedKeyStatus = AZIHSM_STATUS_DDI_CMD_FAILURE;
+#endif
 };
 
 // ==================== key_unwrap_pair: Cross-Argument Wrapped Payload Semantics
@@ -59,7 +67,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_key_nonnull_pt
         wrapped_key_buf.len = 0;
 
         auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -79,7 +87,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_minimal_one_byte_blob)
         wrapped_key_buf.len = 1;
 
         auto result = ctx.try_unwrap_with(&unwrap_inputs.unwrap_algo, &wrapped_key_buf);
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -179,21 +187,14 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_blob_wrapped_by_differ
         ) << "requires at least two partitions to guarantee distinct wrapping-key contexts";
     }
 
-    auto source_path = part_list_.get_path(0);
-    auto other_path = part_list_.get_path(1);
-
-    auto source_partition = PartitionHandle(source_path);
-    auto other_partition = PartitionHandle(other_path);
-
     std::vector<uint8_t> wrapped_blob;
     auto_key wrapping_priv_key_b;
 
-    {
-        SessionHandle source_session(source_partition.get());
+    part_list_.with_session(0, [&](azihsm_handle source_session) {
         auto_key wrapping_priv_key_a;
         auto_key wrapping_pub_key_a;
         auto err = generate_rsa_unwrapping_keypair(
-            source_session.get(),
+            source_session,
             wrapping_priv_key_a.get_ptr(),
             wrapping_pub_key_a.get_ptr()
         );
@@ -207,17 +208,24 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_blob_wrapped_by_differ
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_FALSE(wrapped_blob.empty());
+    });
+    if (::testing::Test::HasFatalFailure())
+    {
+        return;
     }
 
-    {
-        SessionHandle other_session(other_partition.get());
+    part_list_.with_session(1, [&](azihsm_handle other_session) {
         auto_key wrapping_pub_key_b;
         auto err = generate_rsa_unwrapping_keypair(
-            other_session.get(),
+            other_session,
             wrapping_priv_key_b.get_ptr(),
             wrapping_pub_key_b.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    });
+    if (::testing::Test::HasFatalFailure())
+    {
+        return;
     }
 
     azihsm_buffer wrapped_key_buf{};
@@ -258,7 +266,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_preserves_input_wrapped_blob_o
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_data.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
         ASSERT_EQ(wrapped_data, before);
@@ -329,7 +337,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_content_kind_m
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(wrapped_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -455,7 +463,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_truncated_valid_wrappe
         ctx.wrapped_key_buf.len = static_cast<uint32_t>(truncated_blob.size());
 
         auto result = ctx.try_unwrap();
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -622,7 +630,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_wrapped_key_null_ptr_z
             &pub_prop_list
         );
 
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });
@@ -650,7 +658,7 @@ TEST_F(azihsm_ecc_keyunwrap_semantic, unwrap_pair_rejects_valid_blob_with_extra_
 
         auto result = ctx.try_unwrap();
 
-        ASSERT_EQ(result.status, AZIHSM_STATUS_DDI_CMD_FAILURE);
+        ASSERT_EQ(result.status, kMalformedWrappedKeyStatus);
         ASSERT_EQ(result.private_key, 0);
         ASSERT_EQ(result.public_key, 0);
     });

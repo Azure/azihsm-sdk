@@ -52,6 +52,7 @@ static void run_generated_keypair_has_expected_properties(
 
 /// Verifies that a masked ECC private key can be unmasked into a valid key pair for the given
 /// curve.
+#if !SESSION_EX_TESTS
 static void run_unmask_ecc_keypair_for_curve(azihsm_handle session, azihsm_ecc_curve curve)
 {
     auto_key original_priv_key;
@@ -103,6 +104,7 @@ static void run_unmask_ecc_keypair_for_curve(azihsm_handle session, azihsm_ecc_c
     ASSERT_TRUE(is_expected_ecc_curve(private_summary, curve));
     ASSERT_TRUE(is_expected_ecc_curve(public_summary, curve));
 }
+#endif
 
 /// Runs ECC key pair generation with caller-provided private and public key properties.
 static azihsm_status run_ecc_keygen_with_props(
@@ -147,6 +149,7 @@ static azihsm_status run_ecc_keygen_with_props(
 }
 
 /// Verifies that a masked ECC key can still be unmasked after the original key pair is deleted.
+#if !SESSION_EX_TESTS
 static void run_unmask_after_original_keys_deleted(azihsm_handle session, azihsm_ecc_curve curve)
 {
     auto_key original_priv_key;
@@ -246,6 +249,7 @@ static void run_unmasked_handles_are_distinct_from_original(
     ASSERT_NE(unmasked_priv_key.get(), original_priv_key.get());
     ASSERT_NE(unmasked_pub_key.get(), original_pub_key.get());
 }
+#endif
 
 /// Verifies that the masked key property for a generated ECC private key is present and non-empty.
 static void run_masked_key_property_is_non_empty(azihsm_handle session, azihsm_ecc_curve curve)
@@ -544,6 +548,7 @@ TEST_F(azihsm_ecc_keygen, generated_p521_keypair_has_expected_properties)
 }
 
 /// Verifies that a masked P-256 ECC private key can be unmasked into a key pair.
+#if !SESSION_EX_TESTS
 TEST_F(azihsm_ecc_keygen, unmask_ecc_p256_keypair)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -611,6 +616,7 @@ TEST_F(azihsm_ecc_keygen, unmask_ecc_rejects_corrupted_data)
     });
 }
 
+#endif
 /// Verifies that ECC key pair unmasking rejects a null masked key buffer.
 TEST_F(azihsm_ecc_keygen, unmask_rejects_null_masked_key_buffer)
 {
@@ -708,6 +714,7 @@ TEST_F(azihsm_ecc_keygen, unmask_rejects_empty_masked_key_buffer)
 }
 
 /// Verifies that ECC masked key data cannot be unmasked as an RSA key pair.
+#if !SESSION_EX_TESTS
 TEST_F(azihsm_ecc_keygen, unmask_rejects_wrong_key_kind_for_real_ecc_masked_key)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -751,6 +758,7 @@ TEST_F(azihsm_ecc_keygen, unmask_rejects_wrong_key_kind_for_real_ecc_masked_key)
     });
 }
 
+#endif
 /// Verifies that ECC key generation rejects mismatched P-256 private and P-384 public key curves.
 TEST_F(azihsm_ecc_keygen, keygen_rejects_curve_mismatch_p256_private_p384_public)
 {
@@ -806,6 +814,7 @@ TEST_F(azihsm_ecc_keygen, keygen_rejects_curve_mismatch_p521_private_p256_public
 }
 
 /// Verifies that a masked P-256 ECC key can be unmasked after the original key pair is deleted.
+#if !SESSION_EX_TESTS
 TEST_F(azihsm_ecc_keygen, unmask_p256_succeeds_after_original_keys_deleted)
 {
     part_list_.for_each_session([](azihsm_handle session) {
@@ -852,6 +861,7 @@ TEST_F(azihsm_ecc_keygen, unmask_p521_returns_distinct_handles)
         run_unmasked_handles_are_distinct_from_original(session, AZIHSM_ECC_CURVE_P521);
     });
 }
+#endif
 
 /// Verifies that a generated P-256 ECC private key exposes a non-empty masked key property.
 TEST_F(azihsm_ecc_keygen, p256_masked_key_property_is_non_empty)

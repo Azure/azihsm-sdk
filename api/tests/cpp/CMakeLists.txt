@@ -68,6 +68,14 @@ set(SOURCE
     utils/resiliency_config.cpp
     algo/aes/cbc_enc_dec_tests.cpp
     algo/aes/helpers.cpp
+    algo/ecc/ecc_static_der.cpp
+    algo/ecc/helpers.cpp
+    algo/ecc/keygen_tests.cpp
+    algo/ecc/sign_verify_tests.cpp
+    algo/ecc/unwrap_tests.cpp
+    algo/ecc/unwrap_property_tests.cpp
+    algo/ecc/unwrap_semantic_tests.cpp
+    algo/sha/digest_tests.cpp
 )
 
 if(SESSION_EX_TESTS)
@@ -90,14 +98,7 @@ else()
         multi_process_tests.cpp
         algo/aes/gcm_enc_dec_tests.cpp
         algo/aes/xts_enc_dec_tests.cpp
-        algo/ecc/ecc_static_der.cpp
         algo/aes/keygen_tests.cpp
-        algo/ecc/keygen_tests.cpp
-        algo/ecc/unwrap_tests.cpp
-        algo/ecc/unwrap_property_tests.cpp
-        algo/ecc/unwrap_semantic_tests.cpp
-        algo/ecc/helpers.cpp
-        algo/ecc/sign_verify_tests.cpp
         algo/ecc/keyreport_tests.cpp
         algo/rsa/keygen_tests.cpp
         algo/rsa/keyreport_tests.cpp
@@ -105,7 +106,6 @@ else()
         algo/rsa/rsa_static_der.cpp
         algo/rsa/sign_verify_tests.cpp
         algo/rsa/unwrap_tests.cpp
-        algo/sha/digest_tests.cpp
         algo/hmac/sign_verify_tests.cpp
         algo/hmac/keygen_tests.cpp
         algo/secret/unmask_tests.cpp

@@ -167,12 +167,23 @@ class PartitionListHandle
      * This method creates an `open_session` handle by default or an
      * `open_session_ex` handle when `SESSION_EX_TESTS` is enabled, then invokes
      * the provided function with the session handle.
+     * EX setup resets and finalizes each partition, including on hardware;
+     * use only dedicated test partitions. Security-domain operations need
+     * their additional provisioning.
      *
      * @param func The function to call for each session. It receives:
      *             - session: The session handle for the partition
      * @throws Any exception thrown by the callback function.
      */
     void for_each_session(const std::function<void(azihsm_handle)> &func) const;
+
+    /**
+     * @brief Provides the selected session API for one partition by index.
+     *
+     * Uses the same setup and cleanup as for_each_session. The index is
+     * zero-based and validated by get_path.
+     */
+    void with_session(uint32_t index, const std::function<void(azihsm_handle)> &func) const;
 
     /**
      * @brief Checks if the partition list is valid (non-zero handle).

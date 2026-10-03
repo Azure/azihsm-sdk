@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! Property-validation tests shared by both session APIs. Successful AES-XTS
+//! generation remains legacy-only because EX bulk-key commands are not available.
+
 use super::*;
 
 const AES_VALID_KEY_SIZES_IN_BITS: [u32; 3] = [128, 192, 256];
@@ -482,6 +485,7 @@ fn test_aes_xts_key_prop_requires_encrypt_and_decrypt(session: HsmSession) {
 }
 
 /// AES-XTS key generation should succeed for 512-bit keys.
+#[cfg(not(feature = "session-ex-tests"))]
 #[session_test]
 fn test_aes_xts_key_prop_size_valid_succeeds(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -918,6 +922,7 @@ fn test_aes_key_prop_decrypt_only_rejected(session: HsmSession) {
 }
 
 /// AES-XTS session key generation should succeed.
+#[cfg(not(feature = "session-ex-tests"))]
 #[session_test]
 fn test_aes_xts_key_gen_session_key_succeeds(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -937,6 +942,7 @@ fn test_aes_xts_key_gen_session_key_succeeds(session: HsmSession) {
 }
 
 /// AES-XTS non-session key generation should succeed.
+#[cfg(not(feature = "session-ex-tests"))]
 #[session_test]
 fn test_aes_xts_key_gen_non_session_succeeds(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
@@ -1049,6 +1055,7 @@ fn test_aes_key_gen_metadata_validation(session: HsmSession) {
 }
 
 /// Validate AES-XTS key size handling across multiple sizes.
+#[cfg(not(feature = "session-ex-tests"))]
 #[session_test]
 fn test_aes_xts_key_prop_all_sizes_validation(session: HsmSession) {
     for bits in [256u32, 384, 512, 768] {
@@ -1184,6 +1191,7 @@ fn test_aes_unwrap_invalid_large_key_size(session: HsmSession) {
 }
 
 /// Verify generated AES-XTS key metadata.
+#[cfg(not(feature = "session-ex-tests"))]
 #[session_test]
 fn test_aes_xts_key_gen_metadata_validation(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
