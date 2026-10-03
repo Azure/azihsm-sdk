@@ -15,10 +15,19 @@ use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
@@ -67,6 +76,150 @@ impl FuzzRole {
         match self {
             FuzzRole::Co => SessionType::Authenticated,
             FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
+}
+
+/// TBOR ECC curves (wire `EccCurve` discriminants) for generated keys.
+///
+/// Shadows the `azihsm_crypto::EccCurve` glob import within this module.
+#[derive(Arbitrary, Debug, Clone, Copy)]
+pub enum EccCurve {
+    P256,
+    P384,
+    P521,
+}
+
+impl EccCurve {
+    pub fn to_tbor(self) -> u8 {
+        match self {
+            Self::P256 => ECC_CURVE_P256,
+            Self::P384 => ECC_CURVE_P384,
+            Self::P521 => ECC_CURVE_P521,
+        }
+    }
+
+    /// Raw (unpadded) coordinate length in bytes; also the length of an
+    /// ECDH shared secret (the X coordinate).
+    pub fn coord_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 66,
+        }
+    }
+
+    /// Largest digest the firmware zero-extends into the ECDSA field.
+    pub fn max_digest_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 64,
+        }
+    }
+
+    /// Wire `r ‖ s` length, each component padded to the coordinate width.
+    pub fn wire_sig_len(self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
+        }
+    }
+
+    /// Wire `x ‖ y` public-key length, each coordinate padded to the wire
+    /// coordinate width (P-521: 66 -> 68 bytes).
+    pub fn wire_pub_key_len(self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
+        }
+    }
+}
+
+/// TBOR AES key sizes supported by `AesGenerateKey`.
+#[derive(Arbitrary, Debug)]
+pub enum AesKeySize {
+    Aes128,
+    Aes192,
+    Aes256,
+}
+
+impl AesKeySize {
+    pub fn to_tbor(&self) -> u8 {
+        match self {
+            Self::Aes128 => AES_KEY_SIZE_128,
+            Self::Aes192 => AES_KEY_SIZE_192,
+            Self::Aes256 => AES_KEY_SIZE_256,
+        }
+    }
+}
+
+fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
+    Ok(u.bytes(len)?.to_vec())
+}
+
+/// Post-seal mutation applied to a wire-valid `PartInit`
+/// `mach_seed_envelope`.
+///
+/// `None` ships the sealed envelope untouched so the handler advances
+/// past AEAD authentication into the policy / thumbprint / seed
+/// pipeline. The other variants exercise the envelope parser's header,
+/// AAD, ciphertext, tag, and length-reject paths without leaving them
+/// buried under negligible-probability arbitrary-byte inputs.
+#[derive(Arbitrary, Debug)]
+pub enum EnvelopeMutation {
+    /// Ship the sealed envelope unchanged.
+    None,
+    /// XOR a fuzzed mask into a fuzzed offset (offset wrapped modulo
+    /// envelope length). Exercises AEAD tag / ciphertext tampering.
+    FlipByte { offset: u16, mask: u8 },
+    /// Truncate to `len % (envelope.len() + 1)` bytes. Exercises
+    /// short-envelope rejects and post-decrypt length checks.
+    Truncate { len: u16 },
+    /// Append fuzzed trailing bytes (bounded) to exercise over-length
+    /// rejects.
+    Append(#[arbitrary(with = bounded_appended_bytes)] Vec<u8>),
+}
+
+impl EnvelopeMutation {
+    pub fn apply(&self, envelope: &mut Vec<u8>) {
+        match self {
+            EnvelopeMutation::None => {}
+            EnvelopeMutation::FlipByte { offset, mask } => {
+                if !envelope.is_empty() && *mask != 0 {
+                    let idx = (*offset as usize) % envelope.len();
+                    envelope[idx] ^= *mask;
+                }
+            }
+            EnvelopeMutation::Truncate { len } => {
+                let cap = envelope.len() + 1;
+                envelope.truncate((*len as usize) % cap);
+            }
+            EnvelopeMutation::Append(extra) => {
+                envelope.extend_from_slice(extra);
+            }
+        }
+    }
+
+    /// `true` iff this mutation would leave the sealed envelope byte-
+    /// identical (matches the `None` variant or a no-op offset/mask/len/
+    /// extra choice inside a mutation variant). Drives the "expect
+    /// success" classification for the result assertion.
+    pub fn is_noop(&self, envelope: &[u8]) -> bool {
+        match self {
+            EnvelopeMutation::None => true,
+            EnvelopeMutation::FlipByte { mask, .. } => *mask == 0 || envelope.is_empty(),
+            EnvelopeMutation::Truncate { len } => {
+                // `Vec::truncate(new_len)` only shrinks when `new_len <
+                // envelope.len()`; `apply` computes
+                // `len % (envelope.len() + 1)` so a no-op requires the
+                // modulo to land on `envelope.len()`.
+                (*len as usize) % (envelope.len() + 1) == envelope.len()
+            }
+            EnvelopeMutation::Append(extra) => extra.is_empty(),
         }
     }
 }
@@ -191,6 +344,18 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
         }
         (expected, actual) => panic!("operation {expected:?} decoded as {actual:?}"),
     }
+}
+
+/// Fixed `PartInit` machine seed (`0x40 + i`), mirroring the canonical
+/// fixture used by the `PartInit` integration suite.
+pub fn mach_seed() -> [u8; MACH_SEED_LEN] {
+    core::array::from_fn(|i| 0x40 + i as u8)
+}
+
+/// Fixed `PartInit` POTA thumbprint (`0x80 ^ i`), mirroring the canonical
+/// fixture used by the `PartInit` integration suite.
+pub fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
+    core::array::from_fn(|i| 0x80 ^ i as u8)
 }
 
 /// Fill a 96-byte `PolicyPubKey::data` slot with a deterministic
