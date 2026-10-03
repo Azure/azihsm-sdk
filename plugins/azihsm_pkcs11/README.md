@@ -60,8 +60,26 @@ the spec requires). Implemented so far:
     must be a non-zero multiple of 16 bytes up to 8192. The all-0xFF tweak is
     refused, since the device must be able to advance the tweak past the unit.
 
-  Multi-part (`C_EncryptUpdate`…) and the other key-backed mechanisms
-  (RSA/ECDSA, wrap/unwrap, derive) are not implemented yet.
+- **Multi-part `C_EncryptUpdate` / `C_EncryptFinal` and `C_DecryptUpdate` /
+  `C_DecryptFinal` (the same four mechanisms)**: the one-shot lifetime rules
+  apply, and one operation cannot mix one-shot and multi-part calls
+  (`CKR_OPERATION_ACTIVE`). The result always equals the one-shot result.
+  - CBC and CBC-PAD run through the SDK's stream context. It holds back the
+    last full block until the final call, even without padding, so an
+    update's output trails its input by up to one block (the spec allows
+    that). A sizing probe on an update reports an upper bound, because the
+    SDK's own sizing call would already consume the data.
+  - GCM and XTS buffer the parts and run the one-shot operation at the final
+    call. The device has no incremental GCM or XTS, the SDK's GCM decrypt
+    needs the tag before the data, and a PKCS#11 XTS operation is one data
+    unit. So their updates return no output, a GCM decrypt releases no
+    plaintext before the tag is checked, and the one-shot size limits apply to
+    the sum of the parts.
+  - The OpenSSL provider works around the same SDK constraints
+    (`plugins/ossl_prov/src/azihsm_ossl_cipher.c`).
+
+  The other key-backed mechanisms (RSA/ECDSA, wrap/unwrap, derive) are not
+  implemented yet.
 
 ## Layering
 

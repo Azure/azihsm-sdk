@@ -77,23 +77,27 @@ unchanged against the logged-in profile. Public-object and digest tests need no
 login and are untouched. Auto-opening a device session for public sessions was
 considered and rejected — it would defeat the login.
 
-## What the gate covers today (130 of 330)
+## What the gate covers today (139 of 330)
 
 Digests (SHA-1/256/384/512, one-shot and multi-part, sizing, the operation
 state machine), the library/slot/session/login surface, public data objects,
-BER decoding, the AES-CBC one-shot cipher tests (round trip, sizing, wrong key,
-IV validation, argument errors) and the operation-lifetime rules on the cipher
-and digest entry points.
+BER decoding, the AES-CBC cipher tests (one-shot round trip, sizing, wrong key,
+IV validation, argument errors; multi-part argument errors, the final-call
+length rules and the one-shot/multi-part mode rule) and the operation-lifetime
+rules on the cipher and digest entry points.
 
-A full run reports 155 passing, but 25 of those assert nothing and are
+A full run reports 164 passing, but 25 of those assert nothing and are
 deliberately **not** on the list: 23 that pkcs11test skips (the MD5 digest
 parameter, token initialisation, the SO logins suppressed by `-X`,
 `C_GetOperationState`, the dual-function digest+encrypt) and the two AES-ECB
 IV cases, whose bodies return immediately for a mechanism that has no IV. They
 come onto the list when the feature behind them lands.
 
-Not yet covered, by bucket: the streaming cipher calls (`C_EncryptUpdate` and
-friends — the AES streaming piece), mechanisms this module does not implement
+Not yet covered, by bucket: `EncryptDecryptParts`, which expects one block out
+of every one-block `C_EncryptUpdate`, while the SDK's CBC stream holds back the
+last full block until the final call (the spec allows that; the case joins the
+list once the SDK releases unpadded blocks at once), mechanisms this module
+does not implement
 (DES/3DES/AES-ECB, RSA, EC, sign/verify, HMAC, key pairs, wrap/unwrap, random
 number generation beyond the pre-`C_Initialize` checks), entry points that are
 stubs (`C_CopyObject`, `C_SetAttributeValue`, `C_GetObjectSize`,

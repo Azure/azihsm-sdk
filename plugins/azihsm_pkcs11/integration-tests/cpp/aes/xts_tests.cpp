@@ -24,17 +24,6 @@ namespace
 constexpr CK_ULONG kXtsTweak = 16;
 constexpr CK_ULONG kXtsMaxData = 8192;
 
-/// `n` deterministic test bytes; no two blocks within 256 bytes are equal.
-std::vector<CK_BYTE> pattern(size_t n)
-{
-    std::vector<CK_BYTE> v(n);
-    for (size_t i = 0; i < n; i++)
-    {
-        v[i] = static_cast<CK_BYTE>((i * 7) + 1);
-    }
-    return v;
-}
-
 } // namespace
 
 class aes_xts : public UserSession

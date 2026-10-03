@@ -167,6 +167,77 @@ CK_RV azihsm_pkcs11_key_aes_xts(
     CK_ULONG *out_len
 );
 
+/*
+ * AES-CBC / AES-CBC-PAD streaming through the SDK's stream context
+ * (azihsm_crypt_*_init / _update / _finish), behind the multi-part
+ * C_EncryptUpdate family. The type is opaque because the SDK keeps a pointer
+ * to the params struct it was opened with and writes the chained IV back into
+ * it on every call: the stream owns that struct together with the context
+ * handle, so the two live and die together.
+ *
+ * The SDK stream holds back the last full block even without padding (only a
+ * padded decrypt needs that, to strip the padding at the end), so an update's
+ * output trails its input by up to one block and the final call releases it.
+ */
+typedef struct azihsm_pkcs11_aes_cbc_stream azihsm_pkcs11_aes_cbc_stream_t;
+
+/*
+ * The most a stream's final call writes: the held-back block plus, on a padded
+ * encrypt, a whole padding block. A padded decrypt also asks for this much
+ * room although it returns less than one block after unpadding.
+ */
+#define AES_CBC_STREAM_FINAL_MAX (2 * AES_BLOCK_LEN)
+
+/* The longest part one update takes: its output (up to the held-back block
+ * plus the part) must still fit the device's 32-bit buffer length. */
+#define AES_CBC_STREAM_MAX_PART ((CK_ULONG)UINT32_MAX - AES_BLOCK_LEN)
+
+/*
+ * Open a CBC stream over the unmasked device key `key_handle`, seeded with the
+ * 16-byte `iv`; `pad` selects CKM_AES_CBC_PAD. On success *out is the stream,
+ * to be released with azihsm_pkcs11_key_aes_cbc_stream_free (the key handle
+ * stays the caller's and must outlive the stream).
+ */
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_new(
+    bool encrypt,
+    bool pad,
+    uint32_t key_handle,
+    const CK_BYTE *iv,
+    azihsm_pkcs11_aes_cbc_stream_t **out
+);
+
+/*
+ * Feed `in` (at most AES_CBC_STREAM_MAX_PART bytes) and receive the blocks the
+ * SDK releases. `out` must be non-NULL: a PKCS#11 sizing probe is answered above
+ * this layer, because the SDK's sizing call runs the update whenever no output
+ * is due. *out_len is the capacity in and the bytes written out; a too-small
+ * one gets the required length with CKR_BUFFER_TOO_SMALL and leaves the
+ * stream untouched, since the SDK sizes before it consumes.
+ */
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_update(
+    azihsm_pkcs11_aes_cbc_stream_t *stream,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+);
+
+/*
+ * Finish the stream into `out`, whose capacity *out_len must be at least
+ * AES_CBC_STREAM_FINAL_MAX; *out_len receives the bytes written. The SDK
+ * refuses an unpadded finish over no data or a partial block, so the entry
+ * point settles those lengths itself before calling this. After any outcome
+ * the stream can only be freed.
+ */
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_final(
+    azihsm_pkcs11_aes_cbc_stream_t *stream,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+);
+
+/* Free a stream: the SDK context first, then the params it points at. NULL-safe. */
+void azihsm_pkcs11_key_aes_cbc_stream_free(azihsm_pkcs11_aes_cbc_stream_t *stream);
+
 #ifdef __cplusplus
 }
 #endif

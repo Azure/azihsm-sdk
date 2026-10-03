@@ -466,6 +466,156 @@ CK_RV azihsm_pkcs11_key_aes_xts(
     return CKR_OK;
 }
 
+struct azihsm_pkcs11_aes_cbc_stream
+{
+    bool encrypt;
+    bool pad;
+    azihsm_handle ctx;                        /* SDK stream context; 0 = none */
+    struct azihsm_algo_aes_cbc_params params; /* the context points here (chained IV) */
+};
+
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_new(
+    bool encrypt,
+    bool pad,
+    uint32_t key_handle,
+    const CK_BYTE *iv,
+    azihsm_pkcs11_aes_cbc_stream_t **out
+)
+{
+    if ((iv == NULL) || (out == NULL))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    *out = NULL;
+    azihsm_pkcs11_aes_cbc_stream_t *stream =
+        (azihsm_pkcs11_aes_cbc_stream_t *)calloc(1, sizeof(*stream));
+    if (stream == NULL)
+    {
+        return CKR_HOST_MEMORY;
+    }
+    stream->encrypt = encrypt;
+    stream->pad = pad;
+    memcpy(stream->params.iv, iv, sizeof(stream->params.iv));
+
+    /* The context keeps a pointer to stream->params only; the algo descriptor
+     * itself is read during the call. */
+    struct azihsm_algo algo = { pad ? AZIHSM_ALGO_ID_AES_CBC_PAD : AZIHSM_ALGO_ID_AES_CBC,
+                                &stream->params,
+                                sizeof(stream->params) };
+    azihsm_handle ctx = 0;
+    azihsm_status st = encrypt ? azihsm_crypt_encrypt_init(&algo, key_handle, &ctx)
+                               : azihsm_crypt_decrypt_init(&algo, key_handle, &ctx);
+    if (st != AZIHSM_STATUS_SUCCESS)
+    {
+        AZIHSM_PKCS11_LOG("crypt_%s_init failed: %d", encrypt ? "encrypt" : "decrypt", (int)st);
+        azihsm_pkcs11_wipe(stream, sizeof(*stream));
+        free(stream);
+        return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_KEY_HANDLE_INVALID);
+    }
+    stream->ctx = ctx;
+    *out = stream;
+    return CKR_OK;
+}
+
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_update(
+    azihsm_pkcs11_aes_cbc_stream_t *stream,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    if ((stream == NULL) || (out == NULL) || (out_len == NULL) || ((in == NULL) && (in_len > 0)) ||
+        (in_len > AES_CBC_STREAM_MAX_PART))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    if (in_len == 0)
+    {
+        /* An empty part changes nothing in the stream, and the SDK would have
+         * to be handed a NULL input buffer for it. */
+        *out_len = 0;
+        return CKR_OK;
+    }
+    /* Unlike the one-shot call the stream takes any buffer that is large
+     * enough, so the capacity only has to fit the SDK's 32-bit length. */
+    uint32_t cap = (*out_len > (CK_ULONG)UINT32_MAX) ? UINT32_MAX : (uint32_t)*out_len;
+
+    CK_BYTE *staged = NULL;
+    CK_RV rv = stage_overlap(in, in_len, out, cap, &staged);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    struct azihsm_buffer inbuf = { (staged != NULL) ? staged : (void *)in, (uint32_t)in_len };
+    struct azihsm_buffer outbuf = { out, cap };
+    azihsm_status st = stream->encrypt ? azihsm_crypt_encrypt_update(stream->ctx, &inbuf, &outbuf)
+                                       : azihsm_crypt_decrypt_update(stream->ctx, &inbuf, &outbuf);
+    stage_free(staged, in_len);
+    if (st == AZIHSM_STATUS_BUFFER_TOO_SMALL)
+    {
+        *out_len = outbuf.len; /* the required length; nothing was consumed */
+        return CKR_BUFFER_TOO_SMALL;
+    }
+    if (st != AZIHSM_STATUS_SUCCESS)
+    {
+        AZIHSM_PKCS11_LOG(
+            "crypt_%s_update failed: %d",
+            stream->encrypt ? "encrypt" : "decrypt",
+            (int)st
+        );
+        /* The only handle passed is this module's own stream context, so its
+         * going stale is an internal fault rather than a caller's bad key. */
+        return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_FUNCTION_FAILED);
+    }
+    *out_len = outbuf.len;
+    return CKR_OK;
+}
+
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_final(
+    azihsm_pkcs11_aes_cbc_stream_t *stream,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    if ((stream == NULL) || (out == NULL) || (out_len == NULL) ||
+        (*out_len < AES_CBC_STREAM_FINAL_MAX))
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    struct azihsm_buffer outbuf = { out, AES_CBC_STREAM_FINAL_MAX };
+    azihsm_status st = stream->encrypt ? azihsm_crypt_encrypt_finish(stream->ctx, &outbuf)
+                                       : azihsm_crypt_decrypt_finish(stream->ctx, &outbuf);
+    if (st != AZIHSM_STATUS_SUCCESS)
+    {
+        AZIHSM_PKCS11_LOG(
+            "crypt_%s_finish failed: %d",
+            stream->encrypt ? "encrypt" : "decrypt",
+            (int)st
+        );
+        /* A padded decrypt writes the raw last block before its padding check
+         * can refuse it. */
+        azihsm_pkcs11_wipe(out, AES_CBC_STREAM_FINAL_MAX);
+        return azihsm_pkcs11_ckr_from_cbc_fill((int)st, !stream->encrypt && stream->pad);
+    }
+    *out_len = outbuf.len;
+    return CKR_OK;
+}
+
+void azihsm_pkcs11_key_aes_cbc_stream_free(azihsm_pkcs11_aes_cbc_stream_t *stream)
+{
+    if (stream == NULL)
+    {
+        return;
+    }
+    if (stream->ctx != 0)
+    {
+        (void)azihsm_free_ctx_handle(stream->ctx); /* before the params it points at */
+    }
+    azihsm_pkcs11_wipe(stream, sizeof(*stream));
+    free(stream);
+}
+
 #else /* !AZIHSM_WITH_HSM ---------------------------------------------------- */
 
 /* No device linked: key material cannot exist, so the key-backed paths report
@@ -574,6 +724,55 @@ CK_RV azihsm_pkcs11_key_aes_xts(
     (void)out;
     (void)out_len;
     return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_new(
+    bool encrypt,
+    bool pad,
+    uint32_t key_handle,
+    const CK_BYTE *iv,
+    azihsm_pkcs11_aes_cbc_stream_t **out
+)
+{
+    (void)encrypt;
+    (void)pad;
+    (void)key_handle;
+    (void)iv;
+    (void)out;
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_update(
+    azihsm_pkcs11_aes_cbc_stream_t *stream,
+    const CK_BYTE *in,
+    CK_ULONG in_len,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    (void)stream;
+    (void)in;
+    (void)in_len;
+    (void)out;
+    (void)out_len;
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+CK_RV azihsm_pkcs11_key_aes_cbc_stream_final(
+    azihsm_pkcs11_aes_cbc_stream_t *stream,
+    CK_BYTE *out,
+    CK_ULONG *out_len
+)
+{
+    (void)stream;
+    (void)out;
+    (void)out_len;
+    return CKR_FUNCTION_NOT_SUPPORTED;
+}
+
+void azihsm_pkcs11_key_aes_cbc_stream_free(azihsm_pkcs11_aes_cbc_stream_t *stream)
+{
+    (void)stream; /* no stream can exist without a device */
 }
 
 #endif /* AZIHSM_WITH_HSM */
