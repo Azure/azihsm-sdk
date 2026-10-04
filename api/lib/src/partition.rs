@@ -822,13 +822,17 @@ impl HsmPartition {
         self.inner().read().pci_info().to_string()
     }
 
-    /// Retrieves the certificate chain stored in the partition.
+    /// Retrieves the partition's certificate chain.
     ///
     /// Returns the certificate chain in PEM format (RFC 7468), with each certificate
     /// encoded in Base64 with `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`
     /// delimiters and LF line endings. Multiple certificates are separated by a single
     /// newline character (`\n`). The certificates are ordered from leaf/partition certificate
     /// (first) to root certificate (last).
+    ///
+    /// Slot 2 returns one freshly signed PTA-issued PID certificate after
+    /// finalization. Its DER bytes, length and thumbprint can change on each
+    /// read, so only its certificate count is checked for stability.
     ///
     /// # Arguments
     ///

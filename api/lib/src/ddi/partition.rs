@@ -713,7 +713,8 @@ fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 ///
 /// Retrieves `GetCertChainInfo` before and after fetching all certificates
 /// and returns [`HsmError::CertChainChanged`] if the count or thumbprint
-/// changed in between.
+/// changed in between. Slot 2 checks only the count because its fresh
+/// certificates have independently generated thumbprints.
 ///
 /// Returns `InternalError` if the certificate count is zero (a partition
 /// must always have a provisioned cert chain).
@@ -746,7 +747,7 @@ pub(super) fn fetch_cert_chain_checked(
     }
 
     let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
-    if new_count != count || new_thumbprint != thumbprint {
+    if new_count != count || (slot_id != 2 && new_thumbprint != thumbprint) {
         return Err(HsmError::CertChainChanged);
     }
 

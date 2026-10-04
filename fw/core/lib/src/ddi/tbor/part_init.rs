@@ -57,7 +57,6 @@ use azihsm_fw_core_crypto_key_report::REPORT_DATA_LEN;
 use azihsm_fw_core_crypto_key_report::VM_LAUNCH_ID_LEN;
 use azihsm_fw_core_crypto_x509_builder::csr;
 use azihsm_fw_core_crypto_x509_builder::csr_builder;
-use azihsm_fw_core_crypto_x509_builder::padding;
 use azihsm_fw_ddi_tbor_types::TborPartInitReq;
 use azihsm_fw_ddi_tbor_types::TborPartInitResp;
 use azihsm_fw_ddi_tbor_types::MACH_SEED_LEN;
@@ -77,6 +76,12 @@ use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_undo::UndoLog;
 
+use super::pta;
+use super::pta::PTAID_LABEL;
+#[cfg(test)]
+use super::pta::PTAID_LEN;
+#[cfg(test)]
+use super::pta::PTA_SUBJECT_CN;
 use super::*;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -100,17 +105,6 @@ const SHA384_LEN: usize = 48;
 // checked at runtime below; this guards against a future key-report
 // size increase silently exceeding the advertised response field.
 const _: () = assert!(PTA_REPORT_MAX_LEN >= KEY_REPORT_MAX_LEN);
-
-/// Subject Common Name fixed for every PTACSR (24 ASCII chars;
-/// space-padded to [`csr::SUBJECT_CN_LEN`] by the builder).
-const PTA_SUBJECT_CN: &str = "Azure Integrated HSM PTA";
-
-/// Domain-separation label hashed into the PTAID derivation.
-const PTAID_LABEL: &[u8] = b"AZIHSM-PTAID-v1";
-
-/// Bytes of the PTAID hash retained as the partition's short
-/// identifier (encoded as 32 hex chars in the CSR's serialNumber).
-const PTAID_LEN: usize = 16;
 
 /// Domain-separation label hashed into the PTAReport `report_data`.
 const REPORT_DATA_LABEL: &[u8] = b"AZIHSM-PTAReport-v1";
@@ -417,10 +411,10 @@ async fn derive_pta_keypair_buf<'a, P: HsmPal>(
     })
 }
 
-/// Compute the PTACSR subject `commonName` and `serialNumber` slots.
-/// Build the CSR subject fields, then sign with the PTA private key
-/// and emit the full DER-encoded CSR.  The `cn`/`sn` arrays are local
-/// to this function so they never cross an await boundary in `handle`.
+/// Build the CSR subject `commonName` (fixed PTA name plus hex PTAID),
+/// then sign with the PTA private key and emit the full DER-encoded CSR.
+/// The `cn` array is local to this function so it never crosses an await
+/// boundary in `handle`.
 async fn build_signed_csr<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -428,9 +422,6 @@ async fn build_signed_csr<'a, P: HsmPal>(
     pub_sec1: &DmaBuf,
     pta_priv: &DmaBuf,
 ) -> HsmResult<(&'a mut DmaBuf, usize)> {
-    let mut cn = [0u8; csr::SUBJECT_CN_LEN];
-    padding::pad_cn_to(PTA_SUBJECT_CN, &mut cn).ok_or(HsmError::InternalError)?;
-
     // PTAID = SHA-384("AZIHSM-PTAID-v1" || sec1_pub)[..PTAID_LEN].
     let ptaid_input = alloc.dma_alloc(PTAID_LABEL.len() + P384_PUB_SEC1_LEN)?;
     ptaid_input[..PTAID_LABEL.len()].copy_from_slice(PTAID_LABEL);
@@ -439,12 +430,10 @@ async fn build_signed_csr<'a, P: HsmPal>(
     pal.hash(io, HsmHashAlgo::Sha384, ptaid_input, ptaid_digest, true)
         .await?;
 
-    let mut ptaid_hex = [0u8; PTAID_LEN * 2];
-    hex_encode(&ptaid_digest[..PTAID_LEN], &mut ptaid_hex);
-
-    let mut sn = [0u8; csr::SUBJECT_SN_LEN];
-    let ptaid_hex_str = core::str::from_utf8(&ptaid_hex).map_err(|_| HsmError::InternalError)?;
-    padding::pad_sn_to(ptaid_hex_str, &mut sn).ok_or(HsmError::InternalError)?;
+    let digest_bytes: &[u8] = ptaid_digest;
+    let digest =
+        <&[u8; SHA384_LEN]>::try_from(digest_bytes).map_err(|_| HsmError::InternalError)?;
+    let cn = pta::subject_cn(digest);
 
     let input = csr_builder::CsrInput {
         tbs_template: &csr::TBS_TEMPLATE,
@@ -452,8 +441,6 @@ async fn build_signed_csr<'a, P: HsmPal>(
         public_key: pub_sec1,
         subject_cn_offset: csr::SUBJECT_CN_OFFSET,
         subject_cn: &cn,
-        subject_sn_offset: csr::SUBJECT_SN_OFFSET,
-        subject_sn: &sn,
     };
 
     let csr = alloc.dma_alloc(PTA_CSR_MAX_LEN)?;
@@ -733,6 +720,7 @@ fn encode_response<'p, P: HsmPal>(
 
 /// Hex-encode `src` into `dst` using lowercase ASCII.
 /// `dst.len()` must equal `2 * src.len()`.
+#[cfg(test)]
 fn hex_encode(src: &[u8], dst: &mut [u8]) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     debug_assert_eq!(dst.len(), src.len() * 2);
@@ -768,15 +756,9 @@ mod tests {
     #[test]
     fn pta_subject_cn_fits_template() {
         assert!(PTA_SUBJECT_CN.is_ascii());
-        assert!(PTA_SUBJECT_CN.len() <= csr::SUBJECT_CN_LEN);
-    }
-
-    #[test]
-    fn ptaid_hex_width_equals_subject_sn_len() {
-        // The serialNumber field is exactly `2 * PTAID_LEN` hex
-        // chars; any future tweak to `PTAID_LEN` or the template's
-        // SN length must keep these aligned.
-        assert_eq!(PTAID_LEN * 2, csr::SUBJECT_SN_LEN);
+        // The single commonName holds the PTA name, a separating space, and
+        // the hex-encoded PTAID; all of it must fit the template CN width.
+        assert!(PTA_SUBJECT_CN.len() + 1 + PTAID_LEN * 2 <= csr::SUBJECT_CN_LEN);
     }
 }
 

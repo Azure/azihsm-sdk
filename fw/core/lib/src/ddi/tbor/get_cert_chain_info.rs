@@ -23,8 +23,8 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 
 /// Handle a TBOR `GetCertChainInfo` request.
 ///
-/// No partition lock or undo log is required: the command only reads
-/// certificate-chain metadata and makes no observable state change.
+/// Slot 2 locks the partition and fingerprints a newly generated PID leaf;
+/// later reads need not match this fingerprint. No undo log is needed.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -33,7 +33,11 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let req = TborGetCertChainInfoReq::decode(req_buf)?;
     let slot_id = req.slot_id();
 
-    let info = pal.get_cert_chain_info(io, io.pid(), slot_id).await?;
+    let info = if slot_id == 2 {
+        super::pta::chain_info(pal, io).await?
+    } else {
+        pal.get_cert_chain_info(io, io.pid(), slot_id).await?
+    };
 
     let resp = pal.dma_alloc_var(io, |buf| {
         let frame = TborGetCertChainInfoResp::encode(buf, 0, false)?

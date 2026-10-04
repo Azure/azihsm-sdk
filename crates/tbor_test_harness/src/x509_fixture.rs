@@ -257,6 +257,54 @@ pub fn make_pta_chain(pota_ca: &CaKey, pta_pub_sec1: &[u8; SEC1_PUB_LEN]) -> Pta
     }
 }
 
+/// Build a root→PTA chain that preserves the exact DER subject Name from
+/// the `PartInit` CSR (and the SHA-1 SKID over the PTA key).  A conformant
+/// CA signs the CSR as presented, so the issued PTA certificate's subject
+/// equals the deterministic profile the firmware stamps as the issuer of
+/// its on-demand slot-2 PID leaf — the only configuration under which that
+/// leaf's chain validates.
+pub fn make_pta_chain_csr_subject(pota_ca: &CaKey, csr: &[u8]) -> PtaChain {
+    let pta_pub = pta_pub_from_csr(csr);
+    let subject = pta_subject_from_csr(csr);
+    PtaChain {
+        root_der: build_root(pota_ca),
+        pta_der: build_pta_intermediate_subject(&pta_pub, pota_ca, subject),
+    }
+}
+
+/// [`build_pta_intermediate`] variant that splices `subject` (a complete
+/// DER Name, e.g. from [`pta_subject_from_csr`]) in place of the fixed
+/// `PTA_CN`/`PTA_SN` subject.
+fn build_pta_intermediate_subject(
+    pta_pub_sec1: &[u8; SEC1_PUB_LEN],
+    issuer: &CaKey,
+    subject: &[u8],
+) -> Vec<u8> {
+    let params = IntermediateCertParams {
+        public_key: pta_pub_sec1,
+        serial_number: &serial(2),
+        not_before: NOT_BEFORE,
+        not_after: NOT_AFTER,
+        subject_cn: "",
+        subject_sn: "",
+        issuer_cn: ROOT_CN,
+        issuer_sn: ROOT_SN,
+        subject_key_id: &sha1_ski(pta_pub_sec1),
+        authority_key_id: &issuer.ski(),
+        path_len: 0,
+    };
+
+    let mut tbs = [0u8; 1024];
+    let tbs_len = cert_builder::intermediate_cert_tbs_with_subject_name(&params, subject, &mut tbs)
+        .expect("PTA subject");
+    let (r, s) = issuer.sign(&tbs[..tbs_len]);
+
+    let mut out = vec![0u8; 1024];
+    let len = cert_builder::assemble_cert(&tbs[..tbs_len], &r, &s, &mut out).expect("PTA cert");
+    out.truncate(len);
+    out
+}
+
 /// Build an **end-entity** leaf certificate whose subject public key is
 /// `leaf_pub_sec1` (e.g. an attestation-report signer's key), signed by
 /// `issuer` (a self-signed CA).  Unlike [`build_pta_intermediate`], the
@@ -363,6 +411,17 @@ pub fn pta_pub_from_csr(csr: &[u8]) -> [u8; SEC1_PUB_LEN] {
     assert_eq!(point.len(), SEC1_PUB_LEN, "P-384 uncompressed point");
     assert_eq!(point[0], 0x04, "uncompressed point tag");
     point.try_into().expect("SEC1 point")
+}
+
+/// Extract the complete DER subject Name (SEQUENCE TLV) from a PKCS#10
+/// CSR, without interpreting its profile.  Used to reissue a PTA cert that
+/// preserves the subject the firmware deterministically stamps.
+pub fn pta_subject_from_csr(csr: &[u8]) -> &[u8] {
+    let (_, cr, _) = der_tlv(csr);
+    let (_, cri, _) = der_tlv(cr);
+    let (_, _version, after_version) = der_tlv(cri);
+    let (_, _subject, after_subject) = der_tlv(after_version);
+    &after_version[..after_version.len() - after_subject.len()]
 }
 
 /// Read one DER TLV at the start of `der`, returning `(tag, contents,

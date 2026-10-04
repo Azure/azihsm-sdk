@@ -12,7 +12,8 @@
 //! Uses the reserve-then-fill pattern: query the certificate size first,
 //! reserve the response `certificate` slot sized to it, then have the PAL
 //! copy the DER bytes straight into the reserved slice — no scratch buffer
-//! and no copy.  The handler is `async` because the underlying
+//! and no copy. Slot 2 instead generates one fresh certificate and copies
+//! it into the response. The handler is `async` because the underlying
 //! [`HsmCertStore::get_cert`](azihsm_fw_hsm_pal_traits::HsmCertStore::get_cert)
 //! is async.
 
@@ -27,8 +28,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 
 /// Handle a TBOR `GetCertificate` request.
 ///
-/// No partition lock or undo log is required: the command only reads a
-/// certificate and makes no observable state change.
+/// Slot 2 locks the partition while using its PTA key. No undo log is needed.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -37,6 +37,20 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let req = TborGetCertReq::decode(req_buf)?;
     let slot_id = req.slot_id();
     let cert_id = req.cert_id();
+
+    if slot_id == 2 {
+        if cert_id != 0 {
+            return Err(HsmError::InvalidArg);
+        }
+        let cert = super::pta::pid_certificate(pal, io).await?;
+        let resp = pal.dma_alloc_var(io, |buf| {
+            let frame = TborGetCertResp::encode(buf, 0, false)?
+                .certificate(cert)?
+                .finish();
+            Ok(frame.as_bytes().len())
+        })?;
+        return Ok(resp);
+    }
 
     // Query the certificate size (no copy).
     let len = pal.get_cert(io, io.pid(), slot_id, cert_id, None).await?;

@@ -317,7 +317,8 @@ pub(crate) fn part_info(partition: &HsmPartition) -> HsmResult<HsmPartInfo> {
 ///
 /// Returns [`HsmError::InternalError`] if the certificate count is zero,
 /// and [`HsmError::CertChainChanged`] if the count or thumbprint changes
-/// between the pre- and post-fetch `GetCertChainInfo` reads.
+/// between the pre- and post-fetch `GetCertChainInfo` reads. Slot 2 checks
+/// only the count because each request generates a fresh certificate.
 pub(super) fn fetch_cert_chain_checked_tbor(
     dev: &HsmDev,
     slot_id: u8,
@@ -341,7 +342,7 @@ pub(super) fn fetch_cert_chain_checked_tbor(
     }
 
     let (new_count, new_thumbprint) = get_cert_chain_info_tbor(dev, slot_id)?;
-    if new_count != count || new_thumbprint != thumbprint {
+    if new_count != count || (slot_id != 2 && new_thumbprint != thumbprint) {
         return Err(HsmError::CertChainChanged);
     }
 
