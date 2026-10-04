@@ -213,8 +213,12 @@ fingerprints an independently generated certificate, so its thumbprint need
 not match a subsequent certificate read. Neither a certificate chain nor
 issuer metadata is stored in firmware. The caller retains its POTA/PTA chain
 and prepends it to this PID certificate to construct root-first evidence.
-Slot 0 is unchanged, and slot 1 remains unsupported. Omitting the owner chain
-does not produce complete evidence for operations requiring all three chains.
+Slot 0's provisioning behavior is unchanged, though on the std PAL its leaf
+certificate is not byte-for-byte identical: `fw/plat/std/pal/src/cert.rs`
+now derives the slot-0 leaf serial from the PID key's SHA-1 identifier (the
+same derivation as the slot-2 PID serial). Slot 1 remains unsupported.
+Omitting the owner chain does not produce complete evidence for operations
+requiring all three chains.
 
 ```cpp
 struct azihsm_sess_ex_part_final_params {

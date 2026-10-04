@@ -831,10 +831,13 @@ impl HsmPartition {
     /// (first) to root certificate (last).
     ///
     /// Slot 2 returns one freshly signed PTA-issued PID certificate after
-    /// finalization. On the TBOR path its DER bytes, length and thumbprint
-    /// change on every read (a new PID leaf is minted per request), so that
-    /// certificate is fetched directly and no `GetCertChainInfo`
-    /// count-or-thumbprint stability check is applied. The legacy MBOR path
+    /// finalization. On the TBOR path a new PID leaf is minted per request, so
+    /// its DER bytes and thumbprint can vary between reads and its DER length
+    /// may change too (two fresh ECDSA signatures can share a DER length). Only
+    /// the TBS bytes are fixed across reads. Because of this per-request
+    /// regeneration the certificate is fetched directly and no
+    /// `GetCertChainInfo` count-or-thumbprint stability check is applied. The
+    /// legacy MBOR path
     /// serves a stable slot-2 certificate and still performs the full
     /// count-and-thumbprint stability check.
     ///
