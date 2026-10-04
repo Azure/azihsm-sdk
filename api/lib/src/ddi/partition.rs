@@ -733,11 +733,13 @@ pub(super) fn fetch_cert_chain_checked(
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
     // TBOR slot 2 mints a fresh, independently randomized PID certificate on
-    // every access: its `GetCertChainInfo` thumbprint is deliberately ignored
-    // (see the `slot_id != 2` guard below) and its count is always 1. The
-    // pre/post-fetch stability probes therefore provide no guarantee for this
-    // slot while each triggers a redundant certificate generation and P-384
-    // signature in the firmware. Fetch certificate 0 directly instead.
+    // every access: its `GetCertChainInfo` thumbprint would change on every
+    // read and its count is always 1. The pre/post-fetch stability probes
+    // therefore provide no guarantee for this slot while each triggers a
+    // redundant certificate generation and P-384 signature in the firmware.
+    // Fetch certificate 0 directly instead. The legacy MBOR path falls
+    // through to the stability-checked loop below, where slot 2 is a stable
+    // provisioned certificate whose thumbprint must still match.
     if rev_supports_tbor(rev) && slot_id == 2 {
         let der = get_cert(dev, rev, slot_id, 0)?;
         let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
@@ -763,7 +765,7 @@ pub(super) fn fetch_cert_chain_checked(
     }
 
     let (new_count, new_thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
-    if new_count != count || (slot_id != 2 && new_thumbprint != thumbprint) {
+    if new_count != count || new_thumbprint != thumbprint {
         return Err(HsmError::CertChainChanged);
     }
 
