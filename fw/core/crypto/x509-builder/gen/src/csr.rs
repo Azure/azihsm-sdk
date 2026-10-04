@@ -4,10 +4,12 @@
 //! PTA CSR (PKCS#10) template builder using OpenSSL.
 //!
 //! Builds a valid PKCS#10 CertificationRequest with the fixed PTA
-//! subject Common Name (`"Azure Integrated HSM PTA"`), a 32-character
-//! hex placeholder for the PTAID-derived serialNumber, and a P-384
-//! public key needle. The TBS portion is extracted, needle-matched,
-//! and sanitized to produce a reusable template that the runtime
+//! subject encoded as a single 64-byte `commonName` — holding the PTA
+//! name (`"Azure Integrated HSM PTA"`) followed by trailing padding
+//! that the runtime overwrites with a separating space and the
+//! hex-encoded PTAID — plus a P-384 public key needle. The TBS portion
+//! is extracted, needle-matched, and sanitized to produce a reusable
+//! template that the runtime
 //! [`build_csr`](crate::csr_builder::build_csr) function patches.
 
 use openssl::ec::EcGroup;

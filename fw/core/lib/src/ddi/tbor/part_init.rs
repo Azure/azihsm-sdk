@@ -24,9 +24,11 @@
 //!    command that binds them to the POTA-endorsed PTA cert chain.)
 //!
 //! 4. **PTACSR build** — assembles a PKCS#10 CertificationRequest
-//!    for the PTA public key.  The subject `serialNumber` is the
-//!    hex-encoded **PTAID** (`SHA-384("AZIHSM-PTAID-v1" || sec1_pub)[..16]`).
-//!    The TBS is hashed (LE digest) and signed via
+//!    for the PTA public key.  The subject is a single 64-byte
+//!    `commonName` holding the fixed PTA name (`"Azure Integrated HSM
+//!    PTA"`), a separating space, and the hex-encoded **PTAID**
+//!    (`SHA-384("AZIHSM-PTAID-v1" || sec1_pub)[..16]`), padded with
+//!    trailing spaces.  The TBS is hashed (LE digest) and signed via
 //!    [`HsmEcc::ecc_sign`]; the resulting LE `(r, s)` are byte-
 //!    reversed to BE for DER encoding.
 //!
