@@ -8,6 +8,8 @@
 use azihsm_fw_core_crypto_x509_builder::cert_builder;
 use azihsm_fw_core_crypto_x509_builder::cert_builder::LeafCertParams;
 use azihsm_fw_core_crypto_x509_builder::csr;
+use azihsm_fw_core_crypto_x509_chain::key_usage;
+use azihsm_fw_core_crypto_x509_chain::CertInfo;
 use azihsm_fw_ddi_tbor_types::CERT_MAX_LEN;
 use azihsm_fw_hsm_pal_traits::CertChainInfo;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -44,6 +46,16 @@ pub const PTAID_LEN: usize = 16;
 
 const _: () = assert!(PTA_SUBJECT_CN.len() + 1 + PTAID_LEN * 2 <= csr::SUBJECT_CN_LEN);
 const _: () = assert!(PID_SUBJECT_CN.len() <= CERT_SUBJECT_CN_LEN);
+
+/// Fixed DER prefix of the single-`commonName(64)` Name SEQUENCE shared by
+/// the PTA subject and the on-demand PID leaf's issuer:
+/// `SEQUENCE { SET { SEQUENCE { OID id-at-commonName, UTF8String(64) } } }`.
+/// The 64 CN bytes follow this prefix.
+const PTA_SUBJECT_DER_PREFIX: [u8; 13] = [
+    0x30, 0x4b, 0x31, 0x49, 0x30, 0x47, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x40,
+];
+/// Total length of the PTA subject Name SEQUENCE DER (prefix + CN bytes).
+const PTA_SUBJECT_DER_LEN: usize = PTA_SUBJECT_DER_PREFIX.len() + csr::SUBJECT_CN_LEN;
 
 fn fixed_size<const N: usize>(bytes: &[u8]) -> HsmResult<&[u8; N]> {
     bytes.try_into().map_err(|_| HsmError::InternalError)
@@ -89,6 +101,61 @@ async fn issuer_cn<P: HsmPal>(
     Ok(subject_cn(fixed_size::<SHA384_DIGEST_LEN>(digest)?))
 }
 
+/// Enforce the PTA certificate profile that the on-demand slot-2 PID leaf
+/// depends on.
+///
+/// The PID leaf deterministically stamps its issuer DN and authority key
+/// identifier from the partition PTA public key (see
+/// [`build_pid_certificate`]). A PTA certificate can therefore anchor
+/// future PID leaves only when it carries that exact subject DN (the
+/// single-`commonName(64)` CSR profile), a SHA-1(SEC1 PTA public key)
+/// subject key identifier, and CA / `keyCertSign` constraints. Rejecting a
+/// non-conformant PTA at finalization fails fast instead of silently
+/// finalizing a partition whose slot-2 PID leaf could never chain to the
+/// accepted PTA certificate.
+///
+/// The partition's PTA public key must already have been matched against
+/// the chain's terminal certificate (`validate_pta_chain`) before this
+/// check; here it is used to recompute the expected subject DN and SKID.
+pub(crate) async fn validate_pta_profile<P: HsmPal>(
+    pal: &P,
+    io: &impl HsmIo,
+    alloc: &impl HsmScopedAlloc,
+    pta_cert: &CertInfo<'_>,
+) -> HsmResult<()> {
+    let pta_public_key = sec1_public_key(alloc, part_state::part_pta_pub_key(pal, io)?)?;
+
+    // Subject DN must byte-match the deterministic single-CN(64) profile
+    // the PID leaf stamps as its issuer.
+    let issuer_cn = issuer_cn(pal, io, alloc, pta_public_key).await?;
+    let mut expected_subject = [0u8; PTA_SUBJECT_DER_LEN];
+    expected_subject[..PTA_SUBJECT_DER_PREFIX.len()].copy_from_slice(&PTA_SUBJECT_DER_PREFIX);
+    expected_subject[PTA_SUBJECT_DER_PREFIX.len()..].copy_from_slice(&issuer_cn);
+    if **pta_cert.subject_raw != expected_subject[..] {
+        return Err(HsmError::PartFinalPtaMismatch);
+    }
+
+    // Subject Key Identifier must be SHA-1 of the SEC1 PTA public key — the
+    // value the PID leaf stamps as its authority key identifier.
+    let expected_skid = hash(pal, io, alloc, HsmHashAlgo::Sha1, pta_public_key).await?;
+    let skid = pta_cert.skid.ok_or(HsmError::PartFinalPtaMismatch)?;
+    if skid != &**expected_skid {
+        return Err(HsmError::PartFinalPtaMismatch);
+    }
+
+    // The PTA must be a CA authorized to sign the PID leaf.
+    match pta_cert.basic_constraints {
+        Some(constraints) if constraints.ca => {}
+        _ => return Err(HsmError::PartFinalPtaMismatch),
+    }
+    match pta_cert.key_usage {
+        Some(bits) if bits & key_usage::KEY_CERT_SIGN != 0 => {}
+        _ => return Err(HsmError::PartFinalPtaMismatch),
+    }
+
+    Ok(())
+}
+
 async fn build_pid_certificate<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -102,9 +169,12 @@ async fn build_pid_certificate<P: HsmPal>(
     let subject_key_id = hash(pal, io, alloc, HsmHashAlgo::Sha1, public_key).await?;
     let authority_key_id = hash(pal, io, alloc, HsmHashAlgo::Sha1, pta_public_key).await?;
 
-    let mut serial_number = [0u8; CERT_SERIAL_LEN];
-    serial_number[0] = 0x40;
-    serial_number[1] = u8::from(io.pid());
+    // Bind the serial to the PID public key (via its SHA-1 subject key
+    // identifier) so distinct PID keys never share an issuer-and-serial
+    // identity across partition resets, while keeping a positive leading
+    // byte (bit 7 clear, bit 6 set) for a conformant DER INTEGER.
+    let mut serial_number = *fixed_size::<CERT_SERIAL_LEN>(subject_key_id)?;
+    serial_number[0] = (serial_number[0] & 0x3f) | 0x40;
 
     let mut subject_cn = [b' '; CERT_SUBJECT_CN_LEN];
     subject_cn[..PID_SUBJECT_CN.len()].copy_from_slice(PID_SUBJECT_CN);

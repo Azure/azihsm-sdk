@@ -38,10 +38,21 @@ const NOT_BEFORE: &[u8; 15] = b"20250101000000Z";
 const NOT_AFTER: &[u8; 15] = b"20350101000000Z";
 const ROOT_CN: &str = "AZIHSM POTA Root CA";
 const ROOT_SN: &str = "POTAROOT1";
-const PTA_CN: &str = "AZIHSM PTA Intermediate CA";
-const PTA_SN: &str = "PTAINT001";
 const LEAF_CN: &str = "AZIHSM Evidence Leaf";
 const LEAF_SN: &str = "EVLEAF001";
+
+/// Fixed PTA `commonName` prefix (mirrors the firmware `PTA_SUBJECT_CN`).
+const PTA_SUBJECT_CN_PREFIX: &str = "Azure Integrated HSM PTA";
+/// Domain-separation label for the PTAID digest (mirrors firmware `PTAID_LABEL`).
+const PTAID_LABEL: &[u8] = b"AZIHSM-PTAID-v1";
+/// PTAID digest bytes hex-encoded into the `commonName`.
+const PTAID_LEN: usize = 16;
+/// Length of the PTA single-`commonName(64)` Name SEQUENCE DER.
+const PTA_SUBJECT_DER_LEN: usize = 13 + 64;
+/// Fixed DER prefix of the single-`commonName(64)` Name SEQUENCE.
+const PTA_SUBJECT_DER_PREFIX: [u8; 13] = [
+    0x30, 0x4b, 0x31, 0x49, 0x30, 0x47, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x40,
+];
 
 /// A synthetic P-384 CA key (e.g. a policy POTA trust anchor) that can
 /// sign certificates and expose its public key.
@@ -204,28 +215,82 @@ pub fn build_root(ca: &CaKey) -> Vec<u8> {
 /// Build the PTA intermediate CA certificate whose subject public key is
 /// `pta_pub_sec1` (the partition PTA key), signed by `issuer` (the POTA
 /// CA).  The PTA is a CA cert (`cA=true`), **not** an end-entity leaf.
+///
+/// The subject is the deterministic single-`commonName(64)` PTA profile the
+/// firmware stamps (derived from `pta_pub_sec1`), and the SKID is
+/// SHA-1(SEC1 PTA key), so the issued PTA certificate satisfies the profile
+/// `PartFinal` enforces and anchors the firmware's on-demand slot-2 PID leaf.
 pub fn build_pta_intermediate(pta_pub_sec1: &[u8; SEC1_PUB_LEN], issuer: &CaKey) -> Vec<u8> {
+    build_pta_cert(
+        pta_pub_sec1,
+        issuer,
+        &pta_subject_der(pta_pub_sec1),
+        &sha1_ski(pta_pub_sec1),
+    )
+}
+
+/// Derive the deterministic PTA subject Name DER from the SEC1 PTA public
+/// key, mirroring the firmware's PTAID derivation
+/// (`fw/core/lib/src/ddi/tbor/pta.rs`): the subject is a single
+/// `commonName(64)` RDN holding the fixed PTA name, a separating space, and
+/// the lowercase-hex PTAID (`SHA-384(PTAID_LABEL ‖ SEC1 key)[..16]`),
+/// space-padded.  This equals the subject a conformant CA preserves from
+/// the `PartInit` CSR, and the issuer the firmware stamps on its PID leaf.
+pub fn pta_subject_der(sec1_pub: &[u8; SEC1_PUB_LEN]) -> [u8; PTA_SUBJECT_DER_LEN] {
+    let mut input = Vec::with_capacity(PTAID_LABEL.len() + SEC1_PUB_LEN);
+    input.extend_from_slice(PTAID_LABEL);
+    input.extend_from_slice(sec1_pub);
+    let mut algo = HashAlgo::sha384();
+    let mut digest = [0u8; 48];
+    algo.hash(&input, Some(&mut digest)).expect("sha384");
+
+    let mut cn = [b' '; 64];
+    cn[..PTA_SUBJECT_CN_PREFIX.len()].copy_from_slice(PTA_SUBJECT_CN_PREFIX.as_bytes());
+    let hex = b"0123456789abcdef";
+    let base = PTA_SUBJECT_CN_PREFIX.len() + 1;
+    for (i, byte) in digest[..PTAID_LEN].iter().enumerate() {
+        cn[base + 2 * i] = hex[usize::from(byte >> 4)];
+        cn[base + 2 * i + 1] = hex[usize::from(byte & 0x0f)];
+    }
+
+    let mut der = [0u8; PTA_SUBJECT_DER_LEN];
+    der[..PTA_SUBJECT_DER_PREFIX.len()].copy_from_slice(&PTA_SUBJECT_DER_PREFIX);
+    der[PTA_SUBJECT_DER_PREFIX.len()..].copy_from_slice(&cn);
+    der
+}
+
+/// Build a POTA-signed PTA intermediate CA certificate for `pta_pub_sec1`
+/// with a caller-chosen subject Name DER and SKID.  The subject and SKID
+/// are the two profile fields `PartFinal` pins against the deterministic
+/// PTA profile, so rejection tests use this to craft well-formed,
+/// POTA-anchored chains that violate exactly one of them.
+fn build_pta_cert(
+    pta_pub_sec1: &[u8; SEC1_PUB_LEN],
+    issuer: &CaKey,
+    subject: &[u8],
+    subject_key_id: &[u8; 20],
+) -> Vec<u8> {
     let params = IntermediateCertParams {
         public_key: pta_pub_sec1,
         serial_number: &serial(2),
         not_before: NOT_BEFORE,
         not_after: NOT_AFTER,
-        subject_cn: PTA_CN,
-        subject_sn: PTA_SN,
+        subject_cn: "",
+        subject_sn: "",
         issuer_cn: ROOT_CN,
         issuer_sn: ROOT_SN,
-        subject_key_id: &sha1_ski(pta_pub_sec1),
+        subject_key_id,
         authority_key_id: &issuer.ski(),
         path_len: 0,
     };
 
-    let mut tbs = azihsm_crypto::x509_builder::intermediate_cert::TBS_TEMPLATE;
-    patch_tbs_intermediate(&mut tbs, &params);
-    let (r, s) = issuer.sign(&tbs);
+    let mut tbs = [0u8; 1024];
+    let tbs_len = cert_builder::intermediate_cert_tbs_with_subject_name(&params, subject, &mut tbs)
+        .expect("PTA subject");
+    let (r, s) = issuer.sign(&tbs[..tbs_len]);
 
     let mut out = vec![0u8; 1024];
-    let len =
-        cert_builder::build_intermediate_cert(&params, &r, &s, &mut out).expect("PTA intermediate");
+    let len = cert_builder::assemble_cert(&tbs[..tbs_len], &r, &s, &mut out).expect("PTA cert");
     out.truncate(len);
     out
 }
@@ -268,44 +333,45 @@ pub fn make_pta_chain_csr_subject(pota_ca: &CaKey, csr: &[u8]) -> PtaChain {
     let subject = pta_subject_from_csr(csr);
     PtaChain {
         root_der: build_root(pota_ca),
-        pta_der: build_pta_intermediate_subject(&pta_pub, pota_ca, subject),
+        pta_der: build_pta_cert(&pta_pub, pota_ca, subject, &sha1_ski(&pta_pub)),
     }
 }
 
-/// [`build_pta_intermediate`] variant that splices `subject` (a complete
-/// DER Name, e.g. from [`pta_subject_from_csr`]) in place of the fixed
-/// `PTA_CN`/`PTA_SN` subject.
-fn build_pta_intermediate_subject(
+/// Build a POTA-anchored root→PTA chain that carries the correct partition
+/// PTA key but a **wrong subject** (the conformant single-CN(64) profile
+/// derived from a different key), so finalization's PTA-profile check
+/// rejects it with `PartFinalPtaMismatch`.
+pub fn make_pta_chain_wrong_subject(
+    pota_ca: &CaKey,
     pta_pub_sec1: &[u8; SEC1_PUB_LEN],
-    issuer: &CaKey,
-    subject: &[u8],
-) -> Vec<u8> {
-    let params = IntermediateCertParams {
-        public_key: pta_pub_sec1,
-        serial_number: &serial(2),
-        not_before: NOT_BEFORE,
-        not_after: NOT_AFTER,
-        subject_cn: "",
-        subject_sn: "",
-        issuer_cn: ROOT_CN,
-        issuer_sn: ROOT_SN,
-        subject_key_id: &sha1_ski(pta_pub_sec1),
-        authority_key_id: &issuer.ski(),
-        path_len: 0,
-    };
-
-    let mut tbs = [0u8; 1024];
-    let tbs_len = cert_builder::intermediate_cert_tbs_with_subject_name(&params, subject, &mut tbs)
-        .expect("PTA subject");
-    let (r, s) = issuer.sign(&tbs[..tbs_len]);
-
-    let mut out = vec![0u8; 1024];
-    let len = cert_builder::assemble_cert(&tbs[..tbs_len], &r, &s, &mut out).expect("PTA cert");
-    out.truncate(len);
-    out
+) -> PtaChain {
+    let wrong_subject = pta_subject_der(&CaKey::generate().sec1_pub());
+    PtaChain {
+        root_der: build_root(pota_ca),
+        pta_der: build_pta_cert(
+            pta_pub_sec1,
+            pota_ca,
+            &wrong_subject,
+            &sha1_ski(pta_pub_sec1),
+        ),
+    }
 }
 
-/// Build an **end-entity** leaf certificate whose subject public key is
+/// Build a POTA-anchored root→PTA chain that carries the correct partition
+/// PTA key and the conformant subject but a **wrong Subject Key Identifier**
+/// (not SHA-1 of the SEC1 PTA key), so finalization's PTA-profile check
+/// rejects it with `PartFinalPtaMismatch`.
+pub fn make_pta_chain_wrong_skid(pota_ca: &CaKey, pta_pub_sec1: &[u8; SEC1_PUB_LEN]) -> PtaChain {
+    PtaChain {
+        root_der: build_root(pota_ca),
+        pta_der: build_pta_cert(
+            pta_pub_sec1,
+            pota_ca,
+            &pta_subject_der(pta_pub_sec1),
+            &[0xAB; 20],
+        ),
+    }
+}
 /// `leaf_pub_sec1` (e.g. an attestation-report signer's key), signed by
 /// `issuer` (a self-signed CA).  Unlike [`build_pta_intermediate`], the
 /// leaf is `cA=false` with `digitalSignature` key usage.
@@ -456,26 +522,6 @@ fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
     tbs[ISSUER_SN_OFFSET..ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&sn);
     tbs[SUBJECT_SN_OFFSET..SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&sn);
     tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
-}
-
-fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
-    use azihsm_crypto::x509_builder::intermediate_cert::*;
-    let s_cn = pad_cn(params.subject_cn);
-    let i_cn = pad_cn(params.issuer_cn);
-    let s_sn = pad_sn(params.subject_sn);
-    let i_sn = pad_sn(params.issuer_sn);
-    tbs[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + 97].copy_from_slice(params.public_key);
-    tbs[SERIAL_NUMBER_OFFSET..SERIAL_NUMBER_OFFSET + 20].copy_from_slice(params.serial_number);
-    tbs[NOT_BEFORE_OFFSET..NOT_BEFORE_OFFSET + 15].copy_from_slice(params.not_before);
-    tbs[NOT_AFTER_OFFSET..NOT_AFTER_OFFSET + 15].copy_from_slice(params.not_after);
-    tbs[ISSUER_CN_OFFSET..ISSUER_CN_OFFSET + CN_LEN].copy_from_slice(&i_cn);
-    tbs[SUBJECT_CN_OFFSET..SUBJECT_CN_OFFSET + CN_LEN].copy_from_slice(&s_cn);
-    tbs[ISSUER_SN_OFFSET..ISSUER_SN_OFFSET + SN_LEN].copy_from_slice(&i_sn);
-    tbs[SUBJECT_SN_OFFSET..SUBJECT_SN_OFFSET + SN_LEN].copy_from_slice(&s_sn);
-    tbs[SUBJECT_KEY_ID_OFFSET..SUBJECT_KEY_ID_OFFSET + 20].copy_from_slice(params.subject_key_id);
-    tbs[AUTHORITY_KEY_ID_OFFSET..AUTHORITY_KEY_ID_OFFSET + 20]
-        .copy_from_slice(params.authority_key_id);
-    tbs[PATH_LEN_OFFSET] = params.path_len;
 }
 
 fn patch_tbs_leaf(tbs: &mut [u8], params: &LeafCertParams<'_>) {

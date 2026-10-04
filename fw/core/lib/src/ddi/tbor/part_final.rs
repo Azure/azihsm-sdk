@@ -31,7 +31,9 @@ use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
+use azihsm_fw_core_crypto_x509_chain::parse_cert;
 use azihsm_fw_core_crypto_x509_chain::validate_chain;
+use azihsm_fw_core_crypto_x509_chain::MAX_CERT_DER_LEN;
 use azihsm_fw_ddi_tbor_types::evidence::CertDescriptor;
 use azihsm_fw_ddi_tbor_types::evidence::MAX_CERTS;
 use azihsm_fw_ddi_tbor_types::policy::PartPolicy;
@@ -314,6 +316,22 @@ async fn validate_pta_chain<P: HsmPal>(
     if &pta_from_chain[..] != expected_pta {
         return Err(HsmError::PartFinalPtaMismatch);
     }
+
+    // `validate_chain` does not pin the terminal (leaf) certificate's
+    // subject DN, SKID, or CA constraints. Re-read and parse the terminal
+    // PTA certificate so its profile can be enforced against the
+    // deterministic subject/SKID/CA constraints the on-demand slot-2 PID
+    // leaf depends on; otherwise finalization could accept a PTA that no
+    // future PID leaf can chain to.
+    let terminal = cert_descriptors.last().ok_or(HsmError::InvalidArg)?;
+    let terminal_len = usize::from(terminal.length.get());
+    if terminal_len == 0 || terminal_len > MAX_CERT_DER_LEN {
+        return Err(HsmError::InvalidArg);
+    }
+    let pta_der = alloc.dma_alloc(terminal_len)?;
+    copy_oob(pal, io, &oob, usize::from(terminal.index), pta_der).await?;
+    let pta_cert = parse_cert(pta_der)?;
+    super::pta::validate_pta_profile(pal, io, alloc, &pta_cert).await?;
 
     Ok(())
 }

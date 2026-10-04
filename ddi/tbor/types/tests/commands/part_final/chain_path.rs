@@ -3,11 +3,12 @@
 
 //! `PartFinal` chain-integrity rejects.
 //!
-//! These are the two cases that need a **well-formed but wrong** PTA
-//! chain, so they are the only tests that must reach
-//! `validate_pta_chain` with something for it to reject: a chain not
-//! anchored to the policy's POTA key, and a chain whose terminal
-//! certificate carries the wrong PTA key.
+//! These are the cases that need a **well-formed but wrong** PTA chain, so
+//! they are the tests that must reach `validate_pta_chain` with something
+//! for it to reject: a chain not anchored to the policy's POTA key, a chain
+//! whose terminal certificate carries the wrong PTA key, and chains whose
+//! terminal PTA certificate carries the right key but violates the pinned
+//! PTA profile (wrong subject DN or Subject Key Identifier).
 //!
 //! They assert the specific `TborStatus` rather than calling bare
 //! `expect_err`. That matters more than it looks: these tests began life
@@ -28,6 +29,8 @@
 
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_wrong_skid;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_wrong_subject;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -83,5 +86,55 @@ fn part_final_reject_pta_mismatch() {
     let err = ctx
         .part_final(&session, &policy, &[], &chain.der_items())
         .expect_err("a PTA cert carrying a non-partition key must be rejected");
+    assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
+}
+
+/// A POTA-anchored chain carrying the correct partition PTA key, but whose
+/// terminal PTA certificate has a subject DN other than the deterministic
+/// single-`commonName(64)` profile, must be rejected: the firmware stamps
+/// that exact subject as the issuer of its on-demand slot-2 PID leaf, so a
+/// divergent subject would leave the PID leaf unable to chain to the PTA.
+#[test]
+fn part_final_reject_pta_wrong_subject() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+
+    // Correct POTA anchor and partition PTA key, but a non-conformant
+    // subject DN.
+    let chain = make_pta_chain_wrong_subject(&pota, &pta_pub_from_csr(&init.pta_csr));
+
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect_err("a PTA cert with a non-profile subject must be rejected");
+    assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
+}
+
+/// A POTA-anchored chain carrying the correct partition PTA key and the
+/// conformant subject, but whose terminal PTA certificate's Subject Key
+/// Identifier is not SHA-1 of the SEC1 PTA key, must be rejected: the
+/// firmware stamps that SKID as the slot-2 PID leaf's authority key
+/// identifier, so a divergent SKID breaks AKID↔SKID chaining.
+#[test]
+fn part_final_reject_pta_wrong_skid() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+
+    let chain = make_pta_chain_wrong_skid(&pota, &pta_pub_from_csr(&init.pta_csr));
+
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect_err("a PTA cert with a non-profile SKID must be rejected");
     assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
 }
