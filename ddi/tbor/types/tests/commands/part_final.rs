@@ -147,6 +147,90 @@ fn slot2_pid_cert_after_finalization() {
     }
 }
 
+/// The on-demand slot-2 PID leaf derives its serial from the SHA-1 subject
+/// key identifier of the PID public key, masked to a positive DER INTEGER
+/// (`serial[0] = (serial[0] & 0x3f) | 0x40`). A real SHA-1 digest is never
+/// zero, so the serial must carry entropy beyond the masked leading byte.
+/// This guards against a degenerate all-zero serial.
+#[test]
+fn slot2_pid_cert_serial_is_not_all_zeros() {
+    use azihsm_ddi_tbor_types::TborGetCertReq;
+
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+    let chain = make_pta_chain_csr_subject(&pota, &init.pta_csr);
+    ctx.part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal");
+
+    let resp = ctx
+        .tbor(&TborGetCertReq::new(2, 0))
+        .expect("slot 2 PID cert");
+    let serial = cert_serial_number(&resp.certificate);
+
+    assert_eq!(
+        serial.len(),
+        20,
+        "PID serial must be the 20-byte masked SHA-1 SKI",
+    );
+    assert_eq!(
+        serial[0] & 0xc0,
+        0x40,
+        "leading byte must be masked to a positive DER INTEGER (bit 7 clear, bit 6 set)",
+    );
+    assert!(
+        serial.iter().any(|&b| b != 0),
+        "serial must not be all zeros",
+    );
+    assert!(
+        serial[1..].iter().any(|&b| b != 0),
+        "serial must carry SKI entropy beyond the masked leading byte",
+    );
+}
+
+/// Extract the raw `serialNumber` INTEGER value bytes from a DER-encoded
+/// X.509 certificate: `Certificate ::= SEQUENCE { tbsCertificate SEQUENCE {
+/// [0] version, serialNumber INTEGER, ... } }`.
+fn cert_serial_number(der: &[u8]) -> Vec<u8> {
+    fn read_len(der: &[u8], i: &mut usize) -> usize {
+        let b = der[*i];
+        *i += 1;
+        if b & 0x80 == 0 {
+            b as usize
+        } else {
+            let n = (b & 0x7f) as usize;
+            let mut len = 0usize;
+            for _ in 0..n {
+                len = (len << 8) | der[*i] as usize;
+                *i += 1;
+            }
+            len
+        }
+    }
+
+    let mut i = 0usize;
+    assert_eq!(der[i], 0x30, "Certificate must be a SEQUENCE");
+    i += 1;
+    read_len(der, &mut i);
+    assert_eq!(der[i], 0x30, "tbsCertificate must be a SEQUENCE");
+    i += 1;
+    read_len(der, &mut i);
+    // Optional EXPLICIT [0] version precedes the serial.
+    if der[i] == 0xa0 {
+        i += 1;
+        let vlen = read_len(der, &mut i);
+        i += vlen;
+    }
+    assert_eq!(der[i], 0x02, "serialNumber must be an INTEGER");
+    i += 1;
+    let slen = read_len(der, &mut i);
+    der[i..i + slen].to_vec()
+}
+
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
 /// the PTA public key from the returned CSR and certify it under `pota`
 /// (a POTA root → PTA-intermediate chain).
