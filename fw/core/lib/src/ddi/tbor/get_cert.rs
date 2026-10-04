@@ -28,7 +28,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 
 /// Handle a TBOR `GetCertificate` request.
 ///
-/// Slot 2 locks the partition while using its PTA key. No undo log is needed.
+/// Slot 2 generates one fresh PTA-issued PID certificate from the
+/// partition's PTA/PID keys and copies it into the response. No undo log is
+/// needed.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,

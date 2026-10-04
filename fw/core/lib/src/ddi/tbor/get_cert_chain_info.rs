@@ -23,8 +23,9 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 
 /// Handle a TBOR `GetCertChainInfo` request.
 ///
-/// Slot 2 locks the partition and fingerprints a newly generated PID leaf;
-/// later reads need not match this fingerprint. No undo log is needed.
+/// Slot 2 generates a fresh PID leaf and fingerprints it; because each read
+/// mints a new leaf, later reads need not match this fingerprint. No undo
+/// log is needed.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
