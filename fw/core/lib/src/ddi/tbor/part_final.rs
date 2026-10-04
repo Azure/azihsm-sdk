@@ -139,7 +139,19 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // Trust gate: walk the supplied PTA certificate chain, proving it
         // chains to the policy `POTAPubKey` and that its terminal (PTA)
         // certificate carries this partition's PTA key.
-        validate_pta_chain(pal, io, alloc, oob, req.cert_descriptors, policy).await?;
+        //
+        // Scope the validation buffers (terminal snapshot, chain-walk
+        // scratch, and profile parse) to a nested allocator so they are
+        // reclaimed before the UPS derivation and backup
+        // restoration/masking below allocate. Restoring a backup with two
+        // maximal P-384 certificates would otherwise stack the retained
+        // validation buffers on top of the backup buffers and exhaust the
+        // std/emu 8 KiB DMA heap, failing a valid finalization with
+        // `NotEnoughSpace`.
+        pal.alloc_scoped_async(io, async |val_alloc| {
+            validate_pta_chain(pal, io, val_alloc, oob, req.cert_descriptors, policy).await
+        })
+        .await?;
 
         // Platform identity that binds the masking keys / backup
         // envelope: SVN (BKS1 lineage) and owner-seed id (BKS2 lineage).
