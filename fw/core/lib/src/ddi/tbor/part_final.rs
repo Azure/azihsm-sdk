@@ -286,6 +286,20 @@ async fn validate_pta_chain<P: HsmPal>(
         return Err(HsmError::InvalidArg);
     }
 
+    // Descriptors address out-of-band items by `index`, and the
+    // snapshot-serving fetch closure below selects the terminal
+    // certificate by that index. A certificate chain never legitimately
+    // references the same out-of-band item twice, and duplicate indices
+    // would make that selection ambiguous (e.g. a shorter non-terminal
+    // descriptor sharing the terminal's index). Reject them outright so a
+    // malformed host request cannot drive the fetch closure into a
+    // length-mismatched copy.
+    for (i, a) in cert_descriptors.iter().enumerate() {
+        if cert_descriptors[i + 1..].iter().any(|b| b.index == a.index) {
+            return Err(HsmError::InvalidArg);
+        }
+    }
+
     // Snapshot the expected PTA identity (partition PTA key) up front so
     // the property-store borrow is not held across the chain walk.
     let pta = super::super::part_state::part_pta_pub_key(pal, io)?;
@@ -330,7 +344,15 @@ async fn validate_pta_chain<P: HsmPal>(
         &mut pta_from_chain,
         async |index, buf| {
             if index == terminal_index {
+                // Defensive: duplicate indices are already rejected above,
+                // so `buf` here is the terminal descriptor's buffer and its
+                // length equals the snapshot's. Guard the copy anyway so a
+                // length mismatch can never panic the firmware across the
+                // host trust boundary.
                 let snapshot: &[u8] = pta_der;
+                if buf.len() != snapshot.len() {
+                    return Err(HsmError::InvalidArg);
+                }
                 buf.copy_from_slice(snapshot);
                 Ok(())
             } else {

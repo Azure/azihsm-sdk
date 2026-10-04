@@ -89,3 +89,45 @@ pub fn part_final(
 
     dev.exec_op_tbor(&req, oob, &mut None)
 }
+
+/// Like [`part_final`], but with caller-controlled `(index, length)`
+/// descriptors and out-of-band items.
+///
+/// The normal helper assigns each certificate a distinct, sequential
+/// descriptor index; this variant lets a test craft a malformed descriptor
+/// table (for example duplicate indices, or a length that disagrees with
+/// its out-of-band item) to exercise the firmware's input validation on
+/// the `PartFinal` OOB path.
+pub fn part_final_raw(
+    dev: &<AzihsmDdi as Ddi>::Dev,
+    session: &SessionHandshake,
+    part_policy: &[u8],
+    prev_local_mk_backup: &[u8],
+    descriptors: &[(u8, u16)],
+    oob_items: &[&[u8]],
+) -> Result<TborPartFinalResp, DdiError> {
+    if part_policy.len() != PART_POLICY_LEN {
+        return Err(DdiError::InvalidParameter);
+    }
+    let policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
+        .map_err(|_| DdiError::InvalidParameter)?;
+
+    let cert_descriptors = descriptors
+        .iter()
+        .map(|&(index, length)| CertDescriptor {
+            index,
+            length: U16::new(length),
+        })
+        .collect();
+
+    let req = TborPartFinalReq {
+        session_id: session.session_id,
+        part_policy: policy,
+        cert_descriptors,
+        prev_local_mk_backup: prev_local_mk_backup.to_vec(),
+    };
+
+    let oob = (!oob_items.is_empty()).then_some(oob_items);
+
+    dev.exec_op_tbor(&req, oob, &mut None)
+}

@@ -168,3 +168,35 @@ fn part_final_reject_pta_constrained_ancestor() {
         .expect_err("a PTA under a path-length-constrained root must be rejected");
     assert_fw_rejects(&err, TborStatus::X509PathLenExceeded);
 }
+
+/// A `PartFinal` descriptor table that references the same out-of-band item
+/// twice must be rejected with `InvalidArg` before any certificate is read.
+///
+/// The firmware selects the terminal (PTA) certificate by descriptor
+/// `index` and serves its snapshot to every descriptor sharing that index.
+/// A malformed request can pair a short non-terminal descriptor
+/// (`index 0, len 32`) with the terminal (`index 0, len 64`) over a single
+/// 64-byte item; absent the duplicate-index guard, the fetch closure would
+/// copy the 64-byte terminal snapshot into the 32-byte buffer and panic the
+/// firmware on host-controlled input. The guard rejects the duplicate
+/// descriptor table outright, before any `copy_from_slice`.
+#[test]
+fn part_final_reject_duplicate_descriptor_index() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    ctx.part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+
+    // Two descriptors share out-of-band index 0: a short non-terminal
+    // (len 32) and the terminal (len 64), both backed by one 64-byte item.
+    let oob_item = [0u8; 64];
+    let descriptors = [(0u8, 32u16), (0u8, 64u16)];
+
+    let err = ctx
+        .part_final_raw(&session, &policy, &[], &descriptors, &[&oob_item[..]])
+        .expect_err("a descriptor table with duplicate indices must be rejected");
+    assert_fw_rejects(&err, TborStatus::InvalidArg);
+}
