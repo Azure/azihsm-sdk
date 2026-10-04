@@ -192,43 +192,104 @@ fn slot2_pid_cert_serial_is_not_all_zeros() {
     );
 }
 
+/// The on-demand slot-2 PID leaf is an end-entity certificate, so its
+/// `BasicConstraints` extension must omit `pathLenConstraint` entirely:
+/// RFC 5280 §4.2.1.9 forbids `pathLenConstraint` unless `cA` is asserted,
+/// and strict validators reject a `pathLenConstraint` paired with the
+/// default `cA=false`. The leaf template therefore encodes `BasicConstraints`
+/// as an empty `SEQUENCE` (`30 00`). This regression test parses the
+/// generated DER and asserts that empty encoding so a future template edit
+/// cannot silently reintroduce the invalid `cA=false` + `pathLenConstraint`
+/// combination.
+#[test]
+fn slot2_pid_cert_basic_constraints_has_no_path_len() {
+    use azihsm_ddi_tbor_types::TborGetCertReq;
+
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+    let chain = make_pta_chain_csr_subject(&pota, &init.pta_csr);
+    ctx.part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal");
+
+    let resp = ctx
+        .tbor(&TborGetCertReq::new(2, 0))
+        .expect("slot 2 PID cert");
+    let basic_constraints = cert_basic_constraints(&resp.certificate);
+
+    assert_eq!(
+        basic_constraints,
+        [0x30, 0x00],
+        "BasicConstraints must be an empty SEQUENCE (cA=false by default, no pathLenConstraint)",
+    );
+}
+
+/// Read one DER length field starting at `*i`, advancing `*i` past it.
+fn der_read_len(der: &[u8], i: &mut usize) -> usize {
+    let b = der[*i];
+    *i += 1;
+    if b & 0x80 == 0 {
+        b as usize
+    } else {
+        let n = (b & 0x7f) as usize;
+        let mut len = 0usize;
+        for _ in 0..n {
+            len = (len << 8) | der[*i] as usize;
+            *i += 1;
+        }
+        len
+    }
+}
+
 /// Extract the raw `serialNumber` INTEGER value bytes from a DER-encoded
 /// X.509 certificate: `Certificate ::= SEQUENCE { tbsCertificate SEQUENCE {
 /// [0] version, serialNumber INTEGER, ... } }`.
 fn cert_serial_number(der: &[u8]) -> Vec<u8> {
-    fn read_len(der: &[u8], i: &mut usize) -> usize {
-        let b = der[*i];
-        *i += 1;
-        if b & 0x80 == 0 {
-            b as usize
-        } else {
-            let n = (b & 0x7f) as usize;
-            let mut len = 0usize;
-            for _ in 0..n {
-                len = (len << 8) | der[*i] as usize;
-                *i += 1;
-            }
-            len
-        }
-    }
-
     let mut i = 0usize;
     assert_eq!(der[i], 0x30, "Certificate must be a SEQUENCE");
     i += 1;
-    read_len(der, &mut i);
+    der_read_len(der, &mut i);
     assert_eq!(der[i], 0x30, "tbsCertificate must be a SEQUENCE");
     i += 1;
-    read_len(der, &mut i);
+    der_read_len(der, &mut i);
     // Optional EXPLICIT [0] version precedes the serial.
     if der[i] == 0xa0 {
         i += 1;
-        let vlen = read_len(der, &mut i);
+        let vlen = der_read_len(der, &mut i);
         i += vlen;
     }
     assert_eq!(der[i], 0x02, "serialNumber must be an INTEGER");
     i += 1;
-    let slen = read_len(der, &mut i);
+    let slen = der_read_len(der, &mut i);
     der[i..i + slen].to_vec()
+}
+
+/// Extract the inner `BasicConstraints ::= SEQUENCE` value from the
+/// `extnValue` OCTET STRING of a DER-encoded certificate. Locates the
+/// extension by its OID (`2.5.29.19`, DER `06 03 55 1D 13`), skips the
+/// optional `critical` BOOLEAN, and returns the OCTET STRING contents.
+fn cert_basic_constraints(der: &[u8]) -> Vec<u8> {
+    // OID 2.5.29.19 (id-ce-basicConstraints): tag 06, len 03, 55 1D 13.
+    const BC_OID: [u8; 5] = [0x06, 0x03, 0x55, 0x1D, 0x13];
+    let pos = der
+        .windows(BC_OID.len())
+        .position(|w| w == BC_OID)
+        .expect("BasicConstraints OID must be present");
+    let mut i = pos + BC_OID.len();
+    // Optional `critical` BOOLEAN precedes the extnValue.
+    if der[i] == 0x01 {
+        i += 1;
+        let blen = der_read_len(der, &mut i);
+        i += blen;
+    }
+    assert_eq!(der[i], 0x04, "extnValue must be an OCTET STRING");
+    i += 1;
+    let olen = der_read_len(der, &mut i);
+    der[i..i + olen].to_vec()
 }
 
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
