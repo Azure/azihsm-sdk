@@ -30,6 +30,8 @@
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_constrained_root;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_missing_key_usage;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_no_key_cert_sign;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_wrong_skid;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_wrong_subject;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
@@ -167,6 +169,58 @@ fn part_final_reject_pta_constrained_ancestor() {
         .part_final(&session, &policy, &[], &chain.der_items())
         .expect_err("a PTA under a path-length-constrained root must be rejected");
     assert_fw_rejects(&err, TborStatus::X509PathLenExceeded);
+}
+
+/// A POTA-anchored chain whose terminal PTA certificate is conformant in
+/// every respect except that its KeyUsage clears `keyCertSign` (leaving
+/// only `cRLSign`) must be rejected: the firmware validates the PTA as an
+/// *issuing* CA, so its chain walk requires `keyCertSign` and rejects the
+/// certificate with `X509KeyUsageInvalid` before the PTA-profile check even
+/// runs. A PTA that may not sign certificates could never sign the
+/// on-demand slot-2 PID leaf.
+#[test]
+fn part_final_reject_pta_key_usage_without_key_cert_sign() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+
+    let chain = make_pta_chain_no_key_cert_sign(&pota, &pta_pub_from_csr(&init.pta_csr));
+
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect_err("a PTA KeyUsage lacking keyCertSign must be rejected");
+    assert_fw_rejects(&err, TborStatus::X509KeyUsageInvalid);
+}
+
+/// A POTA-anchored chain whose terminal PTA certificate is conformant in
+/// every respect except that it carries no KeyUsage extension at all must
+/// be rejected: the issuing-CA chain walk permits an absent KeyUsage, so
+/// the certificate survives to the PTA-profile check, which demands an
+/// explicit `keyCertSign` and rejects it with `PartFinalPtaMismatch`. The
+/// firmware will only anchor its slot-2 PID leaf to a PTA that explicitly
+/// advertises certificate-signing authority.
+#[test]
+fn part_final_reject_pta_missing_key_usage() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+
+    let chain = make_pta_chain_missing_key_usage(&pota, &pta_pub_from_csr(&init.pta_csr));
+
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect_err("a PTA without a KeyUsage extension must be rejected");
+    assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
 }
 
 /// A `PartFinal` descriptor table that references the same out-of-band item

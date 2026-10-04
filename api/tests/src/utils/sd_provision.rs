@@ -447,6 +447,16 @@ fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
 /// PSK, `part_init_ex`, build a POTA-anchored PTA chain from the CSR, then
 /// `part_final_ex`.
 pub(crate) fn finalized_co_session() -> HsmSession {
+    let (_part, _rev, session) = finalized_co_partition();
+    session
+}
+
+/// Provision a fresh partition's security domain like
+/// [`finalized_co_session`], but also return the owning `HsmPartition`
+/// handle (and its negotiated api-rev) so callers can exercise
+/// partition-scoped, out-of-session operations such as
+/// [`HsmPartition::cert_chain`] against the finalized partition.
+pub(crate) fn finalized_co_partition() -> (HsmPartition, HsmApiRev, HsmSession) {
     let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
@@ -497,7 +507,7 @@ pub(crate) fn finalized_co_session() -> HsmSession {
         .part_final_ex(&policy, &certs, None)
         .expect("part_final_ex");
 
-    session
+    (part, rev, session)
 }
 
 /// Build a policy naming **this** partition as the backing partition

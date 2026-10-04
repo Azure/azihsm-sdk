@@ -391,6 +391,192 @@ pub fn make_pta_chain_constrained_root(
     }
 }
 
+/// Build a POTA-anchored root→PTA chain whose terminal PTA certificate is
+/// fully conformant (correct POTA anchor, partition PTA key, subject, SKID,
+/// and `cA == true`) **except** that its KeyUsage extension clears
+/// `keyCertSign` (leaving only `cRLSign`).  The firmware validates the PTA
+/// as an *issuing* CA, so its chain walk rejects a KeyUsage that forbids
+/// certificate signing with `X509KeyUsageInvalid` before the PTA-profile
+/// check runs.
+pub fn make_pta_chain_no_key_cert_sign(
+    pota_ca: &CaKey,
+    pta_pub_sec1: &[u8; SEC1_PUB_LEN],
+) -> PtaChain {
+    PtaChain {
+        root_der: build_root(pota_ca),
+        pta_der: build_pta_cert_key_usage(pta_pub_sec1, pota_ca, KeyUsageMutation::DropKeyCertSign),
+    }
+}
+
+/// Build a POTA-anchored root→PTA chain whose terminal PTA certificate is
+/// fully conformant (correct POTA anchor, partition PTA key, subject, SKID,
+/// and `cA == true`) **except** that it carries no KeyUsage extension at
+/// all.  The issuing-CA chain walk permits an absent KeyUsage, so the
+/// certificate survives to the PTA-profile check, which requires an
+/// explicit `keyCertSign` and rejects it with `PartFinalPtaMismatch`.
+pub fn make_pta_chain_missing_key_usage(
+    pota_ca: &CaKey,
+    pta_pub_sec1: &[u8; SEC1_PUB_LEN],
+) -> PtaChain {
+    PtaChain {
+        root_der: build_root(pota_ca),
+        pta_der: build_pta_cert_key_usage(pta_pub_sec1, pota_ca, KeyUsageMutation::Remove),
+    }
+}
+
+/// A single-axis mutation of the conformant PTA KeyUsage extension, used to
+/// craft chains that violate exactly one of the firmware's issuing-CA
+/// KeyUsage requirements.
+enum KeyUsageMutation {
+    /// Clear the `keyCertSign` bit (leaving `cRLSign` set), so the terminal
+    /// PTA advertises a KeyUsage that forbids certificate signing.
+    DropKeyCertSign,
+    /// Remove the KeyUsage extension entirely.
+    Remove,
+}
+
+/// Build a POTA-signed PTA intermediate for `pta_pub_sec1` with the
+/// conformant subject / SKID / CA profile, but apply `mutation` to its
+/// KeyUsage extension before re-signing.  The intermediate TBS template
+/// stamps a `keyCertSign + cRLSign` KeyUsage; mutating only that extension
+/// keeps every other profile field byte-identical, isolating the firmware's
+/// KeyUsage enforcement.
+fn build_pta_cert_key_usage(
+    pta_pub_sec1: &[u8; SEC1_PUB_LEN],
+    issuer: &CaKey,
+    mutation: KeyUsageMutation,
+) -> Vec<u8> {
+    let subject = pta_subject_der(pta_pub_sec1);
+    let subject_key_id = sha1_ski(pta_pub_sec1);
+    let params = IntermediateCertParams {
+        public_key: pta_pub_sec1,
+        serial_number: &serial(2),
+        not_before: NOT_BEFORE,
+        not_after: NOT_AFTER,
+        subject_cn: "",
+        subject_sn: "",
+        issuer_cn: ROOT_CN,
+        issuer_sn: ROOT_SN,
+        subject_key_id: &subject_key_id,
+        authority_key_id: &issuer.ski(),
+        path_len: 0,
+    };
+
+    let mut tbs_buf = [0u8; 1024];
+    let tbs_len =
+        cert_builder::intermediate_cert_tbs_with_subject_name(&params, &subject[..], &mut tbs_buf)
+            .expect("PTA subject");
+    let mut tbs = tbs_buf[..tbs_len].to_vec();
+    apply_key_usage_mutation(&mut tbs, mutation);
+
+    let (r, s) = issuer.sign(&tbs);
+
+    let mut out = vec![0u8; 1024];
+    let len = cert_builder::assemble_cert(&tbs, &r, &s, &mut out).expect("PTA cert");
+    out.truncate(len);
+    out
+}
+
+/// Locate the KeyUsage extension inside an intermediate-certificate TBS and
+/// apply `mutation` in place, fixing up the enclosing DER lengths when the
+/// extension is removed.  Relies on the fixed KeyUsage extension the
+/// intermediate template emits: a 16-byte `SEQUENCE` carrying
+/// `keyCertSign + cRLSign`.
+fn apply_key_usage_mutation(tbs: &mut Vec<u8>, mutation: KeyUsageMutation) {
+    // KeyUsage `extnID` OID (2.5.29.15) DER is `06 03 55 1D 0F`; the
+    // extension `SEQUENCE` header (`30 <len>`) is the two bytes before it.
+    const KEY_USAGE_OID: [u8; 5] = [0x06, 0x03, 0x55, 0x1D, 0x0F];
+    let oid = tbs
+        .windows(KEY_USAGE_OID.len())
+        .position(|w| w == KEY_USAGE_OID)
+        .expect("PTA TBS carries a KeyUsage extension");
+    let ext_start = oid - 2;
+    assert_eq!(tbs[ext_start], 0x30, "KeyUsage extension SEQUENCE tag");
+    // The extension length is short-form, so the extension spans
+    // `2 + len` bytes.
+    let ext_total = 2 + usize::from(tbs[ext_start + 1]);
+
+    match mutation {
+        KeyUsageMutation::DropKeyCertSign => {
+            // The KeyUsage value is the extension's final byte, inside
+            // `... 04 04 03 02 <unused> <bits>`.  Replace `keyCertSign +
+            // cRLSign` (0x06) with `cRLSign` only (0x02); the lowest set bit
+            // is unchanged, so the BIT STRING's unused-bit count — and thus
+            // every DER length — stays the same.
+            let value = ext_start + ext_total - 1;
+            assert_eq!(tbs[value], 0x06, "expected keyCertSign + cRLSign bits");
+            tbs[value] = 0x02;
+        }
+        KeyUsageMutation::Remove => remove_tbs_extension(tbs, ext_start, ext_total),
+    }
+}
+
+/// Splice the `ext_total`-byte extension at `ext_start` out of an
+/// intermediate-certificate TBS, decrementing the three enclosing DER
+/// length fields (the outer TBS `SEQUENCE`, the `[3]` extensions explicit
+/// tag, and the inner extensions `SEQUENCE`) by the removed size.  The
+/// extension is the last field, so removing it never changes the width of
+/// any length encoding.
+fn remove_tbs_extension(tbs: &mut Vec<u8>, ext_start: usize, ext_total: usize) {
+    assert_eq!(tbs[0], 0x30, "TBS SEQUENCE tag");
+    let (content_len, outer_len_bytes) = read_der_len(tbs, 1);
+    let content_start = 1 + outer_len_bytes;
+    let content_end = content_start + content_len;
+
+    // Walk the TBS content TLVs to the `[3]` extensions explicit tag.
+    let mut idx = content_start;
+    let a3_idx = loop {
+        assert!(idx < content_end, "extensions [3] present in TBS");
+        let tag = tbs[idx];
+        let (len, len_bytes) = read_der_len(tbs, idx + 1);
+        if tag == 0xA3 {
+            break idx;
+        }
+        idx += 1 + len_bytes + len;
+    };
+    let (_, a3_len_bytes) = read_der_len(tbs, a3_idx + 1);
+    let inner_idx = a3_idx + 1 + a3_len_bytes;
+    assert_eq!(tbs[inner_idx], 0x30, "extensions SEQUENCE tag");
+
+    // Shrink each enclosing length by the removed extension size.
+    for len_field in [1, a3_idx + 1, inner_idx + 1] {
+        let (value, _) = read_der_len(tbs, len_field);
+        write_der_len(tbs, len_field, value - ext_total);
+    }
+
+    tbs.drain(ext_start..ext_start + ext_total);
+}
+
+/// Decode a DER length at `idx`, returning `(value, header_len)` where
+/// `header_len` is the number of bytes the length encoding occupies.
+fn read_der_len(data: &[u8], idx: usize) -> (usize, usize) {
+    let first = data[idx];
+    if first < 0x80 {
+        return (usize::from(first), 1);
+    }
+    let n = usize::from(first & 0x7f);
+    let mut value = 0usize;
+    for i in 0..n {
+        value = (value << 8) | usize::from(data[idx + 1 + i]);
+    }
+    (value, 1 + n)
+}
+
+/// Overwrite the DER length at `idx` with `new_value`, preserving the
+/// original encoding width (callers only ever shrink a value within the
+/// same short/long form, so the width never needs to change).
+fn write_der_len(data: &mut [u8], idx: usize, new_value: usize) {
+    let first = data[idx];
+    if first < 0x80 {
+        data[idx] = new_value as u8;
+        return;
+    }
+    let n = usize::from(first & 0x7f);
+    for i in 0..n {
+        data[idx + n - i] = ((new_value >> (8 * i)) & 0xff) as u8;
+    }
+}
+
 /// Build a self-signed POTA root CA certificate identical in identity to
 /// [`build_root`] (same CN/SN and SKID, so a conformant PTA still chains to
 /// it) but carrying `pathLenConstraint == 0`, i.e. it may certify
