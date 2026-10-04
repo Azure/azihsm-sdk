@@ -32,7 +32,7 @@ use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
 use azihsm_fw_core_crypto_x509_chain::parse_cert;
-use azihsm_fw_core_crypto_x509_chain::validate_chain;
+use azihsm_fw_core_crypto_x509_chain::validate_issuing_chain;
 use azihsm_fw_core_crypto_x509_chain::MAX_CERT_DER_LEN;
 use azihsm_fw_ddi_tbor_types::evidence::CertDescriptor;
 use azihsm_fw_ddi_tbor_types::evidence::MAX_CERTS;
@@ -297,15 +297,46 @@ async fn validate_pta_chain<P: HsmPal>(
     // `from_bytes` has already pinned its length to a full Ecc384 key.
     let anchor = &policy.pota_pub_key.data[..POLICY_MAX_KEY_LEN];
 
+    // Snapshot the terminal (PTA) certificate's DER **once**, up front,
+    // into HSM-owned memory. Both the chain walk (which signature-verifies
+    // the terminal) and the profile enforcement below consume this single
+    // snapshot, so they cannot observe different host-controlled bytes
+    // (TOCTOU): a host that swaps the OOB bytes between reads can no longer
+    // pass signature validation with one certificate while the
+    // subject/SKID/CA profile is checked against another.
+    let terminal = cert_descriptors.last().ok_or(HsmError::InvalidArg)?;
+    let terminal_index = usize::from(terminal.index);
+    let terminal_len = usize::from(terminal.length.get());
+    if terminal_len == 0 || terminal_len > MAX_CERT_DER_LEN {
+        return Err(HsmError::InvalidArg);
+    }
+    let pta_der = alloc.dma_alloc(terminal_len)?;
+    copy_oob(pal, io, &oob, terminal_index, pta_der).await?;
+
+    // Walk the chain root → leaf, validating the terminal as an *issuing*
+    // CA (it will later sign the on-demand slot-2 PID leaf): this enforces
+    // `cA == true`, `keyCertSign`, and — crucially — the ancestor
+    // `pathLenConstraint` budget on the PTA, so a chain whose ancestors
+    // leave no room for the PID leaf is rejected here. The terminal is
+    // served from `pta_der`; every other certificate still streams from
+    // the out-of-band region.
     let mut pta_from_chain = [0u8; POLICY_MAX_KEY_LEN];
-    validate_chain(
+    validate_issuing_chain(
         pal,
         io,
         alloc,
         cert_descriptors,
         Some(anchor),
         &mut pta_from_chain,
-        async |index, buf| copy_oob(pal, io, &oob, index, buf).await,
+        async |index, buf| {
+            if index == terminal_index {
+                let snapshot: &[u8] = pta_der;
+                buf.copy_from_slice(snapshot);
+                Ok(())
+            } else {
+                copy_oob(pal, io, &oob, index, buf).await
+            }
+        },
     )
     .await?;
 
@@ -317,19 +348,11 @@ async fn validate_pta_chain<P: HsmPal>(
         return Err(HsmError::PartFinalPtaMismatch);
     }
 
-    // `validate_chain` does not pin the terminal (leaf) certificate's
-    // subject DN, SKID, or CA constraints. Re-read and parse the terminal
-    // PTA certificate so its profile can be enforced against the
-    // deterministic subject/SKID/CA constraints the on-demand slot-2 PID
-    // leaf depends on; otherwise finalization could accept a PTA that no
-    // future PID leaf can chain to.
-    let terminal = cert_descriptors.last().ok_or(HsmError::InvalidArg)?;
-    let terminal_len = usize::from(terminal.length.get());
-    if terminal_len == 0 || terminal_len > MAX_CERT_DER_LEN {
-        return Err(HsmError::InvalidArg);
-    }
-    let pta_der = alloc.dma_alloc(terminal_len)?;
-    copy_oob(pal, io, &oob, usize::from(terminal.index), pta_der).await?;
+    // `validate_issuing_chain` does not pin the terminal certificate's
+    // subject DN or SKID. Parse the **same snapshot** the walk verified
+    // and enforce the deterministic subject/SKID/CA profile the on-demand
+    // slot-2 PID leaf depends on; otherwise finalization could accept a
+    // PTA that no future PID leaf can chain to.
     let pta_cert = parse_cert(pta_der)?;
     super::pta::validate_pta_profile(pal, io, alloc, &pta_cert).await?;
 

@@ -713,8 +713,12 @@ fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 ///
 /// Retrieves `GetCertChainInfo` before and after fetching all certificates
 /// and returns [`HsmError::CertChainChanged`] if the count or thumbprint
-/// changed in between. Slot 2 checks only the count because its fresh
-/// certificates have independently generated thumbprints.
+/// changed in between.
+///
+/// TBOR slot 2 is special: it mints a fresh, independently randomized PID
+/// certificate on every access (count always 1, thumbprint deliberately
+/// ignored), so the stability probes add no value and only cost redundant
+/// certificate generations. For that slot certificate 0 is fetched directly.
 ///
 /// Returns `InternalError` if the certificate count is zero (a partition
 /// must always have a provisioned cert chain).
@@ -728,6 +732,18 @@ pub(super) fn fetch_cert_chain_checked(
     rev: HsmApiRev,
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
+    // TBOR slot 2 mints a fresh, independently randomized PID certificate on
+    // every access: its `GetCertChainInfo` thumbprint is deliberately ignored
+    // (see the `slot_id != 2` guard below) and its count is always 1. The
+    // pre/post-fetch stability probes therefore provide no guarantee for this
+    // slot while each triggers a redundant certificate generation and P-384
+    // signature in the firmware. Fetch certificate 0 directly instead.
+    if rev_supports_tbor(rev) && slot_id == 2 {
+        let der = get_cert(dev, rev, slot_id, 0)?;
+        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
+        return Ok((pem, der));
+    }
+
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
     if count == 0 {
         return Err(HsmError::InternalError);

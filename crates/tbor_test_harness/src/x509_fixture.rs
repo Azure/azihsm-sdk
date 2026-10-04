@@ -372,6 +372,84 @@ pub fn make_pta_chain_wrong_skid(pota_ca: &CaKey, pta_pub_sec1: &[u8; SEC1_PUB_L
         ),
     }
 }
+
+/// Build a POTA-anchored root→PTA chain whose **self-signed root CA
+/// constrains the certification path to zero** (`pathLenConstraint == 0`),
+/// leaving no depth budget for the PTA to go on and issue the firmware's
+/// on-demand slot-2 PID leaf.  Every other property is conformant — correct
+/// POTA anchor, partition PTA key, and PTA subject/SKID/CA profile — so
+/// finalization must reject the chain solely on the ancestor path-length
+/// constraint (`X509PathLenExceeded`) now that it validates the terminal
+/// PTA as an issuing CA.
+pub fn make_pta_chain_constrained_root(
+    pota_ca: &CaKey,
+    pta_pub_sec1: &[u8; SEC1_PUB_LEN],
+) -> PtaChain {
+    PtaChain {
+        root_der: build_constrained_root(pota_ca),
+        pta_der: build_pta_intermediate(pta_pub_sec1, pota_ca),
+    }
+}
+
+/// Build a self-signed POTA root CA certificate identical in identity to
+/// [`build_root`] (same CN/SN and SKID, so a conformant PTA still chains to
+/// it) but carrying `pathLenConstraint == 0`, i.e. it may certify
+/// end-entity leaves only, never a further issuing CA.  The root template
+/// used by [`build_root`] omits `pathLenConstraint`, so this reuses the
+/// intermediate-certificate builder (which emits one) with a subject Name
+/// equal to its issuer Name to keep the certificate self-signed.
+fn build_constrained_root(ca: &CaKey) -> Vec<u8> {
+    let subject = root_issuer_name_der();
+
+    let params = IntermediateCertParams {
+        public_key: &ca.pub_sec1,
+        serial_number: &serial(1),
+        not_before: NOT_BEFORE,
+        not_after: NOT_AFTER,
+        subject_cn: "",
+        subject_sn: "",
+        issuer_cn: ROOT_CN,
+        issuer_sn: ROOT_SN,
+        subject_key_id: &ca.ski(),
+        authority_key_id: &ca.ski(),
+        path_len: 0,
+    };
+
+    let mut tbs = [0u8; 1024];
+    let tbs_len =
+        cert_builder::intermediate_cert_tbs_with_subject_name(&params, &subject, &mut tbs)
+            .expect("constrained root subject");
+    let (r, s) = ca.sign(&tbs[..tbs_len]);
+
+    let mut out = vec![0u8; 1024];
+    let len =
+        cert_builder::assemble_cert(&tbs[..tbs_len], &r, &s, &mut out).expect("constrained root");
+    out.truncate(len);
+    out
+}
+
+/// Reproduce the exact issuer Name DER the intermediate-certificate builder
+/// stamps for the shared root identity (`ROOT_CN` / `ROOT_SN`).  Feeding
+/// this back as the subject Name yields `issuer == subject`, the byte-for-
+/// byte equality the chain validator requires of a self-signed root.
+fn root_issuer_name_der() -> Vec<u8> {
+    use azihsm_crypto::x509_builder::intermediate_cert;
+
+    let mut tbs = intermediate_cert::TBS_TEMPLATE;
+    tbs[intermediate_cert::ISSUER_CN_OFFSET..][..intermediate_cert::ISSUER_CN_LEN]
+        .copy_from_slice(&pad_cn(ROOT_CN));
+    tbs[intermediate_cert::ISSUER_SN_OFFSET..][..intermediate_cert::ISSUER_SN_LEN]
+        .copy_from_slice(&pad_sn(ROOT_SN));
+
+    // The issuer `Name` is a short-form DER `SEQUENCE` beginning 13 header
+    // bytes (SEQUENCE/SET/SEQUENCE/OID/UTF8String) before the CN value; its
+    // total span is the 2-byte header plus the length declared in the
+    // header's length byte.
+    const NAME_HEADER_PREFIX: usize = 13;
+    let start = intermediate_cert::ISSUER_CN_OFFSET - NAME_HEADER_PREFIX;
+    let len = 2 + usize::from(tbs[start + 1]);
+    tbs[start..start + len].to_vec()
+}
 /// `leaf_pub_sec1` (e.g. an attestation-report signer's key), signed by
 /// `issuer` (a self-signed CA).  Unlike [`build_pta_intermediate`], the
 /// leaf is `cA=false` with `digitalSignature` key usage.

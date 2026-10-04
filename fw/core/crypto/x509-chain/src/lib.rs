@@ -61,5 +61,6 @@ pub use types::EcPubKey;
 pub use types::SigAlgo;
 pub use types::StepResult;
 pub use validate::validate_chain;
+pub use validate::validate_issuing_chain;
 pub use validate::ChainValidator;
 pub use validate::MAX_CERT_DER_LEN;

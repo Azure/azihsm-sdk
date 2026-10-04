@@ -29,6 +29,7 @@
 
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_constrained_root;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_wrong_skid;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_wrong_subject;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
@@ -137,4 +138,33 @@ fn part_final_reject_pta_wrong_skid() {
         .part_final(&session, &policy, &[], &chain.der_items())
         .expect_err("a PTA cert with a non-profile SKID must be rejected");
     assert_fw_rejects(&err, TborStatus::PartFinalPtaMismatch);
+}
+
+/// A POTA-anchored chain carrying the correct partition PTA key and a fully
+/// conformant PTA profile, but whose root CA constrains the path length to
+/// zero, must be rejected: the terminal PTA is validated as an *issuing* CA
+/// (it must later sign the on-demand slot-2 PID leaf), so a root that
+/// forbids any further CA beneath it leaves no path-length budget for the
+/// PTA. Accepting it would finalize a partition whose eventual
+/// POTA→PTA→PID evidence chain could never validate.
+#[test]
+fn part_final_reject_pta_constrained_ancestor() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+
+    // Correct POTA anchor, partition PTA key, and PTA profile, but the root
+    // CA has `pathLenConstraint == 0`, so the PTA cannot act as an issuing
+    // CA for the slot-2 PID leaf.
+    let chain = make_pta_chain_constrained_root(&pota, &pta_pub_from_csr(&init.pta_csr));
+
+    let err = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect_err("a PTA under a path-length-constrained root must be rejected");
+    assert_fw_rejects(&err, TborStatus::X509PathLenExceeded);
 }
