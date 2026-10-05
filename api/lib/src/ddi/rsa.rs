@@ -256,6 +256,13 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
     priv_key_props.ensure_scope_supported(unwrapping_key.session().is_ex())?;
+    // Guard the public half too and require both halves to resolve to the
+    // same masking scope so an explicit public scope is neither silently
+    // dropped (MBOR) nor allowed to diverge from the private key (TBOR).
+    pub_key_props.ensure_scope_supported(unwrapping_key.session().is_ex())?;
+    if priv_key_props.tbor_scope() != pub_key_props.tbor_scope() {
+        return Err(HsmError::InvalidKeyProps);
+    }
     if unwrapping_key.session().is_ex() {
         rsa_aes_unwrap_key_pair_tbor(
             unwrapping_key,

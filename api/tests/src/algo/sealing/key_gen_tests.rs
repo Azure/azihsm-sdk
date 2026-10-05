@@ -224,3 +224,75 @@ fn sealing_key_gen_roundtrip_yields_distinct_keys() {
     assert_ne!(masked1, masked2);
     assert_ne!(pub1, pub2);
 }
+
+/// Sealing keys are session-lifetime keys: an explicit `SecurityDomain`
+/// scope is rejected up front by the host guard, before any device
+/// round-trip.
+#[test]
+fn sealing_key_gen_rejects_security_domain_scope() {
+    let _guard = PARTITION_LOCK.lock();
+    let session = new_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .can_derive(true)
+        .scope(HsmKeyScope::SecurityDomain)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+}
+
+/// An explicit `Local` scope round-trips: the device masks under the
+/// partition-local masking key and stamps the requested scope into the
+/// blob, so generation succeeds on a provisioned partition.
+#[test]
+fn sealing_key_gen_roundtrip_honors_explicit_local_scope() {
+    let _guard = PARTITION_LOCK.lock();
+    let session = crate::utils::sd_provision::finalized_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .can_derive(true)
+        .scope(HsmKeyScope::Local)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+        .expect("generate Local-scoped sealing key on a provisioned partition");
+
+    let masked = key.masked_key_vec().expect("masked key");
+    assert_eq!(masked.len(), MASKED_SEALING_KEY_LEN);
+}
+
+/// An explicit `Ephemeral` scope round-trips: the ephemeral masking key is
+/// provisioned at partition finalization, so generation succeeds and the
+/// device stamps the requested scope into the masked blob.
+#[test]
+fn sealing_key_gen_roundtrip_honors_ephemeral_scope() {
+    let _guard = PARTITION_LOCK.lock();
+    let session = crate::utils::sd_provision::finalized_co_session();
+
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Sealing)
+        .bits(384)
+        .can_derive(true)
+        .scope(HsmKeyScope::Ephemeral)
+        .build()
+        .expect("build props");
+
+    let mut algo = HsmSealingKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+        .expect("generate Ephemeral-scoped sealing key on a provisioned partition");
+
+    let masked = key.masked_key_vec().expect("masked key");
+    assert_eq!(masked.len(), MASKED_SEALING_KEY_LEN);
+}

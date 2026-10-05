@@ -106,7 +106,11 @@ impl HsmEccPrivateKey {
             Err(HsmError::InvalidKeyProps)?;
         }
 
-        if priv_props.is_session() != pub_props.is_session() {
+        // Both halves of the pair must resolve to the same effective
+        // masking scope. Comparing the TBOR scope folds in the legacy
+        // SESSION flag plus any explicit scope, so a non-session public
+        // scope can no longer be silently ignored.
+        if priv_props.tbor_scope() != pub_props.tbor_scope() {
             Err(HsmError::InvalidKeyProps)?;
         }
 
@@ -192,6 +196,9 @@ impl HsmEccKeyGenAlgo {
         pub_key_props: HsmKeyProps,
     ) -> HsmResult<(HsmEccPrivateKey, HsmEccPublicKey)> {
         HsmEccPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
+        // The private half's scope is guarded inside `ecc_generate_key`;
+        // reject an unsupported explicit scope on the public half too.
+        pub_key_props.ensure_scope_supported(session.is_ex())?;
         let (handle, priv_key_props, pub_key_props) =
             ddi::ecc_generate_key(session, priv_key_props)?;
         let Some(pub_key_der) = pub_key_props.pub_key_der() else {

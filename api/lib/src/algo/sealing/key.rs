@@ -117,11 +117,21 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         // Validate key properties before generating the key.
         HsmSealingKey::validate_props(&props)?;
 
+        // Sealing keys are session-lifetime keys: only Session, Ephemeral,
+        // or Local scopes are valid. SecurityDomain is rejected; an unset
+        // scope defaults to Local for backward compatibility.
+        let scope = match props.scope() {
+            None | Some(HsmKeyScope::Local) => KeyScope::Local,
+            Some(HsmKeyScope::Session) => KeyScope::Session,
+            Some(HsmKeyScope::Ephemeral) => KeyScope::Ephemeral,
+            Some(HsmKeyScope::SecurityDomain) => return Err(HsmError::InvalidKeyProps),
+        };
+
         // Cache the masked blob and public key in props. The key is
         // unpinned (`Unpinned`) until unmasked on-use. Masked under
         // the partition-local masking key so the blob survives across
         // launches for unmask-on-use.
-        let (masked_key, pub_key_der) = ddi::sd_sealing_key_gen(session, KeyScope::Local as u8)?;
+        let (masked_key, pub_key_der) = ddi::sd_sealing_key_gen(session, scope as u8)?;
         let mut props = props;
         props.set_masked_key(&masked_key);
         props.set_pub_key_der(&pub_key_der);
