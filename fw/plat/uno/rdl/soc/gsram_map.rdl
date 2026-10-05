@@ -9,7 +9,8 @@
 //
 // Region layout:
 //   0x01110 - 0x012FC  BKS table (device-global, 12 × 41-byte entries)
-//   0x012FC - 0x0135C  HSM seed table (UDS + FMC-CDI, 2 × 48-byte seeds)
+//   0x012FC - 0x01360  FIPS provisioned keys (SP KDF key + CP mask key + flag)
+//   0x01360 - 0x013C0  HSM seed table (UDS + FMC-CDI, 2 × 48-byte seeds)
 //   0x07000            BOOT_STATUS (4 B)
 //   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
 //   0x0E440 - 0x0EF44  IIC queues (ISQ, ICQ, IO_SQ, ICQ tail shadow)
@@ -47,12 +48,43 @@ mem bks_table_entry_t {
 
 
 // ══════════════════════════════════════════════════════════════
+// FIPS Provisioned Keys (SP-populated, secure-provisioning block)
+// ══════════════════════════════════════════════════════════════
+//
+// Mirrors the reference firmware's GsRamMemMap FIPS provisioned keys
+// block at GSRAM offset 0x12FC (abs 0x6100_12FC), immediately after the
+// BKS table. A contiguous 100 B block matching the SP-side
+// `struct fips_provisioned_keys` layout:
+//   0x12FC - 0x132C  sp_fips_provisioned_keys  (48 B, SP KDF key, RO)
+//   0x132C - 0x135C  cp_fips_provisioned_keys  (48 B, CP mask key, RW)
+//   0x135C           fips_provisioned_keys_flag (1 B) — keys provisioned
+//                    via the secure provisioning process
+//   0x135D - 0x1360  reserved (3 B) — packs the block to a 4-byte tail
+// The 48-byte key blobs are opaque key material, modeled as byte-granular
+// (memwidth = 8) mems; the flag and its reserved tail share one 4-byte
+// register so the block stays word-aligned at 0x1360.
+
+mem fips_prov_key_t {
+    desc = "48-byte FIPS provisioned key blob (SP KDF key / CP mask key).";
+    mementries = 48;
+    memwidth   = 8;
+};
+
+reg fips_prov_flag_t {
+    regwidth = 32;
+    desc = "FIPS provisioned-keys flag (byte 0) plus 3 reserved bytes.";
+    field { sw = rw; hw = r; } FLAG[7:0] = 0x0;
+    field { sw = rw; hw = r; } RSVD[31:8] = 0x0;
+};
+
+
+// ══════════════════════════════════════════════════════════════
 // HSM Seed Table (device-rooted, SP-populated, read-only)
 // ══════════════════════════════════════════════════════════════
 //
 // Mirrors the reference firmware's GsRamMemMap::hsm_seed_table at the
-// identical GSRAM offset 0x12FC (abs 0x6100_12FC), immediately after
-// the BKS table. 2 packed 48-byte entries = 96 B (0x60):
+// identical GSRAM offset 0x1360 (abs 0x6100_1360), immediately after
+// the FIPS provisioned keys block. 2 packed 48-byte entries = 96 B (0x60):
 //   entry[0] = UDS seed      (firmware-state-independent device root)
 //   entry[1] = FMC-CDI seed  (DICE-CDI / firmware-measurement-bound)
 // Each entry is a bare 48-byte HMAC-SHA384 output written by the HSP
@@ -533,10 +565,16 @@ addrmap io_gsram {
     // ─── BKS table (device-global, SP-populated): 12 × 41-byte entries ───
     bks_table_entry_t BKS_TABLE[12]    @ 0x01110 += 0x29;  // 0x1110 - 0x12FC
 
+    // ─── FIPS provisioned keys (SP-populated): 100-byte block ───
+    //   SP KDF key (RO) + CP mask key (RW) + provisioned flag (+ reserved)
+    fips_prov_key_t  SP_FIPS_PROVISIONED_KEYS @ 0x012FC += 0x30;  // 0x12FC - 0x132C
+    fips_prov_key_t  CP_FIPS_PROVISIONED_KEYS @ 0x0132C += 0x30;  // 0x132C - 0x135C
+    fips_prov_flag_t FIPS_PROVISIONED_KEYS_FLAG @ 0x0135C;        // 0x135C - 0x1360
+
     // ─── HSM seed table (device-rooted, SP-populated): 2 × 48-byte seeds ───
     //   [0] = UDS seed (firmware-state-independent)
     //   [1] = FMC-CDI seed (firmware-measurement-bound)
-    hsm_seed_entry_t HSM_SEED_TABLE[2] @ 0x012FC += 0x30;  // 0x12FC - 0x135C
+    hsm_seed_entry_t HSM_SEED_TABLE[2] @ 0x01360 += 0x30;  // 0x1360 - 0x13C0
 
     // ─── Boot ───
     boot_status_t    BOOT_STATUS        @ 0x07000;
