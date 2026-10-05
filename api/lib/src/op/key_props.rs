@@ -115,6 +115,39 @@ impl HsmKeyFlags {
         self.contains(HsmKeyFlags::DERIVE)
     }
 }
+/// Masking scope of a key generated through a TBOR (V2) session.
+///
+/// The scope selects which masking key protects the key material and
+/// therefore the key's lifetime and recoverability domain. It is the host
+/// mirror of the firmware `HsmKeyScope` and is carried on the wire as its raw
+/// `u8` discriminant. Scope only applies to TBOR sessions; it is ignored for
+/// MBOR (V1) sessions, which express lifetime through the `SESSION` flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HsmKeyScope {
+    /// Usable only within the originating session.
+    Session = 1,
+    /// Usable only within the current firmware incarnation.
+    Ephemeral = 2,
+    /// Recoverable with the partition's local masking-key backup.
+    Local = 3,
+    /// Recoverable with the security domain.
+    SecurityDomain = 4,
+}
+
+impl HsmKeyScope {
+    /// Builds a scope from its raw TBOR `u8` discriminant.
+    pub(crate) fn from_u8(value: u8) -> HsmResult<Self> {
+        match value {
+            1 => Ok(Self::Session),
+            2 => Ok(Self::Ephemeral),
+            3 => Ok(Self::Local),
+            4 => Ok(Self::SecurityDomain),
+            _ => Err(HsmError::InvalidKeyProps),
+        }
+    }
+}
+
 /// Key properties and attributes.
 ///
 /// Contains comprehensive information about a cryptographic key including its
@@ -131,6 +164,7 @@ pub struct HsmKeyProps {
     masked_key: Option<Vec<u8>>,
     pub_key_der: Option<Vec<u8>>,
     flags: HsmKeyFlags,
+    scope: Option<HsmKeyScope>,
 }
 
 impl HsmKeyProps {
@@ -151,6 +185,7 @@ impl HsmKeyProps {
             masked_key: None,
             pub_key_der: None,
             flags,
+            scope: None,
         }
     }
 
@@ -158,17 +193,41 @@ impl HsmKeyProps {
         self.flags
     }
 
+    /// Returns the explicit TBOR masking scope, if one was requested.
+    ///
+    /// `None` means the scope is derived from the `SESSION` flag for backward
+    /// compatibility (see [`HsmKeyProps::tbor_scope`]).
+    pub fn scope(&self) -> Option<HsmKeyScope> {
+        self.scope
+    }
+
+    /// Rejects an explicit masking scope on a non-TBOR (MBOR / V1) session,
+    /// where scope selection is unsupported and would otherwise be silently
+    /// ignored. A no-op when no explicit scope was requested.
+    pub(crate) fn ensure_scope_supported(&self, is_tbor: bool) -> HsmResult<()> {
+        if self.scope.is_some() && !is_tbor {
+            return Err(HsmError::UnsupportedApiRevision);
+        }
+        Ok(())
+    }
+
     /// Returns the 1-byte TBOR `KeyScope` discriminant for this key
-    /// (mirror of the firmware `HsmKeyScope`): session keys use the
-    /// per-session masking key; persistent keys use the partition-local
-    /// masking key (requires a finalized partition).
+    /// (mirror of the firmware `HsmKeyScope`).
+    ///
+    /// When an explicit [`HsmKeyScope`] was requested it is authoritative.
+    /// Otherwise the scope is derived from the `SESSION` flag for backward
+    /// compatibility: session keys use the per-session masking key; persistent
+    /// keys use the partition-local masking key (requires a finalized
+    /// partition).
     pub(crate) fn tbor_scope(&self) -> u8 {
         /// TBOR `KeyScope::Session` discriminant.
         const TBOR_SCOPE_SESSION: u8 = 1;
         /// TBOR `KeyScope::Local` discriminant.
         const TBOR_SCOPE_LOCAL: u8 = 3;
 
-        if self.is_session() {
+        if let Some(scope) = self.scope {
+            scope as u8
+        } else if self.is_session() {
             TBOR_SCOPE_SESSION
         } else {
             TBOR_SCOPE_LOCAL
@@ -320,6 +379,7 @@ pub struct HsmKeyPropsBuilder {
     bit_len: Option<u32>,
     ecc_curve: Option<HsmEccCurve>,
     flags: HsmKeyFlags,
+    scope: Option<HsmKeyScope>,
 }
 
 impl HsmKeyPropsBuilder {
@@ -358,6 +418,15 @@ impl HsmKeyPropsBuilder {
     /// Sets the session flag.
     pub fn is_session(mut self, value: bool) -> Self {
         self.flags.set(HsmKeyFlags::SESSION, value);
+        self
+    }
+
+    /// Sets an explicit TBOR masking scope.
+    ///
+    /// Only honored for TBOR (V2) sessions. When unset, the scope is derived
+    /// from the session flag for backward compatibility.
+    pub fn scope(mut self, scope: HsmKeyScope) -> Self {
+        self.scope = Some(scope);
         self
     }
 
@@ -422,6 +491,7 @@ impl HsmKeyPropsBuilder {
             masked_key: None,
             pub_key_der: None,
             flags: self.flags,
+            scope: self.scope,
         })
     }
 }

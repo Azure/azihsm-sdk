@@ -281,6 +281,25 @@ impl HsmMaskedKey {
         Ok((priv_key_props, pub_key_props))
     }
 
+    pub(crate) fn tbor_scope(masked_key: &[u8]) -> HsmResult<u8> {
+        Self::parse_tbor_metadata(masked_key)?;
+        let envelope =
+            aead_envelope::inspect(masked_key).map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
+        let metadata = TborMaskedKeyMetadata::ref_from_bytes(envelope.aad)
+            .map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
+        Ok(((metadata.usage_flags.get() >> TBOR_KEY_SCOPE_SHIFT) & TBOR_KEY_SCOPE_MASK) as u8)
+    }
+
+    /// Verifies the device stamped the `requested` masking scope into the
+    /// returned masked key. Firmware selects the masking key from the
+    /// requested scope, so a mismatch means the request was not honored.
+    pub(crate) fn verify_scope(masked_key: &[u8], requested: u8) -> HsmResult<()> {
+        if Self::tbor_scope(masked_key)? != requested {
+            return Err(HsmError::InvalidKeyProps);
+        }
+        Ok(())
+    }
+
     /// Parses the masked key metadata from the masked key blob.
     ///
     /// # Arguments
@@ -636,6 +655,63 @@ impl TryFrom<DdiMaskedKeyAttributes> for HsmMaskedKeyAttributes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unchecked_ecc_blob(scope: u8) -> Vec<u8> {
+        let mut blob = vec![0; 20 + TBOR_MASKED_KEY_METADATA_LEN + 48 + 16];
+        blob[..8].copy_from_slice(b"AEAD\x03\x00\x00\xc0");
+        blob[20..24].copy_from_slice(b"MKEY");
+        blob[24..26].copy_from_slice(&1u16.to_le_bytes());
+        blob[26] = KEY_KIND_ECC384_PRIVATE;
+        let usage = HsmMaskedKeyAttributes::SIGN.bits()
+            | HsmMaskedKeyAttributes::LOCAL.bits()
+            | (u64::from(scope) << TBOR_KEY_SCOPE_SHIFT);
+        blob[28..36].copy_from_slice(&usage.to_le_bytes());
+        blob
+    }
+
+    #[test]
+    fn masked_ecc_signing_info_reports_all_supported_scopes_without_authenticating() {
+        for scope in [
+            HsmKeyScope::Session,
+            HsmKeyScope::Ephemeral,
+            HsmKeyScope::Local,
+            HsmKeyScope::SecurityDomain,
+        ] {
+            let blob = unchecked_ecc_blob(scope as u8);
+            assert_eq!(
+                HsmEccSignAlgo::masked_key_info(&blob),
+                Ok((scope, HsmEccCurve::P384))
+            );
+            assert_eq!(HsmMaskedKey::tbor_scope(&blob), Ok(scope as u8));
+        }
+    }
+
+    #[test]
+    fn masked_ecc_signing_info_rejects_invalid_framing_scope_and_usage() {
+        let blob = unchecked_ecc_blob(HsmKeyScope::Local as u8);
+        for length in 0..blob.len() {
+            assert!(HsmEccSignAlgo::masked_key_info(&blob[..length]).is_err());
+        }
+        for scope in [0, 5, 6, 7] {
+            assert_eq!(
+                HsmEccSignAlgo::masked_key_info(&unchecked_ecc_blob(scope)),
+                Err(HsmError::InvalidKeyProps)
+            );
+        }
+        for offset in [0, 4, 5, 20, 24, 26, 211] {
+            let mut invalid = blob.clone();
+            invalid[offset] = 0xff;
+            assert!(HsmEccSignAlgo::masked_key_info(&invalid).is_err());
+        }
+        let mut no_sign = blob;
+        no_sign[28..36].copy_from_slice(
+            &((3u64 << TBOR_KEY_SCOPE_SHIFT) | HsmMaskedKeyAttributes::DERIVE.bits()).to_le_bytes(),
+        );
+        assert_eq!(
+            HsmEccSignAlgo::masked_key_info(&no_sign),
+            Err(HsmError::InvalidKey)
+        );
+    }
 
     #[test]
     fn rsa_crt_payload_len_matches_backend() {

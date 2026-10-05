@@ -115,6 +115,7 @@ pub(crate) fn rsa_aes_unwrap_key_raw_no_res(
     hash_algo: HsmHashAlgo,
     key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    key_props.ensure_scope_supported(key.session().is_ex())?;
     if key.session().is_ex() {
         rsa_aes_unwrap_key_tbor(key, wrapped_key, hash_algo, key_props)
     } else {
@@ -197,9 +198,10 @@ fn rsa_aes_unwrap_key_tbor(
     let mut wrapped_blob = wrapped_key.to_vec();
     wrapped_blob[..unwrapping_modulus_len].reverse();
 
+    let scope = key_props.tbor_scope();
     let req = TborUnwrapKeyReq {
         session_id: unwrapping_key.session().ex_session_id()?,
-        scope: key_props.tbor_scope(),
+        scope,
         key_class: KEY_CLASS_AES,
         key_usage: tbor_unwrap_key_usage(&key_props)?,
         oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
@@ -216,6 +218,7 @@ fn rsa_aes_unwrap_key_tbor(
         return Err(HsmError::InvalidKeyProps);
     }
 
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     let dev_key_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
     if !key_props.validate_dev_props(&dev_key_props) {
         return Err(HsmError::InvalidKeyProps);
@@ -248,6 +251,7 @@ pub(crate) fn rsa_aes_unwrap_key_pair(
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    priv_key_props.ensure_scope_supported(unwrapping_key.session().is_ex())?;
     if unwrapping_key.session().is_ex() {
         rsa_aes_unwrap_key_pair_tbor(
             unwrapping_key,
@@ -537,9 +541,10 @@ fn rsa_aes_unwrap_key_pair_tbor(
     let mut wrapped_blob = wrapped_key.to_vec();
     wrapped_blob[..unwrapping_modulus_len].reverse();
 
+    let scope = priv_key_props.tbor_scope();
     let req = TborUnwrapKeyReq {
         session_id: unwrapping_key.session().ex_session_id()?,
-        scope: priv_key_props.tbor_scope(),
+        scope,
         key_class,
         key_usage: tbor_unwrap_key_usage(&priv_key_props)?,
         oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
@@ -555,6 +560,7 @@ fn rsa_aes_unwrap_key_pair_tbor(
     if resp.key_kind != expected_key_kind {
         return Err(HsmError::InvalidKeyProps);
     }
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     let pub_key_der = tbor_unwrapped_pub_key_to_der(&priv_key_props, &resp.pub_key)?;
     let (dev_priv_key_props, dev_pub_key_props) =
         HsmMaskedKey::to_key_pair_props(&resp.masked_key, &pub_key_der)?;
