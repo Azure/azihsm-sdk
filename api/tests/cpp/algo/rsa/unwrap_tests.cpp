@@ -472,23 +472,15 @@ static void verify_wrong_unwrapping_key_rejected(PartitionListHandle &part_list,
         ) << "requires at least two partitions to guarantee distinct wrapping-key contexts";
     }
 
-    auto source_path = part_list.get_path(0);
-    auto other_path = part_list.get_path(1);
-
-    auto source_partition = PartitionHandle(source_path);
-    auto other_partition = PartitionHandle(other_path);
-
     std::vector<uint8_t> wrapped_blob;
     auto_key wrong_unwrapping_private_key;
 
-    {
-        SessionHandle source_session(source_partition.get());
-
+    part_list.with_session(0, [&](azihsm_handle source_session) {
         auto_key source_wrapping_private_key;
         auto_key source_wrapping_public_key;
 
         auto err = generate_rsa_unwrapping_keypair(
-            source_session.get(),
+            source_session,
             source_wrapping_private_key.get_ptr(),
             source_wrapping_public_key.get_ptr()
         );
@@ -502,19 +494,25 @@ static void verify_wrong_unwrapping_key_rejected(PartitionListHandle &part_list,
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_FALSE(wrapped_blob.empty());
+    });
+    if (::testing::Test::HasFatalFailure())
+    {
+        return;
     }
 
-    {
-        SessionHandle other_session(other_partition.get());
-
+    part_list.with_session(1, [&](azihsm_handle other_session) {
         auto_key wrong_wrapping_public_key;
 
         auto err = generate_rsa_unwrapping_keypair(
-            other_session.get(),
+            other_session,
             wrong_unwrapping_private_key.get_ptr(),
             wrong_wrapping_public_key.get_ptr()
         );
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+    });
+    if (::testing::Test::HasFatalFailure())
+    {
+        return;
     }
 
     azihsm_buffer wrapped_key_buf{ .ptr = wrapped_blob.data(),

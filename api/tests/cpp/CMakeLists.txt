@@ -75,6 +75,11 @@ set(SOURCE
     algo/ecc/unwrap_tests.cpp
     algo/ecc/unwrap_property_tests.cpp
     algo/ecc/unwrap_semantic_tests.cpp
+    algo/rsa/keygen_tests.cpp
+    algo/rsa/enc_dec_tests.cpp
+    algo/rsa/rsa_static_der.cpp
+    algo/rsa/sign_verify_tests.cpp
+    algo/rsa/unwrap_tests.cpp
     algo/sha/digest_tests.cpp
 )
 
@@ -100,12 +105,7 @@ else()
         algo/aes/xts_enc_dec_tests.cpp
         algo/aes/keygen_tests.cpp
         algo/ecc/keyreport_tests.cpp
-        algo/rsa/keygen_tests.cpp
         algo/rsa/keyreport_tests.cpp
-        algo/rsa/enc_dec_tests.cpp
-        algo/rsa/rsa_static_der.cpp
-        algo/rsa/sign_verify_tests.cpp
-        algo/rsa/unwrap_tests.cpp
         algo/hmac/sign_verify_tests.cpp
         algo/hmac/keygen_tests.cpp
         algo/secret/unmask_tests.cpp
