@@ -37,6 +37,8 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
+use zerocopy::FromBytes;
+use zerocopy::IntoBytes;
 use zeroize::Zeroizing;
 
 use crate::UnoHsmPal;
@@ -170,7 +172,9 @@ impl HsmVault for UnoHsmPal {
         // PFN disable, whose teardown zeroes every bulk key the function owns
         // (as in the reference firmware, which also only resets the slot
         // bitmap here).  Clear the vault first, then free the slot bitmap so
-        // the bits stay reserved across the vault await.
+        // the bits stay reserved across the vault await.  Holding
+        // `fp_bulk_lock` keeps any bulk-key create from interleaving.
+        let _guard = self.fp_bulk_lock.lock().await;
         let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
         vault(io).clear(self, io).await?;
         fp_slots_free_mask(res_mask);
@@ -241,10 +245,8 @@ use crate::ipc::AesBulk256KeyId;
 use crate::ipc::AesBulkKeyType;
 use crate::ipc::AesKeyFlag;
 use crate::ipc::IPC_MESSAGE_LENGTH;
-use crate::ipc::IPC_MESSAGE_PAYLOAD_LEN;
 use crate::ipc::IpcMessage;
 use crate::ipc::IpcMessageDecoder;
-use crate::ipc::IpcMessageEncoderTrait;
 use crate::ipc::IpcMessageHeader;
 use crate::ipc::IpcMessageKeyUpdate;
 use crate::ipc::IpcMessageStatusCode;
@@ -527,20 +529,26 @@ async fn fp_delete_session_only(
 /// reply to an error.
 ///
 /// `info` is borrowed so the caller keeps the only owned copy (and scrubs it);
-/// the encoded request and the response buffer are wrapped in [`Zeroizing`]
-/// so any raw key material they hold is scrubbed on every exit from this
-/// future, including a mid-send drop.
+/// the request is built in place in a [`Zeroizing`] buffer, and the response
+/// buffer is [`Zeroizing`] too, so any raw key material they hold is scrubbed
+/// on every exit from this future, including a mid-send drop.
+///
+/// The shared PSRAM ring slots are not scrubbed here: the engine owns them
+/// and zeroizes `key_data` in the IPC payload after consuming it, before its
+/// ack (mcr-hsm `docs/hsm/AesBulkKeyOwnership.md`, Create step 6), so the
+/// echoed reply carries no key bytes either.
 async fn fp_send_key_update(pal: &UnoHsmPal, info: &KeyUpdateInfo) -> HsmResult<()> {
-    let request = Zeroizing::new(
-        IpcMessageKeyUpdate {
-            header: IpcMessageHeader::new()
-                .with_msg_op(IpcMessageKeyUpdate::OP as u32)
-                .with_length(IpcMessageKeyUpdate::LEN as u32),
-            info: *info,
-            _rsvd: [0u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
-        }
-        .encode(),
-    );
+    // Build the request in place so the key bytes are written only into this
+    // scrubbed-on-drop buffer, never into a typed temporary that is moved.
+    let mut request = Zeroizing::new(IpcMessage {
+        data: [0u32; IPC_MESSAGE_LENGTH],
+    });
+    let msg = IpcMessageKeyUpdate::mut_from_bytes(request.as_mut_bytes())
+        .map_err(|_| HsmError::InternalError)?;
+    msg.header = IpcMessageHeader::new()
+        .with_msg_op(IpcMessageKeyUpdate::OP as u32)
+        .with_length(IpcMessageKeyUpdate::LEN as u32);
+    msg.info.as_mut_bytes().copy_from_slice(info.as_bytes());
 
     // The reply may echo request payload bytes, so it is scrubbed on drop too.
     let mut resp = Zeroizing::new(IpcMessage {

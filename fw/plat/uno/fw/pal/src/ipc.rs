@@ -25,6 +25,8 @@ use open_enum::open_enum;
 use zerocopy::FromBytes;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
+use zeroize::Zeroize;
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -59,7 +61,7 @@ pub struct IpcMessage {
 
 const _: () = assert!(core::mem::size_of::<IpcMessage>() == IPC_MESSAGE_LENGTH * 4);
 
-impl zeroize::Zeroize for IpcMessage {
+impl Zeroize for IpcMessage {
     fn zeroize(&mut self) {
         self.data.zeroize();
     }
@@ -786,7 +788,7 @@ pub struct KeyUpdateInfo {
     pub key_data: [u8; 32],
 }
 
-impl zeroize::Zeroize for KeyUpdateInfo {
+impl Zeroize for KeyUpdateInfo {
     fn zeroize(&mut self) {
         self.key_data.zeroize();
     }
@@ -794,7 +796,7 @@ impl zeroize::Zeroize for KeyUpdateInfo {
 
 /// `AesKeyUpdate` IPC message body (opcode `AesKeyUpdate`, 0x7).
 #[repr(C)]
-#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes, KnownLayout)]
 pub struct IpcMessageKeyUpdate {
     /// IPC header fields.
     pub header: IpcMessageHeader,
@@ -826,13 +828,11 @@ impl IpcMessageEncoderTrait for IpcMessageKeyUpdate {
         // The typed body holds raw AES key material in `info.key_data`;
         // copy it into the wire `IpcMessage` and immediately scrub the
         // typed copy so no second stack image of the key lingers past this
-        // encode.  `fp_send_key_update` separately scrubs the returned
-        // `IpcMessage` after the send completes.
+        // encode.  The caller must scrub the returned `IpcMessage`.
         let mut ipc_message = IpcMessage {
             data: [0; IPC_MESSAGE_LENGTH],
         };
         ipc_message.as_mut_bytes().copy_from_slice(self.as_bytes());
-        use zeroize::Zeroize;
         self.info.key_data.zeroize();
         ipc_message
     }
