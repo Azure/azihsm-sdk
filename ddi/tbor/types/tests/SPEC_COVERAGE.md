@@ -204,7 +204,7 @@ responses byte-for-byte against 'azihsm_crypto'.
 | Switching algorithms on one active session does not leak Hash state | ✅ 🔁 | 'hash::hash_alternating_algorithms_match_host' | Alternates SHA-256, SHA-512, and SHA-384 |
 | Leading, embedded, trailing, and repeated zero bytes are preserved as message data | ✅ 🔁 | 'hash::hash_zero_byte_positions_match_host' | Guards against accidental zero-termination/truncation behavior |
 | CO and rotated-CU sessions produce identical digests for identical requests | ✅ 🔁 | 'hash::hash_matches_across_co_and_cu_sessions' | Sessions are exercised sequentially because the fixture may not permit concurrent authenticated CO/CU sessions |
-| Invalid-session request does not affect a separate valid session | ✅ | 📘 | `hash::hash_valid_session_usable_after_invalid_session_request` | Valid session remains usable after `FileHandleSessionIdDoesNotMatch` |
+| Invalid-session request does not affect a separate valid session | ✅ 🔁 |  `hash::hash_valid_session_usable_after_invalid_session_request` | Valid session remains usable after `FileHandleSessionIdDoesNotMatch` |
 | Closing a CO session releases it and a subsequently opened CU session can Hash normally | ✅ 🔁 | 'hash::hash_new_session_works_after_previous_session_closed' | Also confirms the closed session id is rejected |
 | Maximum 2048-byte Hash message succeeds | ✅ 🔁 | 'hash::hash_max_message_length_matches_host' | Exercises the protocol maximum for all supported algorithms |
 | 2049-byte Hash message is rejected | ✅ | 'hash::hash_over_max_message_length_rejected' | Accepts rejection at the TBOR/firmware boundary without pinning where length validation occurs |
