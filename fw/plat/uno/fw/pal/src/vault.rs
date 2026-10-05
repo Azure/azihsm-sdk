@@ -265,23 +265,17 @@ const NUM_FP_TABLES: usize = 65;
 /// addresses bulk keys by `(vault_id = table, key_index = slot)`.
 static FP_SLOTS: SingleCell<[u8; NUM_FP_TABLES]> = SingleCell::new([0u8; NUM_FP_TABLES]);
 
-/// Translate a raw partition id ([`HsmIo::pid`], a SoC MemoryLocation id)
-/// into the PCIe function number the fast-path engine matches against.
+/// Validate a partition id ([`HsmIo::pid`]) as the PCIe function number the
+/// fast-path engine matches against.
 ///
 /// The FP engine scopes a bulk key by PCIe function; the host's GCM SQE
-/// carries that same PCIe function.  The PF's MemoryLocation id `0x10`
-/// maps to PCIe function `64`; VF MemoryLocation ids `0x20..=0x5F` map to
-/// VF functions `0..=63`.
+/// carries that same PCIe function.  Partition ids already use the dense
+/// PcieFunction numbering (PF `64`, VF `0..=63`), so a valid id passes
+/// through unchanged; an id naming no PCIe function is rejected.
 fn part_id_to_pcie_fn(part_id: u8) -> HsmResult<u8> {
-    const MEM_LOC_PF: u8 = 0x10;
-    const MEM_LOC_VF_START: u8 = 0x20;
-    const MEM_LOC_VF_END: u8 = 0x5F;
-    const PCIE_FN_PF: u8 = 64;
-    match part_id {
-        MEM_LOC_PF => Ok(PCIE_FN_PF),
-        MEM_LOC_VF_START..=MEM_LOC_VF_END => Ok(part_id - MEM_LOC_VF_START),
-        _ => Err(HsmError::InvalidArg),
-    }
+    crate::pal::pfn_to_axi_id(part_id)
+        .map(|_| part_id)
+        .ok_or(HsmError::InvalidArg)
 }
 
 /// Allocate a free FP bulk-key slot from one of the partition's owned
@@ -365,8 +359,7 @@ async fn fp_bulk_create(
         _ => return Err(HsmError::InvalidKeyType),
     };
 
-    // The engine scopes a bulk key by PCIe function; `io.pid()` is the raw
-    // SoC MemoryLocation id used elsewhere in the HSM, so translate first.
+    // The engine scopes a bulk key by PCIe function, which `io.pid()` carries.
     let pcie_fn = part_id_to_pcie_fn(u8::from(io.pid()))?;
     // Place the key in a free slot of one of the partition's owned tables;
     // `(vault_id, key_index)` addresses it in the engine.
