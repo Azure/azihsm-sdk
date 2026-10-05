@@ -10,7 +10,6 @@ use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::encrypt_mach_seed_envelope;
-use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
@@ -21,73 +20,6 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
-    let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
-    Ok(u.bytes(len)?.to_vec())
-}
-
-/// Post-seal mutation applied to the wire-valid `mach_seed_envelope`.
-///
-/// `None` ships the sealed envelope untouched so the handler advances
-/// past AEAD authentication into the policy / thumbprint / seed
-/// pipeline. The other variants exercise AEAD-reject and length-reject
-/// paths without leaving them buried under negligible-probability
-/// arbitrary-byte inputs.
-#[derive(Arbitrary, Debug)]
-enum EnvelopeMutation {
-    /// Ship the sealed envelope unchanged.
-    None,
-    /// XOR a fuzzed mask into a fuzzed offset (offset wrapped modulo
-    /// envelope length). Exercises AEAD tag / ciphertext tampering.
-    FlipByte { offset: u16, mask: u8 },
-    /// Truncate to `len % (envelope.len() + 1)` bytes. Exercises
-    /// short-envelope rejects and post-decrypt length checks.
-    Truncate { len: u16 },
-    /// Append fuzzed trailing bytes (bounded) to exercise over-length
-    /// rejects.
-    Append(#[arbitrary(with = bounded_appended_bytes)] Vec<u8>),
-}
-
-impl EnvelopeMutation {
-    fn apply(&self, envelope: &mut Vec<u8>) {
-        match self {
-            EnvelopeMutation::None => {}
-            EnvelopeMutation::FlipByte { offset, mask } => {
-                if !envelope.is_empty() && *mask != 0 {
-                    let idx = (*offset as usize) % envelope.len();
-                    envelope[idx] ^= *mask;
-                }
-            }
-            EnvelopeMutation::Truncate { len } => {
-                let cap = envelope.len() + 1;
-                envelope.truncate((*len as usize) % cap);
-            }
-            EnvelopeMutation::Append(extra) => {
-                envelope.extend_from_slice(extra);
-            }
-        }
-    }
-
-    /// `true` iff this mutation would leave the sealed envelope byte-
-    /// identical (matches the `None` variant or a no-op offset/mask/len/
-    /// extra choice inside a mutation variant). Drives the "expect
-    /// success" classification for the result assertion.
-    fn is_noop(&self, envelope: &[u8]) -> bool {
-        match self {
-            EnvelopeMutation::None => true,
-            EnvelopeMutation::FlipByte { mask, .. } => *mask == 0 || envelope.is_empty(),
-            EnvelopeMutation::Truncate { len } => {
-                // `Vec::truncate(new_len)` only shrinks when `new_len <
-                // envelope.len()`; `apply` computes
-                // `len % (envelope.len() + 1)` so a no-op requires the
-                // modulo to land on `envelope.len()`.
-                (*len as usize) % (envelope.len() + 1) == envelope.len()
-            }
-            EnvelopeMutation::Append(extra) => extra.is_empty(),
-        }
-    }
-}
-
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     /// 32-byte `mach_seed` plaintext sealed under the active session's
@@ -95,7 +27,7 @@ struct FuzzInput {
     /// FW handler advances past AEAD into the policy/seed pipeline.
     mach_seed: [u8; MACH_SEED_LEN],
     /// Optional post-seal mutation for reject-path coverage.
-    envelope_mutation: EnvelopeMutation,
+    envelope_mutation: common::EnvelopeMutation,
     /// Fixed-length fuzzed POTA thumbprint.
     pota_thumbprint: [u8; POTA_THUMBPRINT_LEN],
     /// Fixed-length fuzzed SATA thumbprint.
