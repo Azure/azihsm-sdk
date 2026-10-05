@@ -317,7 +317,9 @@ pub(crate) fn part_info(partition: &HsmPartition) -> HsmResult<HsmPartInfo> {
 ///
 /// Returns [`HsmError::InternalError`] if the certificate count is zero,
 /// and [`HsmError::CertChainChanged`] if the count or thumbprint changes
-/// between the pre- and post-fetch `GetCertChainInfo` reads.
+/// between the pre- and post-fetch `GetCertChainInfo` reads. This helper is
+/// only used for the production slot (slot 0); the regenerated TBOR slot-2
+/// PID certificate is served earlier in [`fetch_cert_chain_checked`].
 pub(super) fn fetch_cert_chain_checked_tbor(
     dev: &HsmDev,
     slot_id: u8,

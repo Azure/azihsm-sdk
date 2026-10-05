@@ -361,6 +361,29 @@ impl TestCtx {
         part_final_helper(&self.dev, session, part_policy, prev_local_mk_backup, certs)
     }
 
+    /// Issue `PartFinal` with caller-controlled `(index, length)`
+    /// descriptors and out-of-band items, so tests can exercise the
+    /// firmware's handling of malformed descriptor tables (for example
+    /// duplicate indices) the normal [`Self::part_final`] helper would
+    /// never emit.
+    pub fn part_final_raw(
+        &self,
+        session: &SessionHandshake,
+        part_policy: &[u8],
+        prev_local_mk_backup: &[u8],
+        descriptors: &[(u8, u16)],
+        oob_items: &[&[u8]],
+    ) -> DdiResult<TborPartFinalResp> {
+        crate::session::part_final_raw(
+            &self.dev,
+            session,
+            part_policy,
+            prev_local_mk_backup,
+            descriptors,
+            oob_items,
+        )
+    }
+
     /// Issue `ApiRev` and return the decoded response. Thin
     /// pass-through over the free helper.
     pub fn api_rev(&self) -> DdiResult<TborApiRevResp> {
