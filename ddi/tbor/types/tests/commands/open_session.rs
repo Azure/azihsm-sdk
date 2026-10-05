@@ -143,7 +143,6 @@ fn open_session_unsupported_suite_id() {
 fn session_open_finish_mac_tampered() {
     let base = TestCtx::new();
     let path = base.path().to_owned();
-    drop(base);
 
     for index in [0usize, 24, 47] {
         let ctx = TestCtx::new_with_path(&path);
