@@ -415,10 +415,21 @@ session.
 
 Creates a security domain under the calling session's partition from the
 unified partition policy, using the sender's masked SD-sealing key (from
-`azihsm_key_gen`) and the receiver's attestation evidence, and returns the
-three backups the firmware produces: the remote partition-owner-key backup
-(an HPKE-Auth seal of BKS3, 161 bytes), the local partition-owner-key backup
-(276 bytes), and the security-domain masking-key backup (260 bytes).
+`azihsm_key_gen`), the receiver key certificate chain (spec `RcvrCertChain`),
+and — when the policy requires it — the receiver's attestation evidence, and
+returns the three backups the firmware produces: the remote
+partition-owner-key backup (an HPKE-Auth seal of BKS3, 161 bytes), the local
+partition-owner-key backup (276 bytes), and the security-domain masking-key
+backup (260 bytes).
+
+The `receiver_cert_chain` is always validated and anchored to the policy SATA
+key; its leaf is the recipient public key (`RcvrPub`) the remote backup is
+sealed to. The `receiver_evidence` three-chain attestation is verified only
+when the policy sets `require_trusted_sa_key`: its partition-owner chain is
+anchored to the policy SAPOTA key and its report must attest the same
+`RcvrPub` recovered from `receiver_cert_chain`, otherwise the create is
+rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. When the flag is clear the
+evidence is ignored (pass empty chains and an empty report).
 
 The inputs are grouped into an
 [`azihsm_sd_create_remote_backup_params`](#azihsm_sd_create_remote_backup_params)
@@ -464,6 +475,7 @@ Input buffers for
 struct azihsm_sd_create_remote_backup_params {
     const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
+    struct azihsm_sd_cert_chain receiver_cert_chain;
     const struct azihsm_sd_evidence *receiver_evidence;
 };
 ```
@@ -472,7 +484,8 @@ struct azihsm_sd_create_remote_backup_params {
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
  | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | sender's masked SD-sealing key (276 B)             |
- | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence                      |
+ | receiver_cert_chain | [azihsm_sd_cert_chain](#azihsm_sd_cert_chain) | receiver key chain (spec `RcvrCertChain`), SATA-anchored; always required |
+ | receiver_evidence  | [azihsm_sd_evidence*](#azihsm_sd_evidence) | receiver attestation evidence; verified only when policy sets `require_trusted_sa_key` |
 
 ## azihsm_sd_reseal_remote_backup
 
@@ -539,10 +552,19 @@ Restore a security domain from a remote backup over a security-domain
 session.
 
 HPKE-opens the remote backup with the receiver's masked SD-sealing key
-(authenticated by the sender in `sender_evidence`), recovers the
-security-domain masking key from `prev_sd_mk_backup`, and returns the
-refreshed device-local backups: the local partition-owner-key backup
-(276 bytes) and the security-domain masking-key backup (260 bytes).
+(authenticated by the sender key recovered from `sender_cert_chain`),
+recovers the security-domain masking key from `prev_sd_mk_backup`, and
+returns the refreshed device-local backups: the local partition-owner-key
+backup (276 bytes) and the security-domain masking-key backup (260 bytes).
+
+The `sender_cert_chain` is always validated and anchored to the policy SATA
+key; its leaf is the sender public key (`SndrPub`) that sealed the remote
+backup. The `sender_evidence` three-chain attestation is verified only when
+the policy sets `require_trusted_sa_key`: its partition-owner chain is
+anchored to the policy SAPOTA key and its report must attest the same
+`SndrPub` recovered from `sender_cert_chain`, otherwise the restore is
+rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. When the flag is clear the
+evidence is ignored (pass empty chains and an empty report).
 
 The inputs are grouped into an
 [`azihsm_sd_restore_remote_backup_params`](#azihsm_sd_restore_remote_backup_params)
@@ -583,6 +605,7 @@ Input buffers for
 struct azihsm_sd_restore_remote_backup_params {
     const struct azihsm_buffer *part_policy;
     const struct azihsm_buffer *masked_sealing_key;
+    struct azihsm_sd_cert_chain sender_cert_chain;
     const struct azihsm_sd_evidence *sender_evidence;
     const struct azihsm_buffer *src_remote_backup;
     const struct azihsm_buffer *prev_sd_mk_backup;
@@ -593,7 +616,8 @@ struct azihsm_sd_restore_remote_backup_params {
  | ------------------ | ------------------------------------------ | -------------------------------------------------- |
  | part_policy        | [azihsm_buffer*](#azihsm_buffer)           | unified partition-policy image (484 B)             |
  | masked_sealing_key | [azihsm_buffer*](#azihsm_buffer)           | receiver's masked SD-sealing key (276 B)           |
- | sender_evidence    | [azihsm_sd_evidence*](#azihsm_sd_evidence) | sender attestation evidence                        |
+ | sender_cert_chain  | [azihsm_sd_cert_chain](#azihsm_sd_cert_chain) | sender key chain (spec `SndrCertChain`), SATA-anchored; always required |
+ | sender_evidence    | [azihsm_sd_evidence*](#azihsm_sd_evidence) | sender attestation evidence; verified only when policy sets `require_trusted_sa_key` |
  | src_remote_backup  | [azihsm_buffer*](#azihsm_buffer)           | remote backup to restore (161 B)                   |
  | prev_sd_mk_backup  | [azihsm_buffer*](#azihsm_buffer)           | previous security-domain masking-key backup (260 B)|
 

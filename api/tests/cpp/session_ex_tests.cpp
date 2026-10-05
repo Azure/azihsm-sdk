@@ -706,13 +706,14 @@ TEST_F(azihsm_sess_ex, sd_commands_reject_bad_part_policy_len)
         azihsm_sd_create_remote_backup_params create{
             &policy_buf,
             &key_buf,
+            chain,
             &evidence,
         };
         azihsm_sd_reseal_remote_backup_params reseal{
             &policy_buf, &key_buf, &evidence, &evidence, &remote_backup,
         };
         azihsm_sd_restore_remote_backup_params restore{
-            &policy_buf, &key_buf, &evidence, &remote_backup, &mk_backup,
+            &policy_buf, &key_buf, chain, &evidence, &remote_backup, &mk_backup,
         };
         azihsm_sd_create_peer_backup_params create_peer{
             &policy_buf,
