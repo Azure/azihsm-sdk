@@ -11,6 +11,7 @@ mod hmac;
 mod kbkdf;
 mod key;
 mod masked_key;
+mod part_policy;
 mod partition;
 mod partition_ex;
 mod rsa;
@@ -39,12 +40,48 @@ pub use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
 pub use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 /// Maximum number of certificates in a `part_final` PTA chain.
 pub use azihsm_ddi_tbor_types::MAX_CERTS;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 /// Exact length of the remote partition-owner-key backup (`SdCreate`/`SdReseal`).
 pub use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::POLICY_BACKUP_PART_ID_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_csr` buffer.
 pub use azihsm_ddi_tbor_types::PTA_CSR_MAX_LEN;
 /// Maximum size, in bytes, of the `part_init` `pta_report` buffer.
 pub use azihsm_ddi_tbor_types::PTA_REPORT_MAX_LEN;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PartPolicy;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyFlags;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyKeyKind;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyPubKey;
+/// Unified partition-provisioning policy and its typed field helpers,
+/// re-exported so callers can build a [`PartPolicy`] with named setters
+/// instead of hand-assembling the wire image.
+pub use azihsm_ddi_tbor_types::PolicyVer;
 /// Exact length of the security-domain masking-key backup envelope.
 pub use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -56,6 +93,9 @@ pub(crate) use hmac::*;
 pub(crate) use kbkdf::*;
 pub(crate) use key::*;
 pub(crate) use masked_key::*;
+/// Typed, fluent builder for [`PartPolicy`]; construct a policy with
+/// named setters instead of hand-assembling the wire image.
+pub use part_policy::PartPolicyBuilder;
 pub(crate) use partition::*;
 pub(crate) use partition_ex::*;
 pub(crate) use rsa::*;
@@ -114,6 +154,11 @@ pub(crate) fn require_tbor_rev(rev: HsmApiRev) -> HsmResult<()> {
 ///
 /// All remaining `DdiError` variants are logged and collapsed into
 /// `HsmError::DdiCmdFailure`.
+///
+/// Every `TborStatus::Crypto*`/`CryptoCpt*` CPT (`CryptoController`) status is
+/// mapped 1:1 (by variant/name) to a dedicated `HsmError` variant so callers can
+/// distinguish CPT-originated failures instead of collapsing them into
+/// `DdiCmdFailure`.
 impl From<DdiError> for HsmError {
     fn from(err: DdiError) -> Self {
         match err {
@@ -156,6 +201,78 @@ impl From<DdiError> for HsmError {
             // `InvalidArgument` the host guards return, so callers see a
             // consistent argument-rejection error across transports.
             DdiError::TborStatus(TborStatus::InvalidArg) => HsmError::InvalidArgument,
+            DdiError::TborStatus(TborStatus::CryptoNotInitialized) => {
+                HsmError::CryptoNotInitialized
+            }
+            DdiError::TborStatus(TborStatus::CryptoBufferTooSmall) => {
+                HsmError::CryptoBufferTooSmall
+            }
+            DdiError::TborStatus(TborStatus::CryptoInputTooLarge) => HsmError::CryptoInputTooLarge,
+            DdiError::TborStatus(TborStatus::CryptoInvalidAlg) => HsmError::CryptoInvalidAlg,
+            DdiError::TborStatus(TborStatus::CryptoTimeout) => HsmError::CryptoTimeout,
+            DdiError::TborStatus(TborStatus::CryptoUnalignedCptr) => HsmError::CryptoUnalignedCptr,
+            DdiError::TborStatus(TborStatus::CryptoInvalidArg) => HsmError::CryptoInvalidArg,
+            DdiError::TborStatus(TborStatus::CryptoInvalidIvLength) => {
+                HsmError::CryptoInvalidIvLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidKeyLength) => {
+                HsmError::CryptoInvalidKeyLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidDataLength) => {
+                HsmError::CryptoInvalidDataLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidContextLength) => {
+                HsmError::CryptoInvalidContextLength
+            }
+            DdiError::TborStatus(TborStatus::CryptoInvalidPartialContext) => {
+                HsmError::CryptoInvalidPartialContext
+            }
+            DdiError::TborStatus(TborStatus::CryptoUnsupportedMode) => {
+                HsmError::CryptoUnsupportedMode
+            }
+            DdiError::TborStatus(TborStatus::CryptoUnalignedBuffer) => {
+                HsmError::CryptoUnalignedBuffer
+            }
+            DdiError::TborStatus(TborStatus::CryptoNotSupported) => HsmError::CryptoNotSupported,
+            DdiError::TborStatus(TborStatus::CryptoHardwareError) => HsmError::CryptoHardwareError,
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrModLenInvalid) => {
+                HsmError::CryptoCptRsaUcErrModLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrExpLenInvalid) => {
+                HsmError::CryptoCptRsaUcErrExpLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrDataLenInvalid) => {
+                HsmError::CryptoCptRsaUcErrDataLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrDataLenInvalid) => {
+                HsmError::CryptoCptGcUcErrDataLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrCipherUnsupported) => {
+                HsmError::CryptoCptGcUcErrCipherUnsupported
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrAuthUnsupported) => {
+                HsmError::CryptoCptGcUcErrAuthUnsupported
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrHashModeUnsupported) => {
+                HsmError::CryptoCptGcUcErrHashModeUnsupported
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrIcvMiscompare) => {
+                HsmError::CryptoCptGcUcErrIcvMiscompare
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptGcUcErrKeyLenInvalid) => {
+                HsmError::CryptoCptGcUcErrKeyLenInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrPkcsDecoding) => {
+                HsmError::CryptoCptRsaUcErrPkcsDecoding
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptRsaUcErrPkcsSignatureInvalid) => {
+                HsmError::CryptoCptRsaUcErrPkcsSignatureInvalid
+            }
+            DdiError::TborStatus(TborStatus::CryptoCptFault) => HsmError::CryptoCptFault,
+            DdiError::TborStatus(TborStatus::CryptoCptSwErr) => HsmError::CryptoCptSwErr,
+            DdiError::TborStatus(TborStatus::CryptoCptHwErr) => HsmError::CryptoCptHwErr,
+            DdiError::TborStatus(TborStatus::CryptoCptInstErr) => HsmError::CryptoCptInstErr,
+            DdiError::TborStatus(TborStatus::CryptoCptSwWarn) => HsmError::CryptoCptSwWarn,
             _ => {
                 tracing::error!(?err, hsm_error = ?HsmError::DdiCmdFailure, "Unmapped DDI error");
                 HsmError::DdiCmdFailure
@@ -308,5 +425,140 @@ mod tests {
             get_key_id(HsmKeyHandle::Unpinned),
             Err(HsmError::UnsupportedKeyOperation)
         ));
+    }
+
+    /// Every CPT (`CryptoController`) `TborStatus` must map 1:1 to the
+    /// identically-named `HsmError` variant. Guards against a missing or
+    /// wrong match arm silently regressing the FW-side range mirror.
+    #[test]
+    fn cpt_tbor_status_maps_to_matching_hsm_error() {
+        let cases = [
+            // Software validation / PAL / runtime errors.
+            (
+                TborStatus::CryptoNotInitialized,
+                HsmError::CryptoNotInitialized,
+            ),
+            (
+                TborStatus::CryptoBufferTooSmall,
+                HsmError::CryptoBufferTooSmall,
+            ),
+            (
+                TborStatus::CryptoInputTooLarge,
+                HsmError::CryptoInputTooLarge,
+            ),
+            (TborStatus::CryptoInvalidAlg, HsmError::CryptoInvalidAlg),
+            (TborStatus::CryptoTimeout, HsmError::CryptoTimeout),
+            (
+                TborStatus::CryptoUnalignedCptr,
+                HsmError::CryptoUnalignedCptr,
+            ),
+            (TborStatus::CryptoInvalidArg, HsmError::CryptoInvalidArg),
+            (
+                TborStatus::CryptoInvalidIvLength,
+                HsmError::CryptoInvalidIvLength,
+            ),
+            (
+                TborStatus::CryptoInvalidKeyLength,
+                HsmError::CryptoInvalidKeyLength,
+            ),
+            (
+                TborStatus::CryptoInvalidDataLength,
+                HsmError::CryptoInvalidDataLength,
+            ),
+            (
+                TborStatus::CryptoInvalidContextLength,
+                HsmError::CryptoInvalidContextLength,
+            ),
+            (
+                TborStatus::CryptoInvalidPartialContext,
+                HsmError::CryptoInvalidPartialContext,
+            ),
+            (
+                TborStatus::CryptoUnsupportedMode,
+                HsmError::CryptoUnsupportedMode,
+            ),
+            (
+                TborStatus::CryptoUnalignedBuffer,
+                HsmError::CryptoUnalignedBuffer,
+            ),
+            (TborStatus::CryptoNotSupported, HsmError::CryptoNotSupported),
+            (
+                TborStatus::CryptoHardwareError,
+                HsmError::CryptoHardwareError,
+            ),
+            // CPT hardware completion codes.
+            (
+                TborStatus::CryptoCptRsaUcErrModLenInvalid,
+                HsmError::CryptoCptRsaUcErrModLenInvalid,
+            ),
+            (
+                TborStatus::CryptoCptRsaUcErrExpLenInvalid,
+                HsmError::CryptoCptRsaUcErrExpLenInvalid,
+            ),
+            (
+                TborStatus::CryptoCptRsaUcErrDataLenInvalid,
+                HsmError::CryptoCptRsaUcErrDataLenInvalid,
+            ),
+            (
+                TborStatus::CryptoCptGcUcErrDataLenInvalid,
+                HsmError::CryptoCptGcUcErrDataLenInvalid,
+            ),
+            (
+                TborStatus::CryptoCptGcUcErrCipherUnsupported,
+                HsmError::CryptoCptGcUcErrCipherUnsupported,
+            ),
+            (
+                TborStatus::CryptoCptGcUcErrAuthUnsupported,
+                HsmError::CryptoCptGcUcErrAuthUnsupported,
+            ),
+            (
+                TborStatus::CryptoCptGcUcErrHashModeUnsupported,
+                HsmError::CryptoCptGcUcErrHashModeUnsupported,
+            ),
+            (
+                TborStatus::CryptoCptGcUcErrIcvMiscompare,
+                HsmError::CryptoCptGcUcErrIcvMiscompare,
+            ),
+            (
+                TborStatus::CryptoCptGcUcErrKeyLenInvalid,
+                HsmError::CryptoCptGcUcErrKeyLenInvalid,
+            ),
+            (
+                TborStatus::CryptoCptRsaUcErrPkcsDecoding,
+                HsmError::CryptoCptRsaUcErrPkcsDecoding,
+            ),
+            (
+                TborStatus::CryptoCptRsaUcErrPkcsSignatureInvalid,
+                HsmError::CryptoCptRsaUcErrPkcsSignatureInvalid,
+            ),
+            // CPT completion status errors.
+            (TborStatus::CryptoCptFault, HsmError::CryptoCptFault),
+            (TborStatus::CryptoCptSwErr, HsmError::CryptoCptSwErr),
+            (TborStatus::CryptoCptHwErr, HsmError::CryptoCptHwErr),
+            (TborStatus::CryptoCptInstErr, HsmError::CryptoCptInstErr),
+            (TborStatus::CryptoCptSwWarn, HsmError::CryptoCptSwWarn),
+        ];
+
+        for (status, expected) in cases {
+            assert_eq!(
+                HsmError::from(DdiError::TborStatus(status)),
+                expected,
+                "TborStatus {status:?} mapped to an unexpected HsmError"
+            );
+        }
+
+        // Contract-level `InvalidArg` is deliberately remapped to the
+        // host-facing `InvalidArgument`, not a `Crypto*` variant.
+        assert_eq!(
+            HsmError::from(DdiError::TborStatus(TborStatus::InvalidArg)),
+            HsmError::InvalidArgument
+        );
+
+        // Any status outside the mapped set collapses into the generic
+        // `DdiCmdFailure` fallback.
+        assert_eq!(
+            HsmError::from(DdiError::TborStatus(TborStatus::VaultNotFound)),
+            HsmError::DdiCmdFailure
+        );
     }
 }

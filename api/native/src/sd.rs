@@ -37,13 +37,13 @@ pub struct AzihsmSdEvidence {
 /// Input buffers for [`azihsm_sd_create_remote_backup`].
 #[repr(C)]
 pub struct AzihsmSdCreateRemoteBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
     /// `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Receiver attestation evidence.
     pub receiver_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
 }
 
 /// Borrows one C [`AzihsmSdCertChain`] into a `Vec<HsmCert>`, rejecting an
@@ -109,7 +109,7 @@ impl<'a: 'b, 'b> From<&'b SdEvidence<'a>> for api::HsmSdEvidence<'b> {
 /// @brief Create a new security domain and its remote backup
 ///
 /// Creates a security domain under the calling session's partition from
-/// `params.policy`, using the sender's masked sealing key and the
+/// `params.part_policy`, using the sender's masked sealing key and the
 /// receiver's attestation evidence, and returns the three backups the
 /// firmware produces.
 ///
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
 
         let receiver = deref_ptr(params.receiver_evidence)?;
         let receiver = SdEvidence::try_from(receiver)?;
@@ -167,7 +167,9 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
-        let result = session.sd_create_remote_backup(masked_sealing_key, &receiver, policy)?;
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+        let result = session.sd_create_remote_backup(part_policy, masked_sealing_key, &receiver)?;
 
         copy_to_buffer(pok_remote_backup, &result.pok_remote_backup)?;
         copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;
@@ -180,6 +182,8 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
 /// Input buffers for [`azihsm_sd_reseal_remote_backup`].
 #[repr(C)]
 pub struct AzihsmSdResealRemoteBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
     /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
@@ -187,8 +191,6 @@ pub struct AzihsmSdResealRemoteBackupParams {
     pub src_evidence: *const AzihsmSdEvidence,
     /// Destination (receiver) attestation evidence.
     pub dest_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
     /// Source remote backup to reseal, exactly `POK_REMOTE_BACKUP_LEN`
     /// (161 B).
     pub src_remote_backup: *const AzihsmBuffer,
@@ -230,7 +232,7 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let src_remote_backup: &[u8] = deref_ptr(params.src_remote_backup)?.try_into()?;
 
         let src_evidence = deref_ptr(params.src_evidence)?;
@@ -245,11 +247,13 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
         let dst_remote_backup = deref_mut_ptr(dst_remote_backup)?;
         validate_output_buffer(dst_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_reseal_remote_backup(
+            part_policy,
             masked_sealing_key,
             &src_evidence,
             &dest_evidence,
-            policy,
             src_remote_backup,
         )?;
 
@@ -262,13 +266,13 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
 /// Input buffers for [`azihsm_sd_restore_remote_backup`].
 #[repr(C)]
 pub struct AzihsmSdRestoreRemoteBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
     /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Sender attestation evidence.
     pub sender_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
     /// Remote backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
     pub src_remote_backup: *const AzihsmBuffer,
     /// Previous security-domain masking-key backup, exactly
@@ -315,7 +319,7 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let src_remote_backup: &[u8] = deref_ptr(params.src_remote_backup)?.try_into()?;
         let prev_sd_mk_backup: &[u8] = deref_ptr(params.prev_sd_mk_backup)?.try_into()?;
 
@@ -333,10 +337,12 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_restore_remote_backup(
+            part_policy,
             masked_sealing_key,
             &sender,
-            policy,
             src_remote_backup,
             prev_sd_mk_backup,
         )?;
@@ -351,13 +357,13 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
 /// Input buffers for [`azihsm_sd_create_peer_backup`].
 #[repr(C)]
 pub struct AzihsmSdCreatePeerBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
     /// `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Destination (peer) attestation evidence.
     pub dst_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
     /// Device-local partition-owner-key backup (276 B) from which BKS3 is
     /// recovered.
     pub pok_local_backup: *const AzihsmBuffer,
@@ -399,7 +405,7 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let pok_local_backup: &[u8] = deref_ptr(params.pok_local_backup)?.try_into()?;
 
         let dst = deref_ptr(params.dst_evidence)?;
@@ -411,8 +417,14 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
         let pok_peer_backup = deref_mut_ptr(pok_peer_backup)?;
         validate_output_buffer(pok_peer_backup, api::POK_REMOTE_BACKUP_LEN)?;
 
-        let result =
-            session.sd_create_peer_backup(masked_sealing_key, &dst, policy, pok_local_backup)?;
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+        let result = session.sd_create_peer_backup(
+            part_policy,
+            masked_sealing_key,
+            &dst,
+            pok_local_backup,
+        )?;
 
         copy_to_buffer(pok_peer_backup, &result)?;
 
@@ -423,13 +435,13 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
 /// Input buffers for [`azihsm_sd_restore_peer_backup`].
 #[repr(C)]
 pub struct AzihsmSdRestorePeerBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
     /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Source (peer) attestation evidence.
     pub src_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
     /// Peer backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
     pub pok_peer_backup: *const AzihsmBuffer,
     /// Previous security-domain masking-key backup, exactly
@@ -476,7 +488,7 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let pok_peer_backup: &[u8] = deref_ptr(params.pok_peer_backup)?.try_into()?;
         let prev_sd_mk_backup: &[u8] = deref_ptr(params.prev_sd_mk_backup)?.try_into()?;
 
@@ -494,10 +506,12 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_restore_peer_backup(
+            part_policy,
             masked_sealing_key,
             &src,
-            policy,
             pok_peer_backup,
             prev_sd_mk_backup,
         )?;

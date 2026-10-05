@@ -4,7 +4,7 @@
 //! Integration tests for the TBOR `SdSealingKeyGen` command.
 //!
 //! Cross-test isolation comes from `open_dev`'s factory reset; no
-//! per-test cleanup is required (see [`crate::harness::fixture`]).
+//! per-test cleanup is required (see [`azihsm_ddi_tbor_test_harness::fixture`]).
 //!
 //! The command generates a P-384 sealing keypair and returns the
 //! **masked** private key (masked under the requested scope's masking
@@ -27,6 +27,16 @@
 //! `PartFinal`, whose PTA chain travels out of band, so the tests that
 //! need a finalized partition also need the driver's data-transfer path.
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -36,16 +46,6 @@ use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::bootstrap_rotated_cu;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::SessionHandshake;
-use crate::harness::TestCtx;
-use crate::harness::CO_PSK_ID as CO;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::ROTATED_CU_PSK;
 
 /// `KeyScope` discriminants (wire mirror of the firmware `HsmKeyScope`).
 const SCOPE_SESSION: u8 = 0b001;

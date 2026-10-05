@@ -63,6 +63,12 @@ pub struct ChainValidator {
 
     /// Maximum remaining path length (from BasicConstraints).
     max_path_len: u16,
+
+    /// When `true`, the terminal certificate is itself an issuing CA
+    /// (it will go on to sign a further, out-of-chain leaf), so the
+    /// CA-only constraints — `cA == true`, `keyCertSign`, and the
+    /// remaining `pathLenConstraint` budget — are enforced on it too.
+    terminal_is_issuing_ca: bool,
 }
 
 impl ChainValidator {
@@ -86,6 +92,26 @@ impl ChainValidator {
             chain_len,
             index: 0,
             max_path_len: chain_len,
+            terminal_is_issuing_ca: false,
+        }
+    }
+
+    /// Like [`new`](Self::new), but validates the terminal certificate
+    /// as an issuing CA rather than an end-entity leaf.
+    ///
+    /// Use this when the terminal certificate will itself sign a
+    /// further certificate that is *not* part of this chain (for
+    /// example a PTA certificate that later signs an on-demand PID
+    /// leaf). The terminal must then satisfy the CA constraints —
+    /// `cA == true`, `keyCertSign` (when KeyUsage is present), and the
+    /// remaining ancestor `pathLenConstraint` budget — so a chain that
+    /// could never issue that extra leaf is rejected up front.
+    pub fn new_issuing(chain_len: u16) -> Self {
+        Self {
+            chain_len,
+            index: 0,
+            max_path_len: chain_len,
+            terminal_is_issuing_ca: true,
         }
     }
 
@@ -136,7 +162,11 @@ impl ChainValidator {
             Err(error) => return StepResult::Invalid(error),
         };
 
-        if !is_leaf {
+        // Non-leaf certificates are always CAs. The terminal certificate
+        // is additionally treated as a CA when it is an issuing CA (it
+        // will sign a further out-of-chain leaf), so its `pathLen` budget
+        // and `keyCertSign` usage are enforced too.
+        if !is_leaf || self.terminal_is_issuing_ca {
             if let Err(error) = self.apply_ca_constraints(curr) {
                 return StepResult::Invalid(error);
             }
@@ -426,7 +456,53 @@ pub async fn validate_chain<P, F>(
     descriptors: &[CertDescriptor],
     anchor: Option<&[u8]>,
     leaf_out: &mut [u8],
+    fetch: F,
+) -> HsmResult<()>
+where
+    P: HsmHash + HsmEcc,
+    F: for<'a> AsyncFnMut(usize, &'a mut DmaBuf) -> HsmResult<()>,
+{
+    validate_chain_inner(pal, io, alloc, descriptors, anchor, leaf_out, fetch, false).await
+}
+
+/// Like [`validate_chain`], but validates the terminal certificate as an
+/// issuing CA rather than an end-entity leaf.
+///
+/// The terminal certificate must then satisfy the CA constraints —
+/// `cA == true`, `keyCertSign` (when KeyUsage is present), and the
+/// remaining ancestor `pathLenConstraint` budget — because it will go on
+/// to sign a further certificate that is not part of this chain (for
+/// example a PTA certificate that later signs an on-demand PID leaf). A
+/// chain whose ancestors leave no path-length budget for that extra leaf
+/// is therefore rejected here rather than silently producing evidence that
+/// can never validate. `leaf_out` still receives the terminal
+/// certificate's public key.
+pub async fn validate_issuing_chain<P, F>(
+    pal: &P,
+    io: &impl HsmIo,
+    alloc: &impl HsmScopedAlloc,
+    descriptors: &[CertDescriptor],
+    anchor: Option<&[u8]>,
+    leaf_out: &mut [u8],
+    fetch: F,
+) -> HsmResult<()>
+where
+    P: HsmHash + HsmEcc,
+    F: for<'a> AsyncFnMut(usize, &'a mut DmaBuf) -> HsmResult<()>,
+{
+    validate_chain_inner(pal, io, alloc, descriptors, anchor, leaf_out, fetch, true).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn validate_chain_inner<P, F>(
+    pal: &P,
+    io: &impl HsmIo,
+    alloc: &impl HsmScopedAlloc,
+    descriptors: &[CertDescriptor],
+    anchor: Option<&[u8]>,
+    leaf_out: &mut [u8],
     mut fetch: F,
+    terminal_is_issuing_ca: bool,
 ) -> HsmResult<()>
 where
     P: HsmHash + HsmEcc,
@@ -451,7 +527,11 @@ where
         }
     }
 
-    let mut validator = ChainValidator::new(descriptors.len() as u16);
+    let mut validator = if terminal_is_issuing_ca {
+        ChainValidator::new_issuing(descriptors.len() as u16)
+    } else {
+        ChainValidator::new(descriptors.len() as u16)
+    };
     // A chain with no anchor requirement is trivially "anchored".
     let mut anchored = anchor.is_none();
 

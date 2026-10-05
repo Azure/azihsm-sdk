@@ -46,9 +46,9 @@ bool create_sd_local_backup(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
+        &policy_buf,
         &masked_buf,
         &receiver,
-        &policy_buf,
     };
 
     std::vector<uint8_t> remote;
@@ -203,9 +203,9 @@ TEST_F(azihsm_sd_create_peer_backup_test, create_peer_backup_roundtrip)
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
         azihsm_sd_create_peer_backup_params params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
             &local_buf,
         };
 
