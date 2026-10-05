@@ -142,9 +142,11 @@ fn open_session_unsupported_suite_id() {
 #[test]
 fn session_open_finish_mac_tampered() {
     let base = TestCtx::new();
+    let path = base.path().to_owned();
+    drop(base);
 
     for index in [0usize, 24, 47] {
-        let ctx = TestCtx::new_with_path(base.path());
+        let ctx = TestCtx::new_with_path(&path);
 
         let pending = ctx
             .session_open_init(CU, SessionType::PlainText)
@@ -157,7 +159,7 @@ fn session_open_finish_mac_tampered() {
 
         let err = ctx
             .session_open_finish_with_mac(pending, mac_fin)
-            .unwrap_err();
+            .expect_err(&format!("tampered MAC at index {index} must be rejected"));
 
         assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
     }
@@ -934,40 +936,6 @@ fn failed_finish_mac_reclaims_session_state() {
     recovered
         .close()
         .expect("recovery session must close successfully");
-}
-
-/// Verifies that a MAC-authentication failure destroys the pending slot.
-#[test]
-fn session_open_finish_mac_failure_destroys_pending_slot() {
-    let ctx = TestCtx::new();
-
-    let pending = ctx
-        .session_open_init(CU, SessionType::PlainText)
-        .expect("phase 1 must succeed");
-
-    let session_id = pending.session_id;
-
-    let mut mac_fin = build_mac_fin(&pending).expect("build phase-2 mac");
-    mac_fin[0] ^= 0x01;
-
-    let err = ctx
-        .session_open_finish_with_mac(pending, mac_fin)
-        .expect_err("tampered mac_fin must be rejected");
-
-    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
-
-    // The failed authentication must consume/destroy the pending slot.
-    let replay = TborSessionOpenFinishReq {
-        session_id,
-        mac_fin: [0u8; 48],
-        seed_envelope: [0u8; SEED_ENVELOPE_LEN],
-    };
-
-    let err = ctx
-        .tbor(&replay)
-        .expect_err("failed MAC must destroy the pending slot");
-
-    assert_fw_rejects(&err, TborStatus::SessionNotFound);
 }
 
 /// A valid MAC generated for session A must not authenticate session B.
