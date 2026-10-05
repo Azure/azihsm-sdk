@@ -12,7 +12,9 @@
 //   0x012FC - 0x0135C  HSM seed table (UDS + FMC-CDI, 2 × 48-byte seeds)
 //   0x07000            BOOT_STATUS (4 B)
 //   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
-//   0x0E440 - 0x0F580  IIC / OIC queues
+//   0x0E440 - 0x0EF44  IIC queues (ISQ, ICQ, IO_SQ, ICQ tail shadow)
+//   0x0F000 - 0x11824  Reserved: Admin (CP0) GDMA rings — do not place HSM data here
+//   0x11840 - 0x11E44  OIC queues (OSQ, OCQ, IO_CQ, OCQ tail shadow)
 //   0x12840 - 0x15064  GDMA queues
 //   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
 //   0x20C58 - 0xA4D60  Heap (IO_META + SRAM_IO_BUF)
@@ -556,11 +558,6 @@ addrmap io_gsram {
     queue_shadow_t   ICQ_TAIL_SHADOW    @ 0x0EF40;
 
     // ─── OIC (Outbound IO) — 0x20-aligned ───
-    // Placed in 0x11824-0x12840, which no other core uses. 0x0F000-0x0F824 is
-    // the Admin (CP0) GDMA completion ring and its shadow pointers
-    // (ADMIN_GDMA_RX_QUEUE, written by GDMA hardware; see the SP's
-    // gsram_mem_map.h); anything placed there is overwritten by CP0 DMA
-    // completions, which corrupted CQEs and caused host IO timeouts.
     osq_entry_t      OSQ[32]            @ 0x11840 += 0x10;
     ocq_entry_t      OCQ[32]            @ 0x11A40 += 0x10;
     io_cq_entry_t    IO_CQ[32]          @ 0x11C40 += 0x10;
