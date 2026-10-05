@@ -243,6 +243,7 @@ impl HsmSession {
         &self,
         part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
+        receiver_cert_chain: &[HsmCert<'_>],
         receiver_evidence: &HsmSdEvidence<'_>,
     ) -> HsmResult<HsmSdRemoteBackupResult> {
         let inner = self.inner.read();
@@ -251,6 +252,7 @@ impl HsmSession {
                 &inner.partition,
                 inner.id,
                 masked_sealing_key,
+                receiver_cert_chain,
                 receiver_evidence,
                 part_policy.as_bytes(),
             ),
@@ -294,8 +296,8 @@ impl HsmSession {
     /// session.
     ///
     /// HPKE-opens `src_remote_backup` with the receiver's
-    /// `masked_sealing_key` (authenticated by the sender in
-    /// `sender_evidence`), recovers the security-domain masking key from
+    /// `masked_sealing_key` (authenticated by the sender key recovered from
+    /// `sender_cert_chain`), recovers the security-domain masking key from
     /// `prev_sd_mk_backup`, and returns the refreshed device-local backups.
     /// Only valid on a V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
@@ -303,6 +305,7 @@ impl HsmSession {
         &self,
         part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
+        sender_cert_chain: &[HsmCert<'_>],
         sender_evidence: &HsmSdEvidence<'_>,
         src_remote_backup: &[u8],
         prev_sd_mk_backup: &[u8],
@@ -313,6 +316,7 @@ impl HsmSession {
                 &inner.partition,
                 inner.id,
                 masked_sealing_key,
+                sender_cert_chain,
                 sender_evidence,
                 part_policy.as_bytes(),
                 src_remote_backup,
