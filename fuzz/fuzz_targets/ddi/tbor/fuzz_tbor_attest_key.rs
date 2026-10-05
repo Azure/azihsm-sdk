@@ -402,12 +402,16 @@ fuzz_target!(|input: FuzzInput| {
         };
         let result = ctx.tbor(&req);
 
-        let encodable = req.masked_key.len() <= KEY_REPORT_MASKED_KEY_MAX_LEN;
+        let oversized = req.masked_key.len() > KEY_REPORT_MASKED_KEY_MAX_LEN;
         match (&result, expected) {
             (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
-            (Err(err), _) if !encodable => assert!(
-                matches!(err, DdiError::TborEncodeError),
-                "oversized masked key must fail host-side encoding, got {err}"
+            (Err(err), _) if oversized => assert!(
+                matches!(
+                    err,
+                    DdiError::TborEncodeError
+                        | DdiError::TborStatus(TborStatus::TborInvalidFixedLength)
+                ),
+                "oversized masked key must be rejected, got {err}"
             ),
             (Ok(resp), Expected::Report { pub_key, coord_len }) => {
                 verify_key_report(ctx, &resp.report, &req.report_data, &pub_key, coord_len)
