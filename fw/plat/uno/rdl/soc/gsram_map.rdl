@@ -556,10 +556,15 @@ addrmap io_gsram {
     queue_shadow_t   ICQ_TAIL_SHADOW    @ 0x0EF40;
 
     // ─── OIC (Outbound IO) — 0x20-aligned ───
-    osq_entry_t      OSQ[32]            @ 0x0EF60 += 0x10;
-    ocq_entry_t      OCQ[32]            @ 0x0F160 += 0x10;
-    io_cq_entry_t    IO_CQ[32]          @ 0x0F360 += 0x10;
-    queue_shadow_t   OCQ_TAIL_SHADOW    @ 0x0F560;
+    // Placed in 0x11824-0x12840, which no other core uses. 0x0F000-0x0F824 is
+    // the Admin (CP0) GDMA completion ring and its shadow pointers
+    // (ADMIN_GDMA_RX_QUEUE, written by GDMA hardware; see the SP's
+    // gsram_mem_map.h); anything placed there is overwritten by CP0 DMA
+    // completions, which corrupted CQEs and caused host IO timeouts.
+    osq_entry_t      OSQ[32]            @ 0x11840 += 0x10;
+    ocq_entry_t      OCQ[32]            @ 0x11A40 += 0x10;
+    io_cq_entry_t    IO_CQ[32]          @ 0x11C40 += 0x10;
+    queue_shadow_t   OCQ_TAIL_SHADOW    @ 0x11E40;
 
     // ─── GDMA — 0x20-aligned ───
     gdma_sq_entry_t  GDMA_SQ[32]        @ 0x12840 += 0x40;
