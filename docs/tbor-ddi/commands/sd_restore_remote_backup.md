@@ -33,10 +33,11 @@ Algorithm:
    anchored to the policy `SATA` key, and its leaf public key is
    recovered as **`SndrPub`**.  Only when the policy sets
    `require_trusted_sa_key` is the sender **evidence** additionally
-   validated: the manufacturer / owner / partition-owner chains are
-   anchored to the policy `SAPOTA` key, the report's v2 `policy_hash`
-   must equal `SHA-384(policy)`, and its attested COSE_Key must equal the
-   `SndrPub` recovered from the cert chain.
+   validated: all three evidence chains are validated, with the
+   partition-owner chain anchored to the policy `SAPOTA` key; the
+   report's v2 `policy_hash` must equal `SHA-384(policy)`, and its
+   attested COSE_Key must equal the `SndrPub` recovered from the cert
+   chain.
 3. Unmask `masked_sealing_key` under its scope's masking key → the
    receiver's private HPKE key **`RcvrPriv`** (must be an `SdSealing`
    key), and derive `RcvrPub` on-device.
