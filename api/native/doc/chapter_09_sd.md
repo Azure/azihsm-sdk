@@ -199,6 +199,27 @@ points to an array of `pta_cert_chain_len` [azihsm_buffer](#azihsm_buffer)s,
 each holding one DER-encoded PTA certificate (root to leaf; at most
 `MAX_CERTS`). `prev_local_mk_backup` is optional and may be NULL to omit it.
 
+The shared firmware requires the PTA certificate to preserve the exact
+DER subject Name from the PTA CSR and to use SHA-1 of the uncompressed
+SEC1 PTA public key as its Subject Key Identifier. The PTA certificate
+must be a CA with `keyCertSign` usage. A certificate violating this profile
+is rejected before finalization, even if its key and POTA signature are valid.
+
+After successful finalization, certificate slot 2 exposes only the PTA-signed
+PID certificate at index 0. Shared command code above PAL generates a fresh
+certificate on each request using ordinary signing and the existing PTA and
+PID keys. DER bytes and lengths can change between requests. Chain metadata
+fingerprints an independently generated certificate, so its thumbprint need
+not match a subsequent certificate read. Neither a certificate chain nor
+issuer metadata is stored in firmware. The caller retains its POTA/PTA chain
+and prepends it to this PID certificate to construct root-first evidence.
+Slot 0's provisioning behavior is unchanged, though on the std PAL its leaf
+certificate is not byte-for-byte identical: `fw/plat/std/pal/src/cert.rs`
+now derives the slot-0 leaf serial from the PID key's SHA-1 identifier (the
+same derivation as the slot-2 PID serial). Slot 1 remains unsupported.
+Omitting the owner chain does not produce complete evidence for operations
+requiring all three chains.
+
 ```cpp
 struct azihsm_sess_ex_part_final_params {
     const struct azihsm_buffer *part_policy;

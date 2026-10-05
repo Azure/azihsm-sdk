@@ -26,7 +26,6 @@ use azihsm_crypto::x509_builder::cert_builder::KeyUsage;
 use azihsm_crypto::x509_builder::cert_builder::LeafCertParams;
 use azihsm_crypto::x509_builder::cert_builder::RootCertParams;
 use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
-use azihsm_crypto::x509_builder::intermediate_cert;
 use azihsm_crypto::x509_builder::leaf_cert;
 use azihsm_crypto::x509_builder::root_cert;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
@@ -45,8 +44,18 @@ const NOT_BEFORE: &[u8; 15] = b"20250101000000Z";
 const NOT_AFTER: &[u8; 15] = b"20350101000000Z";
 const ROOT_CN: &str = "AZIHSM POTA Root CA";
 const ROOT_SN: &str = "POTAROOT1";
-const PTA_CN: &str = "AZIHSM PTA Intermediate CA";
-const PTA_SN: &str = "PTAINT001";
+/// Fixed PTA `commonName` prefix (mirrors the firmware `PTA_SUBJECT_CN`).
+const PTA_SUBJECT_CN_PREFIX: &str = "Azure Integrated HSM PTA";
+/// Domain-separation label for the PTAID digest (mirrors firmware `PTAID_LABEL`).
+const PTAID_LABEL: &[u8] = b"AZIHSM-PTAID-v1";
+/// PTAID digest bytes hex-encoded into the `commonName`.
+const PTAID_LEN: usize = 16;
+/// Length of the PTA single-`commonName(64)` Name SEQUENCE DER.
+const PTA_SUBJECT_DER_LEN: usize = 13 + 64;
+/// Fixed DER prefix of the single-`commonName(64)` Name SEQUENCE.
+const PTA_SUBJECT_DER_PREFIX: [u8; 13] = [
+    0x30, 0x4b, 0x31, 0x49, 0x30, 0x47, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x40,
+];
 const LEAF_CN: &str = "AZIHSM Evidence Leaf";
 const LEAF_SN: &str = "EVLEAF001";
 
@@ -171,28 +180,64 @@ fn build_root(ca: &CaKey) -> Vec<u8> {
 
 /// Build the PTA intermediate CA certificate carrying the partition PTA
 /// key (`pta_pub_sec1`), signed by `issuer` (the POTA CA).
+///
+/// The subject is the deterministic single-`commonName(64)` PTA profile the
+/// firmware stamps (derived from `pta_pub_sec1`) and the SKID is
+/// SHA-1(SEC1 PTA key), so the issued PTA certificate satisfies the profile
+/// `part_final_ex` enforces before finalization.
 fn build_pta_intermediate(pta_pub_sec1: &[u8; SEC1_PUB_LEN], issuer: &CaKey) -> Vec<u8> {
     let params = IntermediateCertParams {
         public_key: pta_pub_sec1,
         serial_number: &serial(2),
         not_before: NOT_BEFORE,
         not_after: NOT_AFTER,
-        subject_cn: PTA_CN,
-        subject_sn: PTA_SN,
+        subject_cn: "",
+        subject_sn: "",
         issuer_cn: ROOT_CN,
         issuer_sn: ROOT_SN,
         subject_key_id: &sha1_ski(pta_pub_sec1),
         authority_key_id: &issuer.ski(),
         path_len: 0,
     };
-    let mut tbs = azihsm_crypto::x509_builder::intermediate_cert::TBS_TEMPLATE;
-    patch_tbs_intermediate(&mut tbs, &params);
-    let (r, s) = issuer.sign(&tbs);
+    let subject = pta_subject_der(pta_pub_sec1);
+    let mut tbs = [0u8; 1024];
+    let tbs_len =
+        cert_builder::intermediate_cert_tbs_with_subject_name(&params, &subject, &mut tbs)
+            .expect("PTA subject");
+    let (r, s) = issuer.sign(&tbs[..tbs_len]);
     let mut out = vec![0u8; 1024];
-    let len =
-        cert_builder::build_intermediate_cert(&params, &r, &s, &mut out).expect("PTA intermediate");
+    let len = cert_builder::assemble_cert(&tbs[..tbs_len], &r, &s, &mut out).expect("PTA cert");
     out.truncate(len);
     out
+}
+
+/// Derive the deterministic PTA subject Name DER from the SEC1 PTA public
+/// key, mirroring the firmware's PTAID derivation
+/// (`fw/core/lib/src/ddi/tbor/pta.rs`): the subject is a single
+/// `commonName(64)` RDN holding the fixed PTA name, a separating space, and
+/// the lowercase-hex PTAID (`SHA-384(PTAID_LABEL ‖ SEC1 key)[..16]`),
+/// space-padded.
+fn pta_subject_der(sec1_pub: &[u8; SEC1_PUB_LEN]) -> [u8; PTA_SUBJECT_DER_LEN] {
+    let mut input = Vec::with_capacity(PTAID_LABEL.len() + SEC1_PUB_LEN);
+    input.extend_from_slice(PTAID_LABEL);
+    input.extend_from_slice(sec1_pub);
+    let mut algo = HashAlgo::sha384();
+    let mut digest = [0u8; 48];
+    algo.hash(&input, Some(&mut digest)).expect("sha384");
+
+    let mut cn = [b' '; 64];
+    cn[..PTA_SUBJECT_CN_PREFIX.len()].copy_from_slice(PTA_SUBJECT_CN_PREFIX.as_bytes());
+    let hex = b"0123456789abcdef";
+    let base = PTA_SUBJECT_CN_PREFIX.len() + 1;
+    for (i, byte) in digest[..PTAID_LEN].iter().enumerate() {
+        cn[base + 2 * i] = hex[usize::from(byte >> 4)];
+        cn[base + 2 * i + 1] = hex[usize::from(byte & 0x0f)];
+    }
+
+    let mut der = [0u8; PTA_SUBJECT_DER_LEN];
+    der[..PTA_SUBJECT_DER_PREFIX.len()].copy_from_slice(&PTA_SUBJECT_DER_PREFIX);
+    der[PTA_SUBJECT_DER_PREFIX.len()..].copy_from_slice(&cn);
+    der
 }
 
 /// Build a POTA-anchored root -> PTA chain from the partition PTA key.
@@ -345,36 +390,6 @@ fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
         .copy_from_slice(params.subject_key_id);
 }
 
-/// Patch an intermediate-cert TBS template with the variable field values.
-fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
-    let s_cn = pad_cn(params.subject_cn);
-    let i_cn = pad_cn(params.issuer_cn);
-    let s_sn = pad_sn(params.subject_sn);
-    let i_sn = pad_sn(params.issuer_sn);
-    tbs[intermediate_cert::PUBLIC_KEY_OFFSET..intermediate_cert::PUBLIC_KEY_OFFSET + 97]
-        .copy_from_slice(params.public_key);
-    tbs[intermediate_cert::SERIAL_NUMBER_OFFSET..intermediate_cert::SERIAL_NUMBER_OFFSET + 20]
-        .copy_from_slice(params.serial_number);
-    tbs[intermediate_cert::NOT_BEFORE_OFFSET..intermediate_cert::NOT_BEFORE_OFFSET + 15]
-        .copy_from_slice(params.not_before);
-    tbs[intermediate_cert::NOT_AFTER_OFFSET..intermediate_cert::NOT_AFTER_OFFSET + 15]
-        .copy_from_slice(params.not_after);
-    tbs[intermediate_cert::ISSUER_CN_OFFSET..intermediate_cert::ISSUER_CN_OFFSET + CN_LEN]
-        .copy_from_slice(&i_cn);
-    tbs[intermediate_cert::SUBJECT_CN_OFFSET..intermediate_cert::SUBJECT_CN_OFFSET + CN_LEN]
-        .copy_from_slice(&s_cn);
-    tbs[intermediate_cert::ISSUER_SN_OFFSET..intermediate_cert::ISSUER_SN_OFFSET + SN_LEN]
-        .copy_from_slice(&i_sn);
-    tbs[intermediate_cert::SUBJECT_SN_OFFSET..intermediate_cert::SUBJECT_SN_OFFSET + SN_LEN]
-        .copy_from_slice(&s_sn);
-    tbs[intermediate_cert::SUBJECT_KEY_ID_OFFSET..intermediate_cert::SUBJECT_KEY_ID_OFFSET + 20]
-        .copy_from_slice(params.subject_key_id);
-    tbs[intermediate_cert::AUTHORITY_KEY_ID_OFFSET
-        ..intermediate_cert::AUTHORITY_KEY_ID_OFFSET + 20]
-        .copy_from_slice(params.authority_key_id);
-    tbs[intermediate_cert::PATH_LEN_OFFSET] = params.path_len;
-}
-
 /// Build a unified `PartPolicy` binding the real POTA public key, so
 /// `part_final_ex` can validate a chain anchored to it. SATA carries a
 /// filler key (not chain-validated in this flow).
@@ -432,6 +447,16 @@ fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
 /// PSK, `part_init_ex`, build a POTA-anchored PTA chain from the CSR, then
 /// `part_final_ex`.
 pub(crate) fn finalized_co_session() -> HsmSession {
+    let (_part, _rev, session) = finalized_co_partition();
+    session
+}
+
+/// Provision a fresh partition's security domain like
+/// [`finalized_co_session`], but also return the owning `HsmPartition`
+/// handle (and its negotiated api-rev) so callers can exercise
+/// partition-scoped, out-of-session operations such as
+/// [`HsmPartition::cert_chain`] against the finalized partition.
+pub(crate) fn finalized_co_partition() -> (HsmPartition, HsmApiRev, HsmSession) {
     let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
@@ -458,7 +483,7 @@ pub(crate) fn finalized_co_session() -> HsmSession {
         .expect("open rotated CO session");
 
     provision_partition(&session);
-    session
+    (part, rev, session)
 }
 
 /// Initialize and finalize the partition associated with an active CO session.

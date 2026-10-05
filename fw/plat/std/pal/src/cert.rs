@@ -402,7 +402,15 @@ impl StdHsmPal {
             .await?;
 
         // Prepare TBS.
-        let leaf_serial = make_serial(4_u8.wrapping_add(pid));
+        //
+        // Bind the leaf serial to the partition identity key (via its SHA-1
+        // subject key identifier) so this PAL-provisioned slot-0 leaf and the
+        // firmware's on-demand slot-2 PID leaf — both certifying this same PID
+        // key — carry the same serial.  Keep a positive DER INTEGER leading
+        // byte (bit 7 clear, bit 6 set), matching the firmware derivation.
+        let mut leaf_serial = [0u8; 20];
+        leaf_serial.copy_from_slice(&ski);
+        leaf_serial[0] = (leaf_serial[0] & 0x3f) | 0x40;
         let sn_bytes = make_leaf_sn(pid);
         let leaf_sn = core::str::from_utf8(&sn_bytes).map_err(|_| HsmError::InternalError)?;
         let params = LeafCertParams {

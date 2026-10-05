@@ -28,6 +28,7 @@ pub use init::SessionOpenInitOptions;
 pub use open_close::session_close;
 pub use open_close::session_open;
 pub use part_final::part_final;
+pub use part_final::part_final_raw;
 pub use part_init::build_part_init_mach_seed_aad;
 pub use part_init::encrypt_mach_seed_envelope;
 pub use part_init::part_init;

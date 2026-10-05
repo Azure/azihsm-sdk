@@ -45,6 +45,7 @@ use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain_csr_subject;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::x509_fixture::PotaFixture;
@@ -70,6 +71,226 @@ use crate::commands::part_init::pota_thumbprint;
 use crate::commands::part_init::sata_thumbprint;
 
 const PART_STATE_INITIALIZED: u8 = 5;
+
+/// Slot 2 serves a fresh PTA-signed PID certificate, generated on demand,
+/// only after the partition is finalized with a PTA chain that preserves
+/// the deterministic CSR subject. Each read regenerates the leaf (so its
+/// DER / thumbprint change) but the single-cert chain still validates to
+/// the PTA/POTA anchors every time.
+#[test]
+fn slot2_pid_cert_after_finalization() {
+    use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
+    use azihsm_ddi_tbor_types::TborGetCertReq;
+    use x509::X509Certificate;
+    use x509::X509CertificateOp;
+
+    let ctx = TestCtx::new();
+    // Slot 2 is empty until the partition is finalized.
+    ctx.expect_fw_reject(&TborGetCertChainInfoReq::new(2), TborStatus::InvalidArg);
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+    let chain = make_pta_chain_csr_subject(&pota, &init.pta_csr);
+
+    // Still empty before finalization completes.
+    ctx.expect_fw_reject(&TborGetCertChainInfoReq::new(2), TborStatus::InvalidArg);
+    ctx.part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal");
+
+    let info = ctx
+        .tbor(&TborGetCertChainInfoReq::new(2))
+        .expect("slot 2 metadata");
+    assert_eq!(info.num_certs, 1);
+
+    let first = ctx
+        .tbor(&TborGetCertReq::new(2, 0))
+        .expect("slot 2 index 0");
+    let second = ctx
+        .tbor(&TborGetCertReq::new(2, 0))
+        .expect("regenerated PID");
+    assert_ne!(
+        first.certificate, second.certificate,
+        "each slot-2 read must regenerate a fresh PID leaf",
+    );
+
+    let fresh_info = ctx
+        .tbor(&TborGetCertChainInfoReq::new(2))
+        .expect("fresh thumbprint");
+    assert_eq!(fresh_info.num_certs, 1);
+    assert_ne!(
+        info.thumbprint, fresh_info.thumbprint,
+        "a regenerated leaf changes the reported thumbprint",
+    );
+
+    // Only cert index 0 exists at slot 2, and slot 1 is still unused.
+    ctx.expect_fw_reject(&TborGetCertReq::new(2, 1), TborStatus::InvalidArg);
+    ctx.expect_fw_reject(&TborGetCertChainInfoReq::new(1), TborStatus::InvalidArg);
+
+    // The PTA/POTA issuers, leaf-last → root-first for the host validator.
+    let issuers: Vec<_> = chain
+        .der_items()
+        .iter()
+        .rev()
+        .map(|der| X509Certificate::from_der(der).expect("PTA DER"))
+        .collect();
+    for _ in 0..16 {
+        let fresh = ctx.tbor(&TborGetCertReq::new(2, 0)).expect("fresh PID");
+        let leaf = X509Certificate::from_der(&fresh.certificate).expect("PID DER");
+        assert!(
+            leaf.validate_chain(&issuers).expect("POTA/PTA/PID chain"),
+            "every regenerated PID leaf must chain to the PTA/POTA anchors",
+        );
+    }
+}
+
+/// The on-demand slot-2 PID leaf derives its serial from the SHA-1 subject
+/// key identifier of the PID public key, masked to a positive DER INTEGER
+/// (`serial[0] = (serial[0] & 0x3f) | 0x40`). A real SHA-1 digest is never
+/// zero, so the serial must carry entropy beyond the masked leading byte.
+/// This guards against a degenerate all-zero serial.
+#[test]
+fn slot2_pid_cert_serial_is_not_all_zeros() {
+    use azihsm_ddi_tbor_types::TborGetCertReq;
+
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+    let chain = make_pta_chain_csr_subject(&pota, &init.pta_csr);
+    ctx.part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal");
+
+    let resp = ctx
+        .tbor(&TborGetCertReq::new(2, 0))
+        .expect("slot 2 PID cert");
+    let serial = cert_serial_number(&resp.certificate);
+
+    assert_eq!(
+        serial.len(),
+        20,
+        "PID serial must be the 20-byte masked SHA-1 SKI",
+    );
+    assert_eq!(
+        serial[0] & 0xc0,
+        0x40,
+        "leading byte must be masked to a positive DER INTEGER (bit 7 clear, bit 6 set)",
+    );
+    assert!(
+        serial.iter().any(|&b| b != 0),
+        "serial must not be all zeros",
+    );
+    assert!(
+        serial[1..].iter().any(|&b| b != 0),
+        "serial must carry SKI entropy beyond the masked leading byte",
+    );
+}
+
+/// The on-demand slot-2 PID leaf is an end-entity certificate, so its
+/// `BasicConstraints` extension must omit `pathLenConstraint` entirely:
+/// RFC 5280 §4.2.1.9 forbids `pathLenConstraint` unless `cA` is asserted,
+/// and strict validators reject a `pathLenConstraint` paired with the
+/// default `cA=false`. The leaf template therefore encodes `BasicConstraints`
+/// as an empty `SEQUENCE` (`30 00`). This regression test parses the
+/// generated DER and asserts that empty encoding so a future template edit
+/// cannot silently reintroduce the invalid `cA=false` + `pathLenConstraint`
+/// combination.
+#[test]
+fn slot2_pid_cert_basic_constraints_has_no_path_len() {
+    use azihsm_ddi_tbor_types::TborGetCertReq;
+
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit roundtrip");
+    let chain = make_pta_chain_csr_subject(&pota, &init.pta_csr);
+    ctx.part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal");
+
+    let resp = ctx
+        .tbor(&TborGetCertReq::new(2, 0))
+        .expect("slot 2 PID cert");
+    let basic_constraints = cert_basic_constraints(&resp.certificate);
+
+    assert_eq!(
+        basic_constraints,
+        [0x30, 0x00],
+        "BasicConstraints must be an empty SEQUENCE (cA=false by default, no pathLenConstraint)",
+    );
+}
+
+/// Read one DER length field starting at `*i`, advancing `*i` past it.
+fn der_read_len(der: &[u8], i: &mut usize) -> usize {
+    let b = der[*i];
+    *i += 1;
+    if b & 0x80 == 0 {
+        b as usize
+    } else {
+        let n = (b & 0x7f) as usize;
+        let mut len = 0usize;
+        for _ in 0..n {
+            len = (len << 8) | der[*i] as usize;
+            *i += 1;
+        }
+        len
+    }
+}
+
+/// Extract the raw `serialNumber` INTEGER value bytes from a DER-encoded
+/// X.509 certificate: `Certificate ::= SEQUENCE { tbsCertificate SEQUENCE {
+/// [0] version, serialNumber INTEGER, ... } }`.
+fn cert_serial_number(der: &[u8]) -> Vec<u8> {
+    let mut i = 0usize;
+    assert_eq!(der[i], 0x30, "Certificate must be a SEQUENCE");
+    i += 1;
+    der_read_len(der, &mut i);
+    assert_eq!(der[i], 0x30, "tbsCertificate must be a SEQUENCE");
+    i += 1;
+    der_read_len(der, &mut i);
+    // Optional EXPLICIT [0] version precedes the serial.
+    if der[i] == 0xa0 {
+        i += 1;
+        let vlen = der_read_len(der, &mut i);
+        i += vlen;
+    }
+    assert_eq!(der[i], 0x02, "serialNumber must be an INTEGER");
+    i += 1;
+    let slen = der_read_len(der, &mut i);
+    der[i..i + slen].to_vec()
+}
+
+/// Extract the inner `BasicConstraints ::= SEQUENCE` value from the
+/// `extnValue` OCTET STRING of a DER-encoded certificate. Locates the
+/// extension by its OID (`2.5.29.19`, DER `06 03 55 1D 13`), skips the
+/// optional `critical` BOOLEAN, and returns the OCTET STRING contents.
+fn cert_basic_constraints(der: &[u8]) -> Vec<u8> {
+    // OID 2.5.29.19 (id-ce-basicConstraints): tag 06, len 03, 55 1D 13.
+    const BC_OID: [u8; 5] = [0x06, 0x03, 0x55, 0x1D, 0x13];
+    let pos = der
+        .windows(BC_OID.len())
+        .position(|w| w == BC_OID)
+        .expect("BasicConstraints OID must be present");
+    let mut i = pos + BC_OID.len();
+    // Optional `critical` BOOLEAN precedes the extnValue.
+    if der[i] == 0x01 {
+        i += 1;
+        let blen = der_read_len(der, &mut i);
+        i += blen;
+    }
+    assert_eq!(der[i], 0x04, "extnValue must be an OCTET STRING");
+    i += 1;
+    let olen = der_read_len(der, &mut i);
+    der[i..i + olen].to_vec()
+}
 
 /// Run `PartInit` on `session` and issue the resulting PTA chain: read
 /// the PTA public key from the returned CSR and certify it under `pota`
