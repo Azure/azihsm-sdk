@@ -383,8 +383,7 @@ impl<S: TableStorage> KeyVault<S> {
     ///
     /// The undo-log commit path deletes a soft-deleted (disabled) key, so a
     /// caller that must classify a key before deleting it needs to see the
-    /// entries that [`key_kind`](Self::key_kind) /
-    /// [`key_session`](Self::key_session) intentionally hide.
+    /// entries that [`key_kind`](Self::key_kind) intentionally hides.
     pub fn key_entry(&self, key_id: HsmKeyId) -> HsmResult<Entry> {
         let (table, slot) = split_key_id(key_id);
         self.entry_present(table, slot)
@@ -395,18 +394,6 @@ impl<S: TableStorage> KeyVault<S> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
         Ok(self.read_attrs(table, entry.attrs_byte_offset())?.attrs)
-    }
-
-    /// Returns the stored session id for a session-scoped key, or `None`
-    /// for a partition-scoped (tag-addressed) key.
-    ///
-    /// This is the value a session-scoped key was created under; callers
-    /// that mirror the key into an external engine use it to address the
-    /// same key for teardown.
-    pub fn key_session(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
-        let (table, slot) = split_key_id(key_id);
-        let entry = self.entry(table, slot)?;
-        Ok(entry.session().then(|| entry.session_or_tag()))
     }
 
     /// Returns the canonical byte length for a key `kind` — the fixed size

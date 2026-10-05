@@ -100,9 +100,10 @@ impl HsmSessionManager for UnoHsmPal {
         blob[..SESSION_API_REV_SIZE].copy_from_slice(api_rev);
         blob[SESSION_API_REV_SIZE..].copy_from_slice(masking_key);
 
-        // Store as an internal session key.
+        // Store as an internal session key, then wipe the scratch copy of the
+        // masking key whether or not the store succeeded.
         let attrs = HsmVaultKeyAttrs::new().with_internal(true);
-        let physical_id = {
+        let created = {
             let mut v = crate::vault::vault(io);
             v.create(
                 self,
@@ -113,8 +114,10 @@ impl HsmSessionManager for UnoHsmPal {
                 None,
                 attrs,
             )
-            .await?
+            .await
         };
+        blob.zeroize();
+        let physical_id = created?;
 
         // Allocate (or re-map, on re-key) the logical session slot.
         let result = {

@@ -1006,31 +1006,6 @@ fn for_each_session_key_skips_free_slots() {
 }
 
 #[test]
-fn key_session_reports_session_binding() {
-    // App key → None; session-scoped key → Some(session id it was created
-    // under).
-    let (mut v, g, io) = vault::<1>();
-    let app = with_key(&[0x77u8; 32], |k| {
-        block_on(v.create(&g, &io, 0, k, HsmVaultKeyKind::Aes256, None, aes_attrs())).unwrap()
-    });
-    let sess = with_key(&[0x88u8; 32], |k| {
-        block_on(v.create(
-            &g,
-            &io,
-            0,
-            k,
-            HsmVaultKeyKind::Aes256,
-            Some(11),
-            aes_attrs(),
-        ))
-        .unwrap()
-    });
-
-    assert_eq!(v.key_session(app).unwrap(), None);
-    assert_eq!(v.key_session(sess).unwrap(), Some(11));
-}
-
-#[test]
 fn for_each_session_key_propagates_visitor_error() {
     // A visitor error short-circuits the walk and is surfaced to the
     // caller so teardown paths can pre-validate handles and fail before

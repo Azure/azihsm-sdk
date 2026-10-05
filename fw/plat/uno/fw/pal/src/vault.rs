@@ -137,10 +137,12 @@ impl HsmVault for UnoHsmPal {
 
         // The engine key is destroyed, so the entry must never be usable
         // again: delete it (a disabled entry is still deletable), then
-        // release the slot.  If the delete fails, the entry stays disabled
-        // and the slot stays reserved — a terminal state that blocks both
-        // reuse of the dead handle and slot aliasing until the partition is
-        // reset.
+        // release the slot.  The entry holds only the 2-byte handle, below
+        // the vault's GDMA threshold, so the delete is a CPU zeroize that
+        // fails only on corrupted entry metadata.  In that case the entry
+        // stays disabled and the slot stays reserved — a terminal state that
+        // blocks both reuse of the dead handle and slot aliasing until the
+        // partition is reset.
         vault(io).delete(self, io, key_id).await?;
         fp_slot_free(fp_id.vault_id(), fp_id.key_index());
         Ok(())
@@ -210,13 +212,35 @@ pub(crate) async fn delete_session_keys(
 ) -> HsmResult<()> {
     // Validate and collect the session's bulk slots first, so a corrupt entry
     // fails before any engine or vault state changes.  DeleteSessionOnly then
-    // drops the session's bulk keys from the engine in one message.  The
-    // slots are freed only after the vault entries are gone: a freed slot
-    // could otherwise be reallocated while a still-present entry references
-    // it (aliasing) if the vault delete fails.
+    // drops the session's bulk keys from the engine in one message (it
+    // succeeds with nothing to match, so a retry is safe).  A slot is freed
+    // only once its vault entry is gone: a freed slot could otherwise be
+    // reallocated while a still-present entry references it (aliasing).
     let sess = u16::from(session_id);
-    let mut to_free = [0u8; NUM_FP_TABLES];
-    vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
+    let to_free = session_bulk_slots(io, sess)?;
+    fp_delete_session_only(pal, io, sess).await?;
+    if let Err(e) = vault(io).delete_by_session(pal, io, sess).await {
+        // Partial eviction: release the slots whose entries are already gone
+        // (a retry's pre-pass no longer sees them) and keep the rest reserved.
+        // If the re-walk fails, keep every slot reserved.
+        let remaining = session_bulk_slots(io, sess).unwrap_or(to_free);
+        let mut gone = to_free;
+        for (g, r) in gone.iter_mut().zip(remaining.iter()) {
+            *g &= !*r;
+        }
+        fp_slots_free_bits(&gone);
+        return Err(e);
+    }
+    fp_slots_free_bits(&to_free);
+    Ok(())
+}
+
+/// Collect the FP slots (one bitmap byte per table) referenced by the bulk
+/// keys bound to `session`, live or disabled.  A malformed stored handle is
+/// [`HsmError::InternalError`].
+fn session_bulk_slots(io: &impl HsmIo, session: u16) -> HsmResult<[u8; NUM_FP_TABLES]> {
+    let mut slots = [0u8; NUM_FP_TABLES];
+    vault(io).for_each_session_key(session, |_key_id, kind, blob| {
         if is_bulk_kind(kind) {
             let bytes: &[u8] = blob;
             if bytes.len() != core::mem::size_of::<u16>() {
@@ -224,17 +248,14 @@ pub(crate) async fn delete_session_keys(
             }
             let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
             let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
-            if vid >= to_free.len() || kidx >= FP_MAX_SLOTS_PER_PART {
+            if vid >= slots.len() || kidx >= FP_MAX_SLOTS_PER_PART {
                 return Err(HsmError::InternalError);
             }
-            to_free[vid] |= 1 << kidx;
+            slots[vid] |= 1 << kidx;
         }
         Ok(())
     })?;
-    fp_delete_session_only(pal, io, sess).await?;
-    vault(io).delete_by_session(pal, io, sess).await?;
-    fp_slots_free_bits(&to_free);
-    Ok(())
+    Ok(slots)
 }
 
 // ---------------------------------------------------------------------------

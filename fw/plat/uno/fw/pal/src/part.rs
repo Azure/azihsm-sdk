@@ -197,7 +197,8 @@ impl UnoHsmPal {
     /// identity and enable-time material is zeroized, the resource mask is
     /// released, and the generation counter is bumped so previously issued
     /// key handles are rejected. Freeing an already-`Unallocated` partition is
-    /// a no-op.
+    /// a no-op. If the vault clear fails, its error is returned and the
+    /// partition stays allocated so the free can be retried.
     pub(crate) async fn part_free(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         if part.state()? == PartState::Unallocated {
@@ -209,17 +210,22 @@ impl UnoHsmPal {
         // releases the fast-path bulk-key slots (the engine drops the keys on
         // the function's teardown). One admin session covers every vault
         // delete below, so the slot is scrubbed once instead of once per key.
-        // A failed clear keeps the bulk-key slots reserved (no aliasing).
-        self.with_admin_io(pid, async |admin_io, _alloc| {
-            self.clear_enabled_state(admin_io, pid).await;
-            if let Some(key_id) = part.id_key_id() {
-                self.delete_key(admin_io, key_id).await;
-            }
-            let _ = self.vault_clear(admin_io).await;
-        })
-        .await;
+        let cleared = self
+            .with_admin_io(pid, async |admin_io, _alloc| {
+                self.clear_enabled_state(admin_io, pid).await;
+                if let Some(key_id) = part.id_key_id() {
+                    self.delete_key(admin_io, key_id).await;
+                }
+                self.vault_clear(admin_io).await
+            })
+            .await;
 
+        // The identity key is gone either way, so never leave `id_key_id`
+        // dangling.  If the vault clear failed, keep the partition allocated
+        // (resource mask and bulk-key slots reserved) so the free can be
+        // retried.
         part.clear_identity();
+        cleared?;
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
         part.clear_masked_bk_boot();
