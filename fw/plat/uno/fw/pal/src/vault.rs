@@ -13,8 +13,9 @@
 //!
 //! All state is in GSRAM, so a [`KeyVault`] is constructed per call over a
 //! lightweight [`VaultStorage`](azihsm_fw_uno_drivers_vault::VaultStorage)
-//! handle that carries only the calling partition's resource mask — there
-//! is no PAL-resident vault state.
+//! handle that carries only the calling partition's resource mask.  The only
+//! PAL-resident state is the fast-path bulk-key slot bitmap and the lock
+//! that serializes bulk-key registration against teardown.
 //!
 //! Following the reference firmware, the SDK `meta` (key label) is not
 //! stored (see the [`KeyVault`] crate docs).
@@ -28,6 +29,8 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
+use azihsm_fw_hsm_pal_traits::HsmSessionManager;
+use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
@@ -94,6 +97,10 @@ impl HsmVault for UnoHsmPal {
     }
 
     async fn vault_key_delete(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        // Serialized against bulk-key creation and session teardown (see
+        // `UnoHsmPal::fp_bulk_lock`).
+        let _guard = self.fp_bulk_lock.lock().await;
+
         // Disabled-aware classification: the undo-log commit deletes a
         // soft-deleted (disabled) key, which the live-entry lookups hide.
         let entry = vault(io).key_entry(key_id)?;
@@ -152,31 +159,8 @@ impl HsmVault for UnoHsmPal {
         io: &impl HsmIo,
         session_id: HsmSessId,
     ) -> HsmResult<()> {
-        // DeleteSessionOnly drops the session's bulk keys from the engine in
-        // one message.  Collect the slots to release but don't free them until
-        // the vault entries are gone: a freed slot could otherwise be
-        // reallocated while a still-present entry references it (aliasing) if
-        // the delete below fails.
-        let sess = u16::from(session_id);
-        fp_delete_session_only(self, io, sess).await?;
-        let mut to_free = [0u8; NUM_FP_TABLES];
-        vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
-            if is_bulk_kind(kind) {
-                let bytes: &[u8] = blob;
-                if bytes.len() != core::mem::size_of::<u16>() {
-                    return Err(HsmError::InternalError);
-                }
-                let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
-                let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
-                if vid < to_free.len() && kidx < FP_MAX_SLOTS_PER_PART {
-                    to_free[vid] |= 1 << kidx;
-                }
-            }
-            Ok(())
-        })?;
-        vault(io).delete_by_session(self, io, sess).await?;
-        fp_slots_free_bits(&to_free);
-        Ok(())
+        let _guard = self.fp_bulk_lock.lock().await;
+        delete_session_keys(self, io, session_id).await
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
@@ -206,6 +190,42 @@ impl HsmVault for UnoHsmPal {
     fn vault_key_attrs(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
         vault(io).key_attrs(key_id)
     }
+}
+
+/// Delete every key bound to `session_id`, including its bulk keys in the
+/// fast-path engine.  The caller must hold [`UnoHsmPal::fp_bulk_lock`] so no
+/// bulk key for the session is registered between the engine delete and the
+/// vault delete.
+pub(crate) async fn delete_session_keys(
+    pal: &UnoHsmPal,
+    io: &impl HsmIo,
+    session_id: HsmSessId,
+) -> HsmResult<()> {
+    // DeleteSessionOnly drops the session's bulk keys from the engine in
+    // one message.  Collect the slots to release but don't free them until
+    // the vault entries are gone: a freed slot could otherwise be
+    // reallocated while a still-present entry references it (aliasing) if
+    // the delete below fails.
+    let sess = u16::from(session_id);
+    fp_delete_session_only(pal, io, sess).await?;
+    let mut to_free = [0u8; NUM_FP_TABLES];
+    vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
+        if is_bulk_kind(kind) {
+            let bytes: &[u8] = blob;
+            if bytes.len() != core::mem::size_of::<u16>() {
+                return Err(HsmError::InternalError);
+            }
+            let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
+            let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
+            if vid < to_free.len() && kidx < FP_MAX_SLOTS_PER_PART {
+                to_free[vid] |= 1 << kidx;
+            }
+        }
+        Ok(())
+    })?;
+    vault(io).delete_by_session(pal, io, sess).await?;
+    fp_slots_free_bits(&to_free);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +359,10 @@ fn fp_slots_free_mask(res_mask: u128) {
 /// key (its id is the engine's create/delete match value), `None` for a
 /// partition (app) key (which uses `0`).  If the vault write fails after the
 /// engine create, the engine key is released so no slot leaks.
+///
+/// Runs under [`UnoHsmPal::fp_bulk_lock`], and a session-scoped key is
+/// rejected with [`HsmError::SessionNotFound`] once its session has been
+/// torn down, so session teardown never misses a registration.
 async fn fp_bulk_create(
     pal: &UnoHsmPal,
     io: &impl HsmIo,
@@ -357,6 +381,16 @@ async fn fp_bulk_create(
         HsmVaultKeyKind::AesXtsBulk256 => AesBulkKeyType::Xts,
         _ => return Err(HsmError::InvalidKeyType),
     };
+
+    let _guard = pal.fp_bulk_lock.lock().await;
+    if session_id.is_some_and(|sid| {
+        matches!(
+            pal.session_state(io, sid),
+            HsmSessionState::Pending | HsmSessionState::Invalid
+        )
+    }) {
+        return Err(HsmError::SessionNotFound);
+    }
 
     // The engine scopes a bulk key by PCIe function, which `io.pid()` carries.
     let pcie_fn = part_id_to_pcie_fn(u8::from(io.pid()))?;
@@ -488,9 +522,9 @@ async fn fp_delete_session_only(
 /// reply to an error.
 ///
 /// `info` is borrowed so the caller keeps the only owned copy (and scrubs it);
-/// the encoded request is wrapped in [`Zeroizing`] so its copy of the raw key
-/// material is scrubbed on any exit from this future, including a mid-send
-/// drop.
+/// the encoded request and the response buffer are wrapped in [`Zeroizing`]
+/// so any raw key material they hold is scrubbed on every exit from this
+/// future, including a mid-send drop.
 async fn fp_send_key_update(pal: &UnoHsmPal, info: &KeyUpdateInfo) -> HsmResult<()> {
     let request = Zeroizing::new(
         IpcMessageKeyUpdate {
@@ -503,13 +537,15 @@ async fn fp_send_key_update(pal: &UnoHsmPal, info: &KeyUpdateInfo) -> HsmResult<
         .encode(),
     );
 
-    let mut resp = [0u32; IPC_MESSAGE_LENGTH];
+    // The reply may echo request payload bytes, so it is scrubbed on drop too.
+    let mut resp = Zeroizing::new(IpcMessage {
+        data: [0u32; IPC_MESSAGE_LENGTH],
+    });
     pal.ipc
-        .send(IpcChannel::FpMessage as u8, &request.data, &mut resp)
+        .send(IpcChannel::FpMessage as u8, &request.data, &mut resp.data)
         .await;
 
-    let header = IpcMessageDecoder::decode_header(&IpcMessage { data: resp })
-        .map_err(|_| HsmError::InternalError)?;
+    let header = IpcMessageDecoder::decode_header(&resp).map_err(|_| HsmError::InternalError)?;
     // A genuine FP reply sets the response bit; a spurious wake that left
     // the RX ring empty would leave `resp` zeroed (response=false), which
     // must not be mistaken for a `Success` (0) status.

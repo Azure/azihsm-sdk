@@ -92,6 +92,8 @@ use azihsm_fw_uno_reg_soc::psram::PSRAM_BASE;
 use azihsm_fw_uno_trace::tracing::*;
 use embassy_futures::select::Either;
 use embassy_futures::select::select;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -308,11 +310,17 @@ pub struct UnoHsmPal {
     /// it; initialise this table saturated (any value `>= ` capacity) to make
     /// the first scrub cover the whole slot instead.
     pub(crate) io_peak: IoAllocTable,
+
+    /// Serializes bulk-key registration with the fast-path engine against
+    /// bulk-key deletion and session teardown, so a key for a session that is
+    /// being torn down can't be registered with the engine after the
+    /// session's engine-side delete (see `vault.rs`).
+    pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
 // executor on a single-core Cortex-M7 with no preemptive ISRs.  The
-// interior-mutable field (Cell<BootPhase>) is never accessed from
+// interior-mutable fields (e.g. Cell<BootPhase>) are never accessed from
 // interrupt context, so concurrent access is impossible despite the
 // asserted Sync.
 unsafe impl Sync for UnoHsmPal {}
@@ -412,6 +420,7 @@ impl Default for UnoHsmPal {
             boot_phase: Cell::new(BootPhase::WaitNormalBoot),
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
+            fp_bulk_lock: Mutex::new(()),
         }
     }
 }

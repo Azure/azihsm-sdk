@@ -133,16 +133,21 @@ impl HsmSessionManager for UnoHsmPal {
     }
 
     async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
+        // Hold the bulk-key lock until the slot is freed so a concurrent
+        // bulk-key create for this session either finishes first (and is
+        // deleted below) or observes the session as gone.
+        let _guard = self.fp_bulk_lock.lock().await;
+
         let mut table = SessionStore::partition(io.pid())?;
 
-        // Resolve the physical vault key id before any async work (drops the
+        // Resolve the physical vault key id before the vault awaits (drops the
         // session-store borrow before the awaits).
         let physical_id = table.physical_id(id)?;
 
         // Delete every session-scoped key bound to this logical session
         // (including any fast-path engine cleanup), then the session key
         // itself.
-        self.vault_key_delete_by_session(io, id).await?;
+        crate::vault::delete_session_keys(self, io, id).await?;
         crate::vault::vault(io)
             .delete(self, io, physical_id)
             .await?;

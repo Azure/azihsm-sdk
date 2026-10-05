@@ -8,7 +8,9 @@
 //! disabled/freed while host IOs are outstanding), and host↔host overlap is
 //! resolved by the handlers' guards-first sync commit.  Legacy MBOR handlers
 //! still call [`partition_lock`](HsmPartitionLock::partition_lock), so the
-//! trait is implemented as a no-op guard.
+//! trait is implemented as a no-op guard.  (Bulk-key registration with the
+//! fast-path engine is serialized separately, inside the vault and session
+//! PAL methods, by `UnoHsmPal::fp_bulk_lock`.)
 
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPartitionLock;
