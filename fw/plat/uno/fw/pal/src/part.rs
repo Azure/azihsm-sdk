@@ -220,12 +220,8 @@ impl UnoHsmPal {
             })
             .await;
 
-        // The identity key is gone either way, so never leave `id_key_id`
-        // dangling.  If the vault clear failed, keep the partition allocated
-        // (resource mask and bulk-key slots reserved) so the free can be
-        // retried.
-        part.clear_identity();
         cleared?;
+        part.clear_identity();
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
         part.clear_masked_bk_boot();
