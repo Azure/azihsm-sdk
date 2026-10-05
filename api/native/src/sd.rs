@@ -154,9 +154,12 @@ impl<'a: 'b, 'b> From<&'b SdEvidence<'a>> for api::HsmSdEvidence<'b> {
 /// @brief Create a new security domain and its remote backup
 ///
 /// Creates a security domain under the calling session's partition from
-/// `params.part_policy`, using the sender's masked sealing key and the
-/// receiver's attestation evidence, and returns the three backups the
-/// firmware produces.
+/// `params.part_policy`, using the sender's masked sealing key. The
+/// recipient key is recovered from the authoritative
+/// `params.receiver_cert_chain` (always required, anchored to the policy
+/// SATA key); the `params.receiver_evidence` is optional and verified only
+/// when the policy sets `require_trusted_sa_key`. Returns the three backups
+/// the firmware produces.
 ///
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Create-backup input buffers

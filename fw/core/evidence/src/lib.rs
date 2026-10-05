@@ -220,7 +220,9 @@ where
     }
 
     // Reqs 1, 3, 4: the partition-owner chain must validate, be anchored to
-    // the policy SATA key, and share the canonical leaf key.
+    // the caller-selected `anchors.part_owner_anchor` (the policy SATA key
+    // for reseal/peer, the policy SAPOTA key for remote create/restore),
+    // and share the canonical leaf key.
     validate_chain(
         pal,
         io,
