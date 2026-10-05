@@ -235,9 +235,12 @@ impl HsmSession {
     ///
     /// Creates a new security domain from the caller-supplied unified
     /// `part_policy`, using the sender's `masked_sealing_key` (from
-    /// `SdSealingKeyGen`) and the receiver's attestation `evidence`.
-    /// Returns the remote backup together with the device-local backups.
-    /// Only valid on a V2 session; a V1 session returns
+    /// `SdSealingKeyGen`). The receiver public key is always recovered from
+    /// the authoritative `receiver_cert_chain` (anchored to the policy SATA
+    /// key); `receiver_evidence` is optional and verified only when the
+    /// policy sets `require_trusted_sa_key` (pass an empty evidence
+    /// otherwise). Returns the remote backup together with the device-local
+    /// backups. Only valid on a V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
     pub fn sd_create_remote_backup(
         &self,

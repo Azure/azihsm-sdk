@@ -232,6 +232,9 @@ pub(crate) fn finalized_backing_session_trusted(
 
     (session, policy, pid_pub)
 }
+
+/// Mint an SD sealing key and attest it, returning
+/// `(masked_sealing_key, key_report_bytes)`.  In the self-backup tests
 /// this key is both the sender's authentication key and (via its report)
 /// the receiver's `RcvrPub` source; the report is signed by the PID key.
 pub(crate) fn masked_key_and_report(ctx: &TestCtx, session_id: u16) -> (Vec<u8>, Vec<u8>) {

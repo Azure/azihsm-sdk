@@ -15,11 +15,26 @@
 //!
 //! 1. all three certificate chains validate as X.509 ECDSA chains;
 //! 2. the manufacturer and owner chains are validated but **not** anchored;
-//! 3. the partition-owner chain is anchored to the policy SATA key (a
-//!    non-leaf certificate's public key must equal it — SATA endorses the
-//!    leaf directly or indirectly);
+//! 3. the partition-owner chain is anchored to a **caller-selected**
+//!    sealing-authority key passed in [`TrustAnchors`] (a non-leaf
+//!    certificate's public key must equal it — the anchor endorses the
+//!    leaf directly or indirectly). The evidence-based `SdReseal`,
+//!    `SdCreatePeerBackup`, and `SdRestorePeerBackup` commands anchor to
+//!    the policy **SATA** key; the **optional** evidence verified by
+//!    `SdCreateRemoteBackup` / `SdRestoreRemoteBackup` (only when the
+//!    policy sets `require_trusted_sa_key`) anchors to the policy
+//!    **SAPOTA** key instead;
 //! 4. all three chains share the **same** leaf public key;
 //! 5. that shared leaf key signed the COSE_Sign1 attestation report.
+//!
+//! The anchor choice reflects two distinct trust models. For the
+//! evidence-based reseal and peer commands, [`verify_evidence`] is the sole
+//! source of the peer key (recovered from the attested COSE_Key) and is
+//! always SATA-anchored. For `SdCreateRemoteBackup` /
+//! `SdRestoreRemoteBackup`, the authoritative peer key instead comes from a
+//! separate, always-required SATA key certificate chain (see
+//! [`verify_receiver_cert_chain`]); the attestation evidence is optional
+//! and, when present, SAPOTA-anchored.
 //!
 //! The bulk DER/COSE items travel out of band as NVMe SGL Data Blocks; the
 //! caller passes the [`OobPtr`] locating them plus the per-item
@@ -97,11 +112,14 @@ pub struct EvidenceRefs<'a> {
 /// [`part_owner_anchor`](Self::part_owner_anchor).
 pub struct TrustAnchors<'a> {
     /// Public key the partition-owner chain must chain to: raw `X ‖ Y`,
-    /// big-endian, exactly [`POINT_LEN`] bytes.  For
-    /// [`SdCreateRemoteBackup`] this is the policy **SAPOTA** key; other
-    /// SD commands pass their applicable sealing-authority anchor.
+    /// big-endian, exactly [`POINT_LEN`] bytes.  The **optional** evidence
+    /// verified by [`SdCreateRemoteBackup`] and [`SdRestoreRemoteBackup`]
+    /// anchors here to the policy **SAPOTA** key; the evidence-based
+    /// `SdReseal`, `SdCreatePeerBackup`, and `SdRestorePeerBackup` commands
+    /// anchor here to the policy **SATA** key.
     ///
     /// [`SdCreateRemoteBackup`]: azihsm_fw_ddi_tbor_types::TborSdCreateRemoteBackupReq
+    /// [`SdRestoreRemoteBackup`]: azihsm_fw_ddi_tbor_types::TborSdRestoreRemoteBackupReq
     pub part_owner_anchor: &'a [u8],
 }
 
