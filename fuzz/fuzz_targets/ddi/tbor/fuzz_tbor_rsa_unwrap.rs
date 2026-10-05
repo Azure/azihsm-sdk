@@ -18,19 +18,22 @@ use azihsm_crypto::RsaEncryptAlgo;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_ddi_interface::DdiError;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::*;
 use common::EccCurve;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-/// `KeyScope` wire discriminants. Only `Session` has a provisioned masking
-/// key after `bootstrap_rotated_co` (which does not run `PartFinal` /
-/// `CreateSD`), so the other variants exercise the `UnsupportedKeyScope`
-/// reject path.
+/// `KeyScope` wire discriminants. `Session`, `Ephemeral`, and `Local` have
+/// provisioned masking keys after `PartFinal`; `SecurityDomain` requires
+/// `CreateSD` and exercises the `UnsupportedKeyScope` reject path.
 #[derive(Arbitrary, Debug, Clone, Copy)]
 enum KeyScope {
     Session,
@@ -118,7 +121,9 @@ impl KeyClass {
                 .expect("generate ECC private key")
                 .to_vec()
                 .expect("ECC PKCS#8 DER export"),
-            Self::HmacSha256 | Self::HmacSha384 | Self::HmacSha512 => alloc_vec(0x37, 32),
+            Self::HmacSha256 => alloc_vec(0x37, 32),
+            Self::HmacSha384 => alloc_vec(0x37, 48),
+            Self::HmacSha512 => alloc_vec(0x37, 64),
         }
     }
 }
@@ -213,6 +218,24 @@ const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 /// wraps with below.
 const OAEP_SHA256: u8 = 1;
 
+/// Drive `PartInit` → `PartFinal` to provision the built-in RSA unwrapping
+/// key required by `GetUnwrappingKey` and `UnwrapKey`.
+fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
+    let pota = CaKey::generate();
+    let policy = common::known_good_part_policy(pota.raw_pub());
+    let init = ctx
+        .part_init(
+            session,
+            &common::mach_seed(),
+            &policy,
+            &common::pota_thumbprint(),
+        )
+        .expect("PartInit should succeed");
+    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(session, &policy, &[], &chain.der_items())
+        .expect("PartFinal should succeed");
+}
+
 /// Build a fixed-byte-pattern buffer (`fill` repeated `len` times), used
 /// for the AES / HMAC symmetric key material.
 fn alloc_vec(fill: u8, len: usize) -> Vec<u8> {
@@ -274,6 +297,7 @@ fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+        finalize_partition(ctx, &session);
 
         let hsm_pub = ctx
             .tbor(&TborGetUnwrappingKeyReq {
@@ -314,7 +338,11 @@ fuzz_target!(|input: FuzzInput| {
             && key_usage == input.key_class.valid_usage()
             && oaep_hash_algo == OAEP_SHA256
             && key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
-        let expect_success = valid_except_scope && matches!(input.key_scope, KeyScope::Session);
+        let expect_success = valid_except_scope
+            && matches!(
+                input.key_scope,
+                KeyScope::Session | KeyScope::Ephemeral | KeyScope::Local
+            );
 
         match (&result, expect_success) {
             (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
@@ -332,7 +360,7 @@ fuzz_target!(|input: FuzzInput| {
             (Ok(_), false) => panic!("invalid UnwrapKey request unexpectedly succeeded"),
             (Err(err), true) => panic!("valid UnwrapKey request failed: {err}"),
             (Err(err), false)
-                if valid_except_scope && !matches!(input.key_scope, KeyScope::Session) =>
+                if valid_except_scope && matches!(input.key_scope, KeyScope::SecurityDomain) =>
             {
                 assert!(
                     matches!(err, DdiError::TborStatus(TborStatus::UnsupportedKeyScope)),

@@ -226,9 +226,9 @@ fuzz_target!(|input: FuzzInput| {
         // (sign+verify xor encrypt+decrypt); an unknown op still needs a
         // valid key imported so the fuzzed `RsaModExp` call can reach the
         // op-type check, so it reuses the sign+verify pair.
-        let key_usage = match input.cmdreq_data.op_type {
-            RsaOpType::Decrypt => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
-            RsaOpType::Sign | RsaOpType::Unknown(_) => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
+        let key_usage = match op_type {
+            RSA_OP_DECRYPT => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
+            _ => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
         };
 
         let (masked_key, modulus_len) = if generate_valid_key {
@@ -241,14 +241,13 @@ fuzz_target!(|input: FuzzInput| {
             (input.cmdreq_data.masked_key.clone(), None)
         };
 
-        let mut y = vec![0u8; 512];
+        let mut y = vec![0u8; modulus_len.unwrap_or(RSA_MOD_EXP_MAX_LEN)];
         fill_rand(input.rand_seed, &mut y);
 
-        // Only a generated key, a known Sign/Decrypt op, and a `y` whose
-        // length matches the key's modulus can succeed; the fixed 512-byte
-        // `y` only matches an Rsa4k modulus.
+        // Only a generated key and a known Sign/Decrypt op can succeed;
+        // aliases carried by `Unknown` are classified by their encoded value.
         let expect_success = generate_valid_key
-            && matches!(input.cmdreq_data.op_type, RsaOpType::Sign | RsaOpType::Decrypt)
+            && matches!(op_type, RSA_OP_SIGN | RSA_OP_DECRYPT)
             && modulus_len == Some(y.len());
 
         if expect_success {
