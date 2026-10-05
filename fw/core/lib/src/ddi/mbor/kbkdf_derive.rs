@@ -33,10 +33,10 @@ use super::*;
 /// single-threaded cooperative executor; multiple IOs are in flight and
 /// interleave at await points — including inside the awaited
 /// `vault_key_create` (which can yield on Uno during the GDMA key copy) —
-/// but this handler's only partition-state mutation is that single,
-/// self-contained `vault_key_create`, with no multi-step
-/// read-modify-write across an await for an interleaved handler to
-/// corrupt.
+/// but this handler's only partition-state mutations are that single,
+/// self-contained `vault_key_create` and, if a later step fails, the
+/// deletion of the key it just created — no multi-step read-modify-write
+/// across an await for an interleaved handler to corrupt.
 pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -104,37 +104,39 @@ pub(crate) async fn kbkdf_counter_hmac_derive<'p, P: HsmPal>(
     let key_id: u16 = key_handle.into();
 
     // Envelope the derived key into the host's opaque re-import blob.
-    let masked_key = super::masking::mask_blob(
-        pal,
-        io,
-        HsmSessId::from(sess_id),
-        super::masking::MaskSpec {
-            attrs,
-            key_type: super::from_pal::vault_kind_ddi(target.kind)?,
-            key_label: body.key_properties.key_label,
-            key_length: out.len() as u16,
-        },
-        &out[..],
-    )
+    let result = async {
+        let masked_key = super::masking::mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            super::masking::MaskSpec {
+                attrs,
+                key_type: super::from_pal::vault_kind_ddi(target.kind)?,
+                key_label: body.key_properties.key_label,
+                key_length: out.len() as u16,
+            },
+            &out[..],
+        )
+        .await?;
+
+        pal.dma_alloc_var(io, |buf| {
+            super::encode_resp(
+                &super::success_hdr_sess(hdr, DdiOp::KbkdfCounterHmacDerive, sess_id),
+                &DdiKbkdfCounterHmacDeriveResp {
+                    key_id,
+                    masked_key,
+                    bulk_key_id,
+                },
+                buf,
+            )
+        })
+    }
     .await;
 
-    // Scrub the derived key material now that the vault (or fast-path engine,
-    // for bulk keys) owns it and masking has consumed it.  Wipe on all paths
-    // — including a masking error — since per-IO DMA arenas are not reliably
-    // cleared on teardown.
+    // Scrub the derived key material now that the vault (or the bulk-crypto
+    // backend, for bulk keys) owns it and masking has consumed it.  Wipe on
+    // all paths — including a masking error — since the per-IO arena is not
+    // guaranteed to be wiped on teardown.
     out.zeroize();
-    let masked_key = masked_key?;
-
-    let resp = pal.dma_alloc_var(io, |buf| {
-        super::encode_resp(
-            &super::success_hdr_sess(hdr, DdiOp::KbkdfCounterHmacDerive, sess_id),
-            &DdiKbkdfCounterHmacDeriveResp {
-                key_id,
-                masked_key,
-                bulk_key_id,
-            },
-            buf,
-        )
-    })?;
-    Ok(resp)
+    super::bulk::rollback_on_err(pal, io, key_handle, result.map(|b| &*b)).await
 }

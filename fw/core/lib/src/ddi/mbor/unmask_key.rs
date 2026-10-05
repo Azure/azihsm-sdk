@@ -27,6 +27,7 @@
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_core_crypto_key_masking::cbc::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::cbc::unmask;
+use azihsm_fw_core_crypto_key_masking::cbc::UnmaskLayout;
 use azihsm_fw_ddi_mbor::MborDecode;
 use azihsm_fw_ddi_mbor::MborDecoder;
 use azihsm_fw_ddi_mbor_types::masked_key::DdiMaskedKeyMetadata;
@@ -117,12 +118,9 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
                 unmask(pal, io, part_mk, body.masked_key).await?
             };
 
-            if key_len > layout.plaintext_max_len {
-                return Err(HsmError::MaskedKeyDecodeFailed);
-            }
-            key_buf.copy_from_slice(
-                &body.masked_key[layout.plaintext_offset..layout.plaintext_offset + key_len],
-            );
+            let copied = copy_plaintext(body.masked_key, &layout, key_len, key_buf);
+            body.masked_key.zeroize();
+            copied?;
 
             let (handle, bulk_id) = match super::bulk::commit_key(
                 pal,
@@ -153,88 +151,90 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
                         unmask(pal, io, part_mk, body.masked_key).await?
                     };
 
-                    // Guard the metadata length so an inconsistent `key_length`
-                    // errors instead of panicking on the slice below.
-                    if key_len > layout.plaintext_max_len {
-                        return Err(HsmError::MaskedKeyDecodeFailed);
-                    }
-
                     // Copy the primary key material (plaintext prefix) into a fresh
-                    // vault-import scratch buffer.  For ECC the trailing public
-                    // point is ignored here; the private scalar re-derives it.
-                    let key_buf = pal.dma_alloc(io, key_len)?;
-                    key_buf.copy_from_slice(
-                        &body.masked_key
-                            [layout.plaintext_offset..layout.plaintext_offset + key_len],
-                    );
+                    // vault-import scratch buffer, then wipe the decrypted request
+                    // blob.  For ECC the trailing public point is ignored here; the
+                    // private scalar re-derives it.
+                    let key_buf = match pal.dma_alloc(io, key_len) {
+                        Ok(buf) => buf,
+                        Err(e) => {
+                            body.masked_key.zeroize();
+                            return Err(e);
+                        }
+                    };
+                    let copied = copy_plaintext(body.masked_key, &layout, key_len, key_buf);
+                    body.masked_key.zeroize();
+                    copied?;
 
                     let session_binding = attrs.session().then_some(HsmSessId::from(sess_id));
-                    pal.vault_key_create(io, key_buf, kind, session_binding, attrs)
-                        .await
+                    let created = pal
+                        .vault_key_create(io, key_buf, kind, session_binding, attrs)
+                        .await;
+                    key_buf.zeroize();
+                    created
                 })
                 .await?;
             (key_id, None, None)
         };
 
-    // Read back the material to re-mask: for bulk keys the vault holds only
-    // the handle, so the backend-registered 32-byte material (kept alive above)
-    // is the source; other kinds read the committed key from vault storage,
-    // which also drives the public-key re-derivation.
-    let priv_blob = match bulk_key_buf.as_deref() {
-        Some(mat) => mat,
-        None => pal.vault_key(io, key_id)?,
-    };
-
-    // Asymmetric kinds return their public key, re-derived from the
-    // committed private key so the host recovers the full keypair (this
-    // also avoids trusting any untrusted trailing bytes in the blob).
-    let pub_spec = match kind {
-        HsmVaultKeyKind::Ecc256Private => Some((false, DdiKeyType::Ecc256Public)),
-        HsmVaultKeyKind::Ecc384Private => Some((false, DdiKeyType::Ecc384Public)),
-        HsmVaultKeyKind::Ecc521Private => Some((false, DdiKeyType::Ecc521Public)),
-        HsmVaultKeyKind::Rsa2kPrivate | HsmVaultKeyKind::Rsa2kPrivateCrt => {
-            Some((true, DdiKeyType::Rsa2kPublic))
-        }
-        HsmVaultKeyKind::Rsa3kPrivate | HsmVaultKeyKind::Rsa3kPrivateCrt => {
-            Some((true, DdiKeyType::Rsa3kPublic))
-        }
-        HsmVaultKeyKind::Rsa4kPrivate | HsmVaultKeyKind::Rsa4kPrivateCrt => {
-            Some((true, DdiKeyType::Rsa4kPublic))
-        }
-        _ => None,
-    };
-    let pub_key = if let Some((is_rsa, pub_kind)) = pub_spec {
-        let pub_len = if is_rsa {
-            pal.rsa_priv_pub_key(io, priv_blob, None)?
-        } else {
-            pal.ecc_priv_pub_key(io, priv_blob, None).await?
-        };
-        let pub_buf = pal.dma_alloc(io, pub_len)?;
-        if is_rsa {
-            pal.rsa_priv_pub_key(io, priv_blob, Some(pub_buf))?;
-        } else {
-            pal.ecc_priv_pub_key(io, priv_blob, Some(pub_buf)).await?;
-        }
-        Some(DdiPublicKey {
-            raw: pub_buf,
-            key_kind: pub_kind,
-        })
-    } else {
-        None
-    };
-
-    // Re-mask the re-imported key under the *current* scope's masking key,
-    // preserving the original key type, attributes, and label but recording
-    // the current SVN via [`masked_metadata`](super::masking::masked_metadata).
-    // The original blob is deliberately NOT echoed: the masking key / SVN may
-    // have rolled since it was produced, so the host must persist this fresh
-    // envelope to stay re-importable.  The envelope is written straight into
-    // the reserved `masked_key` response region — no scratch buffer, no copy —
-    // keeping the largest RSA-4096 keys within the per-IO DMA budget.
-    // Re-mask inside an inner block (masking-key + metadata setup included)
-    // so every exit — success or `?` error — routes through the bulk-key
-    // scrub below.
+    // Every step after the commit runs inside one inner block so any
+    // failure scrubs the bulk-key material and rolls back the committed key.
     let outcome = async {
+        // Read back the material to re-mask: for bulk keys the vault holds only
+        // the handle, so the backend-registered 32-byte material (kept alive above)
+        // is the source; other kinds read the committed key from vault storage,
+        // which also drives the public-key re-derivation.
+        let priv_blob = match bulk_key_buf.as_deref() {
+            Some(mat) => mat,
+            None => pal.vault_key(io, key_id)?,
+        };
+
+        // Asymmetric kinds return their public key, re-derived from the
+        // committed private key so the host recovers the full keypair (this
+        // also avoids trusting any untrusted trailing bytes in the blob).
+        let pub_spec = match kind {
+            HsmVaultKeyKind::Ecc256Private => Some((false, DdiKeyType::Ecc256Public)),
+            HsmVaultKeyKind::Ecc384Private => Some((false, DdiKeyType::Ecc384Public)),
+            HsmVaultKeyKind::Ecc521Private => Some((false, DdiKeyType::Ecc521Public)),
+            HsmVaultKeyKind::Rsa2kPrivate | HsmVaultKeyKind::Rsa2kPrivateCrt => {
+                Some((true, DdiKeyType::Rsa2kPublic))
+            }
+            HsmVaultKeyKind::Rsa3kPrivate | HsmVaultKeyKind::Rsa3kPrivateCrt => {
+                Some((true, DdiKeyType::Rsa3kPublic))
+            }
+            HsmVaultKeyKind::Rsa4kPrivate | HsmVaultKeyKind::Rsa4kPrivateCrt => {
+                Some((true, DdiKeyType::Rsa4kPublic))
+            }
+            _ => None,
+        };
+        let pub_key = if let Some((is_rsa, pub_kind)) = pub_spec {
+            let pub_len = if is_rsa {
+                pal.rsa_priv_pub_key(io, priv_blob, None)?
+            } else {
+                pal.ecc_priv_pub_key(io, priv_blob, None).await?
+            };
+            let pub_buf = pal.dma_alloc(io, pub_len)?;
+            if is_rsa {
+                pal.rsa_priv_pub_key(io, priv_blob, Some(pub_buf))?;
+            } else {
+                pal.ecc_priv_pub_key(io, priv_blob, Some(pub_buf)).await?;
+            }
+            Some(DdiPublicKey {
+                raw: pub_buf,
+                key_kind: pub_kind,
+            })
+        } else {
+            None
+        };
+
+        // Re-mask the re-imported key under the *current* scope's masking key,
+        // preserving the original key type, attributes, and label but recording
+        // the current SVN via [`masked_metadata`](super::masking::masked_metadata).
+        // The original blob is deliberately NOT echoed: the masking key / SVN may
+        // have rolled since it was produced, so the host must persist this fresh
+        // envelope to stay re-importable.  The envelope is written straight into
+        // the reserved `masked_key` response region — no scratch buffer, no copy —
+        // keeping the largest RSA-4096 keys within the per-IO DMA budget.
         let masking_key = super::masking::resolve_masking_key(
             pal,
             io,
@@ -288,5 +288,24 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
         buf.zeroize();
     }
 
-    outcome
+    super::bulk::rollback_on_err(pal, io, key_id, outcome).await
+}
+
+/// Copy the first `key_len` plaintext bytes of an unmasked blob into `out`.
+///
+/// # Errors
+///
+/// * [`HsmError::MaskedKeyDecodeFailed`] — `key_len` exceeds the decrypted
+///   plaintext region.
+fn copy_plaintext(
+    blob: &DmaBuf,
+    layout: &UnmaskLayout,
+    key_len: usize,
+    out: &mut DmaBuf,
+) -> HsmResult<()> {
+    if key_len > layout.plaintext_max_len {
+        return Err(HsmError::MaskedKeyDecodeFailed);
+    }
+    out.copy_from_slice(&blob[layout.plaintext_offset..layout.plaintext_offset + key_len]);
+    Ok(())
 }

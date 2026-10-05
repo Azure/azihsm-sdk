@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Shared helper for committing freshly produced keys to storage.
+//! Shared helpers for committing freshly produced keys to storage and
+//! rolling them back on a later failure.
 //!
 //! Bulk keys (AES-GCM / XTS) are not stored in the HSM vault as key
 //! material: the bulk crypto runs on a dedicated platform backend, so the
@@ -11,9 +12,8 @@
 //! [`vault_key_create`](azihsm_fw_hsm_pal_traits::HsmVault::vault_key_create)
 //! override and exposes the id through
 //! [`bulk_key_id`](azihsm_fw_hsm_pal_traits::HsmVault::bulk_key_id).  Every
-//! op that produces a key — generate, HKDF / KBKDF derive, unmask, RSA
-//! unwrap — routes through [`commit_key`] so the storage path stays
-//! identical.
+//! op that can produce a bulk key — AES generate, HKDF / KBKDF derive,
+//! unmask, RSA unwrap — commits it through [`commit_key`].
 
 use super::*;
 
@@ -31,8 +31,8 @@ pub(crate) fn is_gcm_bulk(kind: HsmVaultKeyKind) -> bool {
 ///
 /// The core treats every key uniformly: it always calls
 /// [`vault_key_create`](HsmVault::vault_key_create) and then queries
-/// [`bulk_key_id`](HsmVault::bulk_key_id).  For bulk kinds the Uno PAL's
-/// `vault_key_create` performs the backend roundtrip and stores only the
+/// [`bulk_key_id`](HsmVault::bulk_key_id).  For bulk kinds a PAL with a
+/// bulk backend registers the key in `vault_key_create` and stores only an
 /// opaque handle, so `bulk_key_id` returns `Some`; ordinary keys store
 /// their material and return `None`.  A bulk kind that produces no id
 /// (backend-less platform) rolls back the vault entry and returns
@@ -57,7 +57,7 @@ pub(crate) async fn commit_key<P: HsmPal>(
     let bulk_key_id = match pal.bulk_key_id(io, handle) {
         Ok(id) => id,
         // Roll back the just-created key so a lookup failure can't leave the
-        // vault entry (and Uno backend key/slot) behind with no handle.
+        // vault entry (and any backend registration) behind with no handle.
         Err(e) => {
             let _ = pal.vault_key_delete(io, handle).await;
             return Err(e);
@@ -68,4 +68,20 @@ pub(crate) async fn commit_key<P: HsmPal>(
         return Err(HsmError::UnsupportedCmd);
     }
     Ok((handle, bulk_key_id))
+}
+
+/// Return `result` unchanged, first deleting the key committed earlier in
+/// the op (best effort) if it is an error, so a failure after the commit
+/// leaves no vault entry (or backend registration) the host has no handle
+/// for.
+pub(crate) async fn rollback_on_err<P: HsmPal, T>(
+    pal: &P,
+    io: &impl HsmIo,
+    handle: HsmKeyId,
+    result: HsmResult<T>,
+) -> HsmResult<T> {
+    if result.is_err() {
+        let _ = pal.vault_key_delete(io, handle).await;
+    }
+    result
 }

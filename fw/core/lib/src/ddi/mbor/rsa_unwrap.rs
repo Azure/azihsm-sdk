@@ -25,11 +25,11 @@
 //! copy), matching the zero-copy `reserve` / `from_layout` pattern used
 //! by the other key-producing handlers and the reference firmware.  This
 //! keeps the largest RSA-4096 keys within the fixed per-IO DMA budget.
-//! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES
-//! bulk variants recover the raw AES key, register it with the
-//! bulk-crypto backend, and return its `bulk_key_id`.  RSA and ECC imports return
-//! imported key's wire public key, re-derived from the committed vault
-//! key.
+//! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES-GCM
+//! bulk variants recover the raw AES key, register it with the bulk-crypto
+//! backend, and return its `bulk_key_id` (AES-XTS bulk is not supported).
+//! RSA and ECC imports return the imported key's wire public key,
+//! re-derived from the committed vault key.
 
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::rsa_unwrap::DdiRsaUnwrapReq;
@@ -113,7 +113,7 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
         )
         .await?;
 
-        // Commit the recovered key: the Uno PAL registers it with the
+        // Commit the recovered key: the PAL registers it with the
         // bulk-crypto backend and stores only the 2-byte handle in the
         // vault (scoped to the creating session so later bulk GCM ops
         // match), returning the backend id.  RSA-unwrap always produces a
@@ -135,53 +135,55 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
                 return Err(e);
             }
         };
-        let bulk_id = bulk_id.ok_or(HsmError::InternalError)?;
+        let result = async {
+            let bulk_id = bulk_id.ok_or(HsmError::InternalError)?;
 
-        // Mask the raw key material directly (the vault holds only the
-        // handle) so the host can re-import it on a later session.
-        let masked_key = super::masking::mask_blob(
-            pal,
-            io,
-            HsmSessId::from(sess_id),
-            super::masking::MaskSpec {
-                attrs,
-                key_type: super::from_pal::vault_kind_ddi(bulk_kind)?,
-                key_label: body.key_properties.key_label,
-                key_length: material.len() as u16,
-            },
-            material,
-        )
+            // Mask the raw key material directly (the vault holds only the
+            // handle) so the host can re-import it on a later session.
+            let masked_key = super::masking::mask_blob(
+                pal,
+                io,
+                HsmSessId::from(sess_id),
+                super::masking::MaskSpec {
+                    attrs,
+                    key_type: super::from_pal::vault_kind_ddi(bulk_kind)?,
+                    key_label: body.key_properties.key_label,
+                    key_length: material.len() as u16,
+                },
+                material,
+            )
+            .await?;
+
+            let key_id: u16 = key_id.into();
+            pal.dma_alloc_var(io, |buf| {
+                super::encode_resp(
+                    &super::success_hdr_sess(hdr, DdiOp::RsaUnwrap, sess_id),
+                    &DdiRsaUnwrapResp {
+                        key_id,
+                        pub_key: None,
+                        bulk_key_id: Some(bulk_id),
+                        kind: super::from_pal::vault_kind_ddi(bulk_kind)?,
+                        masked_key,
+                    },
+                    buf,
+                )
+            })
+        }
         .await;
 
-        // Scrub the recovered key material now that the engine owns it and
+        // Scrub the recovered key material now that the backend owns it and
         // masking has consumed it.  Wipe on all paths — including a masking
-        // error — since per-IO DMA arenas are not reliably cleared on
+        // error — since the per-IO arena is not guaranteed to be wiped on
         // teardown.
         material.zeroize();
-        let masked_key = masked_key?;
-
-        let key_id: u16 = key_id.into();
-        let resp = pal.dma_alloc_var(io, |buf| {
-            super::encode_resp(
-                &super::success_hdr_sess(hdr, DdiOp::RsaUnwrap, sess_id),
-                &DdiRsaUnwrapResp {
-                    key_id,
-                    pub_key: None,
-                    bulk_key_id: Some(bulk_id),
-                    kind: super::from_pal::vault_kind_ddi(bulk_kind)?,
-                    masked_key,
-                },
-                buf,
-            )
-        })?;
-        return Ok(resp);
+        return super::bulk::rollback_on_err(pal, io, key_id, result.map(|b| &*b)).await;
     }
 
     // Map the wire key class to the neutral import class and derive the
     // imported key's vault attributes.  These keys are imported, not
     // generated on-device, so the `for_*` builders are told `local = false`
     // (and, as always, never set `internal`).  AES, RSA (plain / CRT), and
-    // ECC are supported; the AES bulk variants are handled above.
+    // ECC are supported; the AES-GCM bulk variants are handled above.
     let (key_class, import_attrs) = match body.wrapped_blob_key_class {
         DdiKeyClass::Aes => {
             let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, false)?;

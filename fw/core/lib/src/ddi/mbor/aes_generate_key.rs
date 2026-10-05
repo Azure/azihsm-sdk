@@ -33,10 +33,10 @@ use super::*;
 /// single-threaded cooperative executor; multiple IOs are in flight and
 /// interleave at await points — including inside the awaited
 /// `vault_key_create` (which can yield on Uno during the GDMA key copy) —
-/// but this handler's only partition-state mutation is that single,
-/// self-contained `vault_key_create`, with no multi-step
-/// read-modify-write across an await for an interleaved handler to
-/// corrupt.
+/// but this handler's only partition-state mutations are that single,
+/// self-contained `vault_key_create` and, if a later step fails, the
+/// deletion of the key it just created — no multi-step read-modify-write
+/// across an await for an interleaved handler to corrupt.
 pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -101,43 +101,44 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     // mask the generated material directly (the vault holds only the
     // `bulk_key_id`); non-bulk keys read the stored bytes back from the
     // vault so the masked bytes match a later re-import.
-    let plaintext: &DmaBuf = if is_bulk {
-        key_buf
-    } else {
-        pal.vault_key(io, key_handle)?
-    };
-    let masked_key = super::masking::mask_blob(
-        pal,
-        io,
-        HsmSessId::from(sess_id),
-        super::masking::MaskSpec {
-            attrs,
-            key_type: super::from_pal::vault_kind_ddi(vault_kind)?,
-            key_label: body.key_properties.key_label,
-            key_length: plaintext.len() as u16,
-        },
-        plaintext,
-    )
+    let result = async {
+        let plaintext: &DmaBuf = if is_bulk {
+            key_buf
+        } else {
+            pal.vault_key(io, key_handle)?
+        };
+        let masked_key = super::masking::mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            super::masking::MaskSpec {
+                attrs,
+                key_type: super::from_pal::vault_kind_ddi(vault_kind)?,
+                key_label: body.key_properties.key_label,
+                key_length: plaintext.len() as u16,
+            },
+            plaintext,
+        )
+        .await?;
+
+        pal.dma_alloc_var(io, |buf| {
+            super::encode_resp(
+                &super::success_hdr_sess(hdr, DdiOp::AesGenerateKey, sess_id),
+                &DdiAesGenerateKeyResp {
+                    key_id,
+                    bulk_key_id,
+                    masked_key,
+                },
+                buf,
+            )
+        })
+    }
     .await;
 
-    // Scrub the freshly generated key material now that the vault (or
-    // fast-path engine, for bulk keys) owns it and masking has consumed it.
-    // Wipe on all paths — including a masking error — since per-IO DMA
-    // arenas are not reliably cleared on teardown.
+    // Scrub the freshly generated key material now that the vault (or the
+    // bulk-crypto backend, for bulk keys) owns it and masking has consumed
+    // it.  Wipe on all paths — including a masking error — since the per-IO
+    // arena is not guaranteed to be wiped on teardown.
     key_buf.zeroize();
-    let masked_key = masked_key?;
-
-    let resp = pal.dma_alloc_var(io, |buf| {
-        super::encode_resp(
-            &super::success_hdr_sess(hdr, DdiOp::AesGenerateKey, sess_id),
-            &DdiAesGenerateKeyResp {
-                key_id,
-                bulk_key_id,
-                masked_key,
-            },
-            buf,
-        )
-    })?;
-
-    Ok(resp)
+    super::bulk::rollback_on_err(pal, io, key_handle, result.map(|b| &*b)).await
 }

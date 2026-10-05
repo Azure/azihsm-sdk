@@ -786,6 +786,12 @@ pub struct KeyUpdateInfo {
     pub key_data: [u8; 32],
 }
 
+impl zeroize::Zeroize for KeyUpdateInfo {
+    fn zeroize(&mut self) {
+        self.key_data.zeroize();
+    }
+}
+
 /// `AesKeyUpdate` IPC message body (opcode `AesKeyUpdate`, 0x7).
 #[repr(C)]
 #[derive(Debug, IntoBytes, Immutable, FromBytes)]

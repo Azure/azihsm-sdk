@@ -34,7 +34,6 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
-use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 use crate::UnoHsmPal;
@@ -371,7 +370,7 @@ async fn fp_bulk_create(
     let session_only = session_id.is_some();
     let fp_session_id = session_id.map(u16::from).unwrap_or(0);
 
-    let mut info = KeyUpdateInfo {
+    let mut info = Zeroizing::new(KeyUpdateInfo {
         key_index,
         resource_id: vault_id,
         pfn: pcie_fn,
@@ -383,12 +382,10 @@ async fn fp_bulk_create(
             .with_key_type(key_type)
             .into_bits(),
         key_data: [0u8; FP_BULK_KEY_LEN],
-    };
+    });
     info.key_data.copy_from_slice(key_bytes);
-    // `info` is `Copy`, so the send takes a copy; scrub this caller-owned
-    // original afterward so no raw key lingers on the stack.
-    let sent = fp_send_key_update(pal, info).await;
-    info.key_data.zeroize();
+    // `info` is scrubbed on drop, on every exit from this future.
+    let sent = fp_send_key_update(pal, &info).await;
     // On failure the backend may already own the key; keep the slot reserved
     // (don't free it) so a later create can't alias it — reclaimed on reset.
     sent?;
@@ -460,7 +457,7 @@ async fn fp_bulk_delete(
             .into_bits(),
         key_data: [0u8; FP_BULK_KEY_LEN],
     };
-    fp_send_key_update(pal, info).await
+    fp_send_key_update(pal, &info).await
 }
 
 /// Clear all of session `session_id`'s session-scoped bulk keys from the
@@ -483,23 +480,24 @@ async fn fp_delete_session_only(
         flag: AesKeyFlag::new().with_session_only(true).into_bits(),
         key_data: [0u8; FP_BULK_KEY_LEN],
     };
-    fp_send_key_update(pal, info).await
+    fp_send_key_update(pal, &info).await
 }
 
 /// Send an `AesKeyUpdate` message to the bulk-crypto backend over the
 /// HSM↔backend IPC channel and await the response, mapping a non-`Success`
 /// reply to an error.
 ///
-/// The request is wrapped in [`Zeroizing`] so its copy of the raw key
+/// `info` is borrowed so the caller keeps the only owned copy (and scrubs it);
+/// the encoded request is wrapped in [`Zeroizing`] so its copy of the raw key
 /// material is scrubbed on any exit from this future, including a mid-send
 /// drop.
-async fn fp_send_key_update(pal: &UnoHsmPal, info: KeyUpdateInfo) -> HsmResult<()> {
+async fn fp_send_key_update(pal: &UnoHsmPal, info: &KeyUpdateInfo) -> HsmResult<()> {
     let request = Zeroizing::new(
         IpcMessageKeyUpdate {
             header: IpcMessageHeader::new()
                 .with_msg_op(IpcMessageKeyUpdate::OP as u32)
                 .with_length(IpcMessageKeyUpdate::LEN as u32),
-            info,
+            info: *info,
             _rsvd: [0u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
         }
         .encode(),
