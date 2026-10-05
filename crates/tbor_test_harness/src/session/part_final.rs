@@ -41,13 +41,12 @@ use super::finish::SessionHandshake;
 /// `part_policy` must be exactly [`PART_POLICY_LEN`] and match the policy
 /// bound at `PartInit`. `certs` are the PTA-chain certificate DERs
 /// (root → PTA), transferred out of band; each becomes one SGL data block
-/// referenced by a `(index, length)` descriptor. Callers exercising a gate
-/// that rejects *before* the chain walk pass an empty `certs` slice (the
-/// schema still needs >=1 descriptor, so a single placeholder with no OOB
-/// region is emitted).
-/// `prev_local_mk_backup` is the optional prior backup to restore
-/// (empty = first instantiation).
-pub(crate) fn part_final(
+/// referenced by a `(index, length)` descriptor.  Callers exercising a
+/// gate that rejects *before* the chain walk pass an empty `certs` slice
+/// (the schema still needs ≥1 descriptor, so a single placeholder with no
+/// OOB region is emitted).  `prev_local_mk_backup` is the optional prior
+/// backup to restore (empty = first instantiation).
+pub fn part_final(
     dev: &<AzihsmDdi as Ddi>::Dev,
     session: &SessionHandshake,
     part_policy: &[u8],
@@ -87,6 +86,48 @@ pub(crate) fn part_final(
     };
 
     let oob = (!certs.is_empty()).then_some(certs);
+
+    dev.exec_op_tbor(&req, oob, &mut None)
+}
+
+/// Like [`part_final`], but with caller-controlled `(index, length)`
+/// descriptors and out-of-band items.
+///
+/// The normal helper assigns each certificate a distinct, sequential
+/// descriptor index; this variant lets a test craft a malformed descriptor
+/// table (for example duplicate indices, or a length that disagrees with
+/// its out-of-band item) to exercise the firmware's input validation on
+/// the `PartFinal` OOB path.
+pub fn part_final_raw(
+    dev: &<AzihsmDdi as Ddi>::Dev,
+    session: &SessionHandshake,
+    part_policy: &[u8],
+    prev_local_mk_backup: &[u8],
+    descriptors: &[(u8, u16)],
+    oob_items: &[&[u8]],
+) -> Result<TborPartFinalResp, DdiError> {
+    if part_policy.len() != PART_POLICY_LEN {
+        return Err(DdiError::InvalidParameter);
+    }
+    let policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
+        .map_err(|_| DdiError::InvalidParameter)?;
+
+    let cert_descriptors = descriptors
+        .iter()
+        .map(|&(index, length)| CertDescriptor {
+            index,
+            length: U16::new(length),
+        })
+        .collect();
+
+    let req = TborPartFinalReq {
+        session_id: session.session_id,
+        part_policy: policy,
+        cert_descriptors,
+        prev_local_mk_backup: prev_local_mk_backup.to_vec(),
+    };
+
+    let oob = (!oob_items.is_empty()).then_some(oob_items);
 
     dev.exec_op_tbor(&req, oob, &mut None)
 }

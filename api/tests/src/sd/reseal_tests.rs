@@ -29,11 +29,11 @@ fn create_source_backup(
     pid_pub: &[u8; RAW_PUB_LEN],
     masked_sender_key: &[u8],
     receiver_report: &[u8],
-    policy: &[u8],
+    policy: &PartPolicy,
 ) -> Vec<u8> {
     let receiver = build_receiver_evidence(pid_pub, sata_key, receiver_report);
     receiver
-        .with_hsm_evidence(|rcvr| session.sd_create_remote_backup(masked_sender_key, rcvr, policy))
+        .with_hsm_evidence(|rcvr| session.sd_create_remote_backup(policy, masked_sender_key, rcvr))
         .expect("source backup")
         .pok_remote_backup
 }
@@ -68,7 +68,7 @@ fn sd_reseal_remote_backup_roundtrip() {
     let dst_backup = src_ev
         .with_hsm_evidence(|src| {
             dst_ev.with_hsm_evidence(|dest| {
-                session.sd_reseal_remote_backup(&masked_rcvr, src, dest, &policy, &src_backup)
+                session.sd_reseal_remote_backup(&policy, &masked_rcvr, src, dest, &src_backup)
             })
         })
         .expect("reseal remote backup");
@@ -113,7 +113,7 @@ fn sd_reseal_remote_backup_rerandomizes() {
         src_ev
             .with_hsm_evidence(|src| {
                 dst_ev.with_hsm_evidence(|dest| {
-                    session.sd_reseal_remote_backup(&masked_rcvr, src, dest, &policy, &src_backup)
+                    session.sd_reseal_remote_backup(&policy, &masked_rcvr, src, dest, &src_backup)
                 })
             })
             .expect("reseal remote backup")

@@ -822,13 +822,24 @@ impl HsmPartition {
         self.inner().read().pci_info().to_string()
     }
 
-    /// Retrieves the certificate chain stored in the partition.
+    /// Retrieves the partition's certificate chain.
     ///
     /// Returns the certificate chain in PEM format (RFC 7468), with each certificate
     /// encoded in Base64 with `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----`
     /// delimiters and LF line endings. Multiple certificates are separated by a single
     /// newline character (`\n`). The certificates are ordered from leaf/partition certificate
     /// (first) to root certificate (last).
+    ///
+    /// Slot 2 returns one freshly signed PTA-issued PID certificate after
+    /// finalization. On the TBOR path a new PID leaf is minted per request, so
+    /// its DER bytes and thumbprint can vary between reads and its DER length
+    /// may change too (two fresh ECDSA signatures can share a DER length). Only
+    /// the TBS bytes are fixed across reads. Because of this per-request
+    /// regeneration the certificate is fetched directly and no
+    /// `GetCertChainInfo` count-or-thumbprint stability check is applied. The
+    /// legacy MBOR path
+    /// serves a stable slot-2 certificate and still performs the full
+    /// count-and-thumbprint stability check.
     ///
     /// # Arguments
     ///

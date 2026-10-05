@@ -266,6 +266,33 @@ std::array<uint8_t, 20> sha1(const uint8_t *data, size_t len)
     return out;
 }
 
+/// SHA-384 of `data` (used for the deterministic PTAID digest).
+std::array<uint8_t, 48> sha384(const uint8_t *data, size_t len)
+{
+    std::array<uint8_t, 48> out{};
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA384_ALGORITHM, nullptr, 0) != 0)
+    {
+        ADD_FAILURE() << "BCryptOpenAlgorithmProvider(SHA384) failed";
+        return out;
+    }
+    NTSTATUS status = BCryptHash(
+        alg,
+        nullptr,
+        0,
+        const_cast<PUCHAR>(data),
+        static_cast<ULONG>(len),
+        out.data(),
+        static_cast<ULONG>(out.size())
+    );
+    BCryptCloseAlgorithmProvider(alg, 0);
+    if (status != 0)
+    {
+        ADD_FAILURE() << "BCryptHash(SHA384) failed: " << status;
+    }
+    return out;
+}
+
 /// A synthetic P-384 CA key backed by BCrypt.
 class CaKey
 {
@@ -395,6 +422,19 @@ std::array<uint8_t, 20> sha1(const uint8_t *data, size_t len)
     return out;
 }
 
+/// SHA-384 of `data` (used for the deterministic PTAID digest).
+std::array<uint8_t, 48> sha384(const uint8_t *data, size_t len)
+{
+    std::array<uint8_t, 48> out{};
+    unsigned int out_len = 0;
+    if (EVP_Digest(data, len, out.data(), &out_len, EVP_sha384(), nullptr) != 1 ||
+        out_len != out.size())
+    {
+        ADD_FAILURE() << "EVP_Digest(SHA384) failed";
+    }
+    return out;
+}
+
 /// A synthetic P-384 CA key backed by OpenSSL.
 class CaKey
 {
@@ -488,10 +528,13 @@ constexpr const char *kNotBefore = "20250101000000Z";
 constexpr const char *kNotAfter = "20350101000000Z";
 constexpr const char *kRootCn = "AZIHSM POTA Root CA";
 constexpr const char *kRootSn = "POTAROOT1";
-constexpr const char *kPtaCn = "AZIHSM PTA Intermediate CA";
-constexpr const char *kPtaSn = "PTAINT001";
 constexpr const char *kLeafCn = "AZIHSM Evidence Leaf";
 constexpr const char *kLeafSn = "EVLEAF001";
+
+/// Fixed PTA `commonName` prefix (mirrors the firmware `PTA_SUBJECT_CN`).
+constexpr const char *kPtaSubjectCnPrefix = "Azure Integrated HSM PTA";
+/// Domain-separation label for the PTAID digest (mirrors firmware `PTAID_LABEL`).
+constexpr const char *kPtaidLabel = "AZIHSM-PTAID-v1";
 
 /// A 20-byte positive DER serial number seeded from `tag`.
 Bytes serial(uint8_t tag)
@@ -509,6 +552,35 @@ Bytes serial(uint8_t tag)
 std::array<uint8_t, 20> sha1_ski(const uint8_t sec1[kSec1PubLen])
 {
     return sha1(sec1, kSec1PubLen);
+}
+
+/// Build the deterministic PTA subject `Name` DER from the SEC1 PTA public
+/// key, mirroring the firmware's PTAID derivation
+/// (`fw/core/lib/src/ddi/tbor/pta.rs`): a single `commonName(64)` RDN
+/// (encoded as a `UTF8String`) holding the fixed PTA name, a separating
+/// space, and the lowercase-hex PTAID (`SHA-384(kPtaidLabel ‖ SEC1 key)[..16]`),
+/// space-padded. This is the subject a conformant CA preserves from the
+/// `PartInit` CSR and the issuer the firmware stamps on its PID leaf.
+Bytes der_pta_subject(const uint8_t sec1[kSec1PubLen])
+{
+    Bytes input(kPtaidLabel, kPtaidLabel + std::strlen(kPtaidLabel));
+    input.insert(input.end(), sec1, sec1 + kSec1PubLen);
+    std::array<uint8_t, 48> digest = sha384(input.data(), input.size());
+
+    Bytes cn(64, ' ');
+    const size_t prefix_len = std::strlen(kPtaSubjectCnPrefix);
+    std::memcpy(cn.data(), kPtaSubjectCnPrefix, prefix_len);
+    const char *hex = "0123456789abcdef";
+    const size_t base = prefix_len + 1;
+    for (size_t i = 0; i < 16; ++i)
+    {
+        cn[base + 2 * i] = static_cast<uint8_t>(hex[digest[i] >> 4]);
+        cn[base + 2 * i + 1] = static_cast<uint8_t>(hex[digest[i] & 0x0f]);
+    }
+
+    // UTF8String (0x0C) commonName, a single RDN → Name SEQUENCE.
+    Bytes atv = tlv(0x30, concat({ der_oid(kOidCn), tlv(0x0C, cn) }));
+    return tlv(0x30, tlv(0x31, atv));
 }
 
 /// Assemble and sign a certificate from its parts and a ready-made
@@ -548,6 +620,42 @@ Bytes build_cert_der(
     return tlv(0x30, concat({ tbs, sig_alg, sig_value }));
 }
 
+/// Like [`build_cert_der`], but takes a ready-made subject `Name` DER
+/// (`subject_name`) rather than a CN/serialNumber pair. Used for the PTA
+/// intermediate, whose subject is the deterministic single-`commonName(64)`
+/// PTA profile the firmware enforces.
+Bytes build_cert_der_subject(
+    const CaKey &ca,
+    const uint8_t subject_sec1[kSec1PubLen],
+    const Bytes &subject_name,
+    const char *issuer_cn,
+    const char *issuer_sn,
+    uint8_t serial_tag,
+    const Bytes &extensions
+)
+{
+    Bytes sig_alg = tlv(0x30, der_oid(kOidEcdsaSha384));
+    Bytes tbs =
+        tlv(0x30,
+            concat({
+                tlv(0xA0, der_small_int(2)), // version v3
+                serial(serial_tag),
+                sig_alg,
+                der_name(issuer_cn, issuer_sn),
+                tlv(0x30, concat({ der_gtime(kNotBefore), der_gtime(kNotAfter) })),
+                subject_name,
+                der_spki(subject_sec1),
+                extensions,
+            }));
+
+    Bytes sig = ca.sign(tbs);
+    if (sig.empty())
+    {
+        return {};
+    }
+    Bytes sig_value = tlv(0x03, concat({ Bytes{ 0x00 }, sig }));
+    return tlv(0x30, concat({ tbs, sig_alg, sig_value }));
+}
 /// Assemble a signed CA certificate (`cA=TRUE`, `keyCertSign`) from its parts.
 /// `aki` is the issuer's SKI for a non-self-signed cert, or null for a root.
 Bytes build_ca_cert(
@@ -606,10 +714,24 @@ Bytes build_root(const CaKey &ca)
 /// Build the PTA intermediate CA certificate carrying the partition PTA key
 /// (`pta_sec1`), signed by `issuer` (the POTA CA), with an AKID referencing the
 /// issuer's SKID.
+///
+/// The subject is the deterministic single-`commonName(64)` PTA profile the
+/// firmware stamps (derived from `pta_sec1`) and the SKID is SHA-1(SEC1 PTA
+/// key), so the issued PTA certificate satisfies the profile `PartFinal`
+/// enforces before finalization.
 Bytes build_pta_intermediate(const uint8_t pta_sec1[kSec1PubLen], const CaKey &issuer)
 {
     std::array<uint8_t, 20> aki = sha1_ski(issuer.sec1().data());
-    return build_ca_cert(issuer, pta_sec1, kPtaCn, kPtaSn, kRootCn, kRootSn, aki.data(), 2);
+    std::array<uint8_t, 20> ski = sha1_ski(pta_sec1);
+    return build_cert_der_subject(
+        issuer,
+        pta_sec1,
+        der_pta_subject(pta_sec1),
+        kRootCn,
+        kRootSn,
+        2,
+        der_ca_extensions(ski.data(), aki.data())
+    );
 }
 
 /// A generated PTA chain (root -> PTA), DER-encoded, root-first for `PartFinal`.

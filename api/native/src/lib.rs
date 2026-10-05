@@ -26,6 +26,7 @@ mod error;
 mod handle_table;
 mod key_mgmt;
 mod key_props;
+mod part_policy;
 mod partition;
 mod partition_props;
 mod resiliency;

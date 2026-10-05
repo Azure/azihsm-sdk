@@ -12,6 +12,10 @@
 
 use azihsm_crypto::HashAlgo as CryptoHashAlgo;
 use azihsm_crypto::Hasher;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHashReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -20,9 +24,6 @@ use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
 use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::bootstrap_rotated_cu;
-use crate::harness::TestCtx;
-use crate::harness::ROTATED_CU_PSK;
 
 /// Hash `msg` on-device with `algo`, returning the digest.
 fn device_digest(ctx: &TestCtx, session_id: u16, algo: u8, msg: Vec<u8>) -> Vec<u8> {
@@ -334,7 +335,7 @@ fn hash_default_psk_cu_rejected() {
     let ctx = TestCtx::new();
 
     let session = ctx
-        .open_session(crate::harness::CU_PSK_ID, SessionType::PlainText)
+        .open_session(CU_PSK_ID, SessionType::PlainText)
         .expect("open default-PSK CU session");
 
     ctx.expect_fw_reject(
