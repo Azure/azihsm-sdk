@@ -79,13 +79,18 @@ impl HsmSessionManager for UnoHsmPal {
         if api_rev.len() != SESSION_API_REV_SIZE || masking_key.len() != SESSION_MASKING_KEY_SIZE {
             return Err(HsmError::InvalidArg);
         }
+        // Held until the slot is (re)created, so on re-key no bulk key can be
+        // registered for the old session between its key teardown and the
+        // recreation.
+        let _guard = self.fp_bulk_lock.lock().await;
+
         let table = SessionStore::partition(io.pid())?;
 
         // On re-key: tear down the old session-scoped keys and the old
         // session key before creating the replacement.
         if let Some(reopen_id) = id {
             let old_phys = table.physical_id(reopen_id)?;
-            self.vault_key_delete_by_session(io, reopen_id).await?;
+            crate::vault::delete_session_keys(self, io, reopen_id).await?;
             crate::vault::vault(io).delete(self, io, old_phys).await?;
         }
 

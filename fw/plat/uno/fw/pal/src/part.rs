@@ -192,10 +192,12 @@ impl UnoHsmPal {
     /// `Allocated | Enabled | Disabled → Unallocated`.
     ///
     /// If the partition is `Enabled`, its enable-time state is cleared first
-    /// (an implicit disable). The identity key is deleted, all identity and
-    /// enable-time material is zeroized, the resource mask is released, and
-    /// the generation counter is bumped so previously issued key handles are
-    /// rejected. Freeing an already-`Unallocated` partition is a no-op.
+    /// (an implicit disable). The identity key and every other vault key are
+    /// deleted (releasing the partition's fast-path bulk-key slots), all
+    /// identity and enable-time material is zeroized, the resource mask is
+    /// released, and the generation counter is bumped so previously issued
+    /// key handles are rejected. Freeing an already-`Unallocated` partition is
+    /// a no-op.
     pub(crate) async fn part_free(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         if part.state()? == PartState::Unallocated {
@@ -203,13 +205,17 @@ impl UnoHsmPal {
         }
 
         // Disable: clear enable-time keys/state (no-op if not enabled), then
-        // delete the identity key. One admin session covers every vault
+        // delete the identity key and every remaining vault key, which also
+        // releases the fast-path bulk-key slots (the engine drops the keys on
+        // the function's teardown). One admin session covers every vault
         // delete below, so the slot is scrubbed once instead of once per key.
+        // A failed clear keeps the bulk-key slots reserved (no aliasing).
         self.with_admin_io(pid, async |admin_io, _alloc| {
             self.clear_enabled_state(admin_io, pid).await;
             if let Some(key_id) = part.id_key_id() {
                 self.delete_key(admin_io, key_id).await;
             }
+            let _ = self.vault_clear(admin_io).await;
         })
         .await;
 

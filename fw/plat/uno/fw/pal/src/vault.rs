@@ -166,14 +166,14 @@ impl HsmVault for UnoHsmPal {
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
-        // Partition reset (`part_migrate`, for Migrate / NSSR).  The engine-side
-        // keys are removed by the engine itself: for the same state change the
-        // admin core drains this function's HSM queues and sends the engine a
-        // PFN disable, whose teardown zeroes every bulk key the function owns
-        // (as in the reference firmware, which also only resets the slot
-        // bitmap here).  Clear the vault first, then free the slot bitmap so
-        // the bits stay reserved across the vault await.  Holding
-        // `fp_bulk_lock` keeps any bulk-key create from interleaving.
+        // Partition reset (`part_migrate` for Migrate / NSSR, `part_free` for
+        // SetResource(0)).  The engine-side keys are removed by the engine
+        // itself: the admin core sends it a PFN disable for the function
+        // (drained of HSM IO), whose teardown zeroes every bulk key the
+        // function owns (as in the reference firmware, which also only resets
+        // the slot bitmap on reset).  Clear the vault first, then free the
+        // slot bitmap so the bits stay reserved across the vault await.
+        // Holding `fp_bulk_lock` keeps any bulk-key create from interleaving.
         let _guard = self.fp_bulk_lock.lock().await;
         let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
         vault(io).clear(self, io).await?;
@@ -201,20 +201,20 @@ impl HsmVault for UnoHsmPal {
 
 /// Delete every key bound to `session_id`, including its bulk keys in the
 /// fast-path engine.  The caller must hold [`UnoHsmPal::fp_bulk_lock`] so no
-/// bulk key for the session is registered between the engine delete and the
-/// vault delete.
+/// bulk key for the session is registered between the pre-pass, the engine
+/// delete and the vault delete.
 pub(crate) async fn delete_session_keys(
     pal: &UnoHsmPal,
     io: &impl HsmIo,
     session_id: HsmSessId,
 ) -> HsmResult<()> {
-    // DeleteSessionOnly drops the session's bulk keys from the engine in
-    // one message.  Collect the slots to release but don't free them until
-    // the vault entries are gone: a freed slot could otherwise be
-    // reallocated while a still-present entry references it (aliasing) if
-    // the delete below fails.
+    // Validate and collect the session's bulk slots first, so a corrupt entry
+    // fails before any engine or vault state changes.  DeleteSessionOnly then
+    // drops the session's bulk keys from the engine in one message.  The
+    // slots are freed only after the vault entries are gone: a freed slot
+    // could otherwise be reallocated while a still-present entry references
+    // it (aliasing) if the vault delete fails.
     let sess = u16::from(session_id);
-    fp_delete_session_only(pal, io, sess).await?;
     let mut to_free = [0u8; NUM_FP_TABLES];
     vault(io).for_each_session_key(sess, |_key_id, kind, blob| {
         if is_bulk_kind(kind) {
@@ -224,12 +224,14 @@ pub(crate) async fn delete_session_keys(
             }
             let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([bytes[0], bytes[1]]));
             let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
-            if vid < to_free.len() && kidx < FP_MAX_SLOTS_PER_PART {
-                to_free[vid] |= 1 << kidx;
+            if vid >= to_free.len() || kidx >= FP_MAX_SLOTS_PER_PART {
+                return Err(HsmError::InternalError);
             }
+            to_free[vid] |= 1 << kidx;
         }
         Ok(())
     })?;
+    fp_delete_session_only(pal, io, sess).await?;
     vault(io).delete_by_session(pal, io, sess).await?;
     fp_slots_free_bits(&to_free);
     Ok(())
