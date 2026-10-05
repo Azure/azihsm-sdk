@@ -115,6 +115,41 @@ impl HsmKeyFlags {
         self.contains(HsmKeyFlags::DERIVE)
     }
 }
+/// Masking scope of a key generated through a TBOR (V2) session.
+///
+/// The scope selects which masking key protects the key material and
+/// therefore the key's lifetime and recoverability domain. It is the host
+/// mirror of the firmware `HsmKeyScope` and is carried on the wire as its raw
+/// `u8` discriminant. Scope only applies to TBOR sessions; requesting an
+/// explicit scope on an MBOR (V1) session, which expresses lifetime through
+/// the `SESSION` flag, is rejected with [`HsmError::UnsupportedApiRevision`]
+/// rather than silently ignored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HsmKeyScope {
+    /// Usable only within the originating session.
+    Session = 1,
+    /// Usable only within the current firmware incarnation.
+    Ephemeral = 2,
+    /// Recoverable with the partition's local masking-key backup.
+    Local = 3,
+    /// Recoverable with the security domain.
+    SecurityDomain = 4,
+}
+
+impl HsmKeyScope {
+    /// Builds a scope from its raw TBOR `u8` discriminant.
+    pub(crate) fn from_u8(value: u8) -> HsmResult<Self> {
+        match value {
+            1 => Ok(Self::Session),
+            2 => Ok(Self::Ephemeral),
+            3 => Ok(Self::Local),
+            4 => Ok(Self::SecurityDomain),
+            _ => Err(HsmError::InvalidKeyProps),
+        }
+    }
+}
+
 /// Key properties and attributes.
 ///
 /// Contains comprehensive information about a cryptographic key including its
@@ -131,6 +166,7 @@ pub struct HsmKeyProps {
     masked_key: Option<Vec<u8>>,
     pub_key_der: Option<Vec<u8>>,
     flags: HsmKeyFlags,
+    scope: Option<HsmKeyScope>,
 }
 
 impl HsmKeyProps {
@@ -151,6 +187,7 @@ impl HsmKeyProps {
             masked_key: None,
             pub_key_der: None,
             flags,
+            scope: None,
         }
     }
 
@@ -158,17 +195,43 @@ impl HsmKeyProps {
         self.flags
     }
 
+    /// Returns the explicit TBOR masking scope, if one was requested.
+    ///
+    /// `None` means the scope is derived from the `SESSION` flag for backward
+    /// compatibility (see [`HsmKeyProps::tbor_scope`]).
+    pub fn scope(&self) -> Option<HsmKeyScope> {
+        self.scope
+    }
+
+    /// Rejects an explicit masking scope on a non-TBOR (MBOR / V1) session,
+    /// where scope selection is unsupported. Rather than silently dropping
+    /// the request, it is rejected with [`HsmError::UnsupportedApiRevision`]
+    /// so callers are never told a scope was honored when it was not. A no-op
+    /// when no explicit scope was requested.
+    pub(crate) fn ensure_scope_supported(&self, is_tbor: bool) -> HsmResult<()> {
+        if self.scope.is_some() && !is_tbor {
+            return Err(HsmError::UnsupportedApiRevision);
+        }
+        Ok(())
+    }
+
     /// Returns the 1-byte TBOR `KeyScope` discriminant for this key
-    /// (mirror of the firmware `HsmKeyScope`): session keys use the
-    /// per-session masking key; persistent keys use the partition-local
-    /// masking key (requires a finalized partition).
+    /// (mirror of the firmware `HsmKeyScope`).
+    ///
+    /// When an explicit [`HsmKeyScope`] was requested it is authoritative.
+    /// Otherwise the scope is derived from the `SESSION` flag for backward
+    /// compatibility: session keys use the per-session masking key; persistent
+    /// keys use the partition-local masking key (requires a finalized
+    /// partition).
     pub(crate) fn tbor_scope(&self) -> u8 {
         /// TBOR `KeyScope::Session` discriminant.
         const TBOR_SCOPE_SESSION: u8 = 1;
         /// TBOR `KeyScope::Local` discriminant.
         const TBOR_SCOPE_LOCAL: u8 = 3;
 
-        if self.is_session() {
+        if let Some(scope) = self.scope {
+            scope as u8
+        } else if self.is_session() {
             TBOR_SCOPE_SESSION
         } else {
             TBOR_SCOPE_LOCAL
@@ -320,6 +383,7 @@ pub struct HsmKeyPropsBuilder {
     bit_len: Option<u32>,
     ecc_curve: Option<HsmEccCurve>,
     flags: HsmKeyFlags,
+    scope: Option<HsmKeyScope>,
 }
 
 impl HsmKeyPropsBuilder {
@@ -358,6 +422,19 @@ impl HsmKeyPropsBuilder {
     /// Sets the session flag.
     pub fn is_session(mut self, value: bool) -> Self {
         self.flags.set(HsmKeyFlags::SESSION, value);
+        self
+    }
+
+    /// Sets an explicit TBOR masking scope.
+    ///
+    /// Only honored for TBOR (V2) sessions; requesting a scope on an MBOR
+    /// (V1) session is rejected with [`HsmError::UnsupportedApiRevision`].
+    /// When unset, the scope is derived from the session flag for backward
+    /// compatibility. An explicit scope is authoritative over `is_session`:
+    /// the `SESSION` flag is normalized to the scope when the properties are
+    /// built.
+    pub fn scope(mut self, scope: HsmKeyScope) -> Self {
+        self.scope = Some(scope);
         self
     }
 
@@ -413,6 +490,18 @@ impl HsmKeyPropsBuilder {
             return Err(HsmError::PropertyNotPresent);
         };
 
+        // An explicit scope is authoritative over the legacy `SESSION` flag.
+        // Normalize the flag to match the scope so that device-returned
+        // metadata — which maps only `Session` scope back to the `SESSION`
+        // flag — validates against the requested properties. Without this,
+        // `.scope(Session)` (default `is_session = false`) or a non-session
+        // scope combined with `is_session(true)` would generate the key and
+        // then fail `validate_dev_props` with `InvalidKeyProps`.
+        let mut flags = self.flags;
+        if let Some(scope) = self.scope {
+            flags.set(HsmKeyFlags::SESSION, scope == HsmKeyScope::Session);
+        }
+
         Ok(HsmKeyProps {
             class: self.class.ok_or(HsmError::KeyClassNotSpecified)?,
             kind: self.key_kind.ok_or(HsmError::KeyKindNotSpecified)?,
@@ -421,7 +510,95 @@ impl HsmKeyPropsBuilder {
             ecc_curve: self.ecc_curve,
             masked_key: None,
             pub_key_der: None,
-            flags: self.flags,
+            flags,
+            scope: self.scope,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn aes_props_builder() -> HsmKeyPropsBuilder {
+        HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Aes)
+            .bits(256)
+    }
+
+    #[test]
+    fn explicit_session_scope_normalizes_session_flag_and_validates() {
+        // `.scope(Session)` with the builder default `is_session = false`
+        // used to generate the key and then fail `validate_dev_props`.
+        let req = aes_props_builder()
+            .scope(HsmKeyScope::Session)
+            .build()
+            .expect("build key props");
+        assert_eq!(req.tbor_scope(), 1);
+        assert!(req.is_session());
+        // The device returns `Session`-scoped metadata, which decodes back to
+        // the `SESSION` flag; the requested props must validate against it.
+        let dev = aes_props_builder()
+            .is_session(true)
+            .build()
+            .expect("build key props");
+        assert!(req.validate_dev_props(&dev));
+    }
+
+    #[test]
+    fn explicit_non_session_scope_clears_session_flag_and_validates() {
+        // A non-session scope combined with a contradictory `is_session(true)`
+        // is normalized so the `SESSION` flag follows the scope.
+        let req = aes_props_builder()
+            .is_session(true)
+            .scope(HsmKeyScope::Local)
+            .build()
+            .expect("build key props");
+        assert_eq!(req.tbor_scope(), 3);
+        assert!(!req.is_session());
+        let dev = aes_props_builder()
+            .is_session(false)
+            .build()
+            .expect("build key props");
+        assert!(req.validate_dev_props(&dev));
+    }
+
+    #[test]
+    fn no_explicit_scope_falls_back_to_session_flag() {
+        let session_key = aes_props_builder()
+            .is_session(true)
+            .build()
+            .expect("build key props");
+        assert_eq!(session_key.tbor_scope(), 1);
+        assert!(session_key.scope().is_none());
+        let persistent_key = aes_props_builder()
+            .is_session(false)
+            .build()
+            .expect("build key props");
+        assert_eq!(persistent_key.tbor_scope(), 3);
+    }
+
+    #[test]
+    fn explicit_scope_rejected_on_mbor_session() {
+        let props = aes_props_builder()
+            .scope(HsmKeyScope::SecurityDomain)
+            .build()
+            .expect("build key props");
+        assert_eq!(
+            props.ensure_scope_supported(false),
+            Err(HsmError::UnsupportedApiRevision)
+        );
+        assert!(props.ensure_scope_supported(true).is_ok());
+    }
+
+    #[test]
+    fn absent_scope_is_supported_on_any_transport() {
+        let props = aes_props_builder()
+            .is_session(true)
+            .build()
+            .expect("build key props");
+        assert!(props.ensure_scope_supported(false).is_ok());
+        assert!(props.ensure_scope_supported(true).is_ok());
     }
 }

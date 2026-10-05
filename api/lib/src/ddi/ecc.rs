@@ -57,6 +57,7 @@ pub(crate) fn ecc_generate_key(
     session: &HsmSession,
     priv_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    priv_key_props.ensure_scope_supported(session.is_ex())?;
     // A V2 (TBOR) session yields a non-resident `Unpinned` and a raw wire
     // public key; a V1 (MBOR) session yields a resident `Pinned` and a
     // DER public key.
@@ -124,9 +125,10 @@ fn ecc_generate_key_tbor(
         return Err(HsmError::InvalidKeyProps);
     }
 
+    let scope = props.tbor_scope();
     let req = TborEccGenerateKeyReq {
         session_id: session.ex_session_id()?,
-        scope: props.tbor_scope(),
+        scope,
         curve: ecc_curve_to_tbor(curve),
         key_usage: ecc_tbor_key_usage(props)?,
         key_label: key_label.to_vec(),
@@ -137,6 +139,7 @@ fn ecc_generate_key_tbor(
             .map_err(HsmError::from)
     })?;
 
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     let pub_key_der = ecc_wire_pub_key_to_der(curve, &resp.pub_key)?;
     Ok((ddi::HsmKeyHandle::Unpinned, resp.masked_key, pub_key_der))
 }
@@ -327,19 +330,28 @@ fn ecc_sign_tbor(
     sig: &mut [u8],
 ) -> HsmResult<usize> {
     let masked = key.masked_key_vec()?;
+    ecc_sign_masked_tbor(&key.session(), &masked, curve, hash, sig)
+}
 
+pub(crate) fn ecc_sign_masked_tbor(
+    session: &HsmSession,
+    masked: &[u8],
+    curve: HsmEccCurve,
+    hash: &[u8],
+    sig: &mut [u8],
+) -> HsmResult<usize> {
     // Firmware reads the digest as a little-endian integer; the host holds
     // it big-endian.
     let mut digest = hash.to_vec();
     digest.reverse();
 
     let req = TborEccSignReq {
-        session_id: key.session().ex_session_id()?,
-        masked_key: masked,
+        session_id: session.ex_session_id()?,
+        masked_key: masked.to_vec(),
         digest,
     };
     let mut cookie = None;
-    let resp = key.with_dev(|dev| {
+    let resp = session.with_dev(|dev| {
         dev.exec_op_tbor(&req, None, &mut cookie)
             .map_err(HsmError::from)
     })?;
@@ -409,6 +421,10 @@ pub(crate) fn ecdh_derive(
     let Some(curve) = base_key.ecc_curve() else {
         return Err(HsmError::PropertyNotPresent);
     };
+
+    // A masking scope can only be honored on the TBOR path; reject an
+    // explicit scope on MBOR so it is not silently dropped.
+    derived_key_props.ensure_scope_supported(base_key.session().is_ex())?;
 
     // Transport is selected by session type: a V2 (TBOR) session derives
     // with the caller-held masked key; a V1 (MBOR) session with the
@@ -488,6 +504,9 @@ fn ecdh_derive_tbor(
     })?;
 
     let dev_key_props = HsmMaskedKey::to_key_props(&resp.masked_secret)?;
+    // The device selects the masking key from the requested scope, so
+    // confirm it stamped the scope we asked for (parity with HKDF).
+    HsmMaskedKey::verify_scope(&resp.masked_secret, derived_key_props.tbor_scope())?;
     // Validate that the device returned properties match the requested properties.
     if !derived_key_props.validate_dev_props(&dev_key_props) {
         Err(HsmError::InvalidKeyProps)?;
