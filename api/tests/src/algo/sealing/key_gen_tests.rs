@@ -225,26 +225,32 @@ fn sealing_key_gen_roundtrip_yields_distinct_keys() {
     assert_ne!(pub1, pub2);
 }
 
-/// Sealing keys are session-lifetime keys: an explicit `SecurityDomain`
-/// scope is rejected up front by the host guard, before any device
-/// round-trip.
+/// Sealing keys support only the `Ephemeral` and `Local` masking scopes
+/// (`SdSealingKeyGen` firmware contract). An explicit `SecurityDomain` or
+/// `Session` scope is rejected up front by the host guard, before any
+/// device round-trip.
 #[test]
-fn sealing_key_gen_rejects_security_domain_scope() {
+fn sealing_key_gen_rejects_unsupported_scopes() {
     let _guard = PARTITION_LOCK.lock();
     let session = new_co_session();
 
-    let props = HsmKeyPropsBuilder::default()
-        .class(HsmKeyClass::Secret)
-        .key_kind(HsmKeyKind::Sealing)
-        .bits(384)
-        .can_derive(true)
-        .scope(HsmKeyScope::SecurityDomain)
-        .build()
-        .expect("build props");
+    for scope in [HsmKeyScope::SecurityDomain, HsmKeyScope::Session] {
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Sealing)
+            .bits(384)
+            .can_derive(true)
+            .scope(scope)
+            .build()
+            .expect("build props");
 
-    let mut algo = HsmSealingKeyGenAlgo::default();
-    let res = HsmKeyManager::generate_key(&session, &mut algo, props);
-    assert!(matches!(res, Err(HsmError::InvalidKeyProps)));
+        let mut algo = HsmSealingKeyGenAlgo::default();
+        let res = HsmKeyManager::generate_key(&session, &mut algo, props);
+        assert!(
+            matches!(res, Err(HsmError::InvalidKeyProps)),
+            "scope {scope:?} must be rejected"
+        );
+    }
 }
 
 /// An explicit `Local` scope round-trips: the device masks under the

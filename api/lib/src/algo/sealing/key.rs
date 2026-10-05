@@ -117,14 +117,18 @@ impl HsmKeyGenOp for HsmSealingKeyGenAlgo {
         // Validate key properties before generating the key.
         HsmSealingKey::validate_props(&props)?;
 
-        // Sealing keys are session-lifetime keys: only Session, Ephemeral,
-        // or Local scopes are valid. SecurityDomain is rejected; an unset
-        // scope defaults to Local for backward compatibility.
+        // Sealing keys are session-lifetime keys bound to a persistent
+        // masking key. The `SdSealingKeyGen` firmware contract supports
+        // only `Ephemeral` and `Local`; `Session`, `SecurityDomain` (and
+        // any other) are rejected up front so the host never sends a
+        // request guaranteed to fail on-device. An unset scope defaults
+        // to `Local` for backward compatibility.
         let scope = match props.scope() {
             None | Some(HsmKeyScope::Local) => KeyScope::Local,
-            Some(HsmKeyScope::Session) => KeyScope::Session,
             Some(HsmKeyScope::Ephemeral) => KeyScope::Ephemeral,
-            Some(HsmKeyScope::SecurityDomain) => return Err(HsmError::InvalidKeyProps),
+            Some(HsmKeyScope::Session) | Some(HsmKeyScope::SecurityDomain) => {
+                return Err(HsmError::InvalidKeyProps);
+            }
         };
 
         // Cache the masked blob and public key in props. The key is
