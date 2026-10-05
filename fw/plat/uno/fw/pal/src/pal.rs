@@ -328,6 +328,14 @@ pub struct UnoHsmPal {
     /// being torn down can't be registered with the engine after the
     /// session's engine-side delete (see `vault.rs`).
     pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
+
+    /// Count of host IOs currently being processed: incremented when an
+    /// inbound IO is accepted and dispatched to a `handle_io` task, and
+    /// decremented when that task finishes. Read by the IDFU shutdown
+    /// handler as the async analog of the reference firmware's
+    /// `scheduler.occupancy_list()` — a non-zero value means host IO is
+    /// still in flight, so `prepare-for-shutdown` must fail closed.
+    io_in_flight: Cell<u32>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -451,6 +459,7 @@ impl Default for UnoHsmPal {
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
             fp_bulk_lock: Mutex::new(()),
+            io_in_flight: Cell::new(0),
         }
     }
 }
@@ -468,6 +477,32 @@ impl UnoHsmPal {
     /// - `Running` after hardware channels are initialized
     pub fn boot_phase(&self) -> BootPhase {
         self.boot_phase.get()
+    }
+
+    /// Increment the in-flight IO count.
+    ///
+    /// Called when an inbound IO has been accepted and dispatched to a
+    /// `handle_io` task. Saturating so it can never panic across the host
+    /// trust boundary.
+    pub fn io_in_flight_inc(&self) {
+        self.io_in_flight
+            .set(self.io_in_flight.get().saturating_add(1));
+    }
+
+    /// Decrement the in-flight IO count.
+    ///
+    /// Called when a `handle_io` task has finished processing (the IO slot
+    /// has been returned to the ISQ). Saturating so it can never panic.
+    pub fn io_in_flight_dec(&self) {
+        self.io_in_flight
+            .set(self.io_in_flight.get().saturating_sub(1));
+    }
+
+    /// Current number of host IOs in flight.
+    ///
+    /// See [`io_in_flight_inc`](Self::io_in_flight_inc).
+    pub(crate) fn io_in_flight(&self) -> u32 {
+        self.io_in_flight.get()
     }
 
     /// Process one IPC receive cycle.
@@ -665,6 +700,9 @@ impl UnoHsmPal {
                 if self.try_handle_pfn_enable(channel, buf).await {
                     return;
                 }
+                if self.try_handle_shutdown(channel, buf) {
+                    return;
+                }
                 buf[0] |= 0x80;
                 self.ipc.reply(channel as u8, buf);
             }
@@ -781,6 +819,73 @@ impl UnoHsmPal {
         };
 
         let reply = encode_set_resource_ack(buf, status, count);
+        self.ipc.reply(channel as u8, &reply);
+        true
+    }
+
+    /// Handle a `Shutdown` (IDFU prepare-for-shutdown) IPC in the running
+    /// state.
+    ///
+    /// Admin owns the IO drain: it sends this only after every host SQ
+    /// credit has been restored, and inbound is HW-paused so no new IO can
+    /// arrive. The HSM therefore just confirms it holds no in-flight IO and
+    /// replies — mirroring the reference firmware's fail-closed
+    /// `scheduler.occupancy_list() != 0` guard:
+    ///
+    /// - non-zero in-flight -> reply `OperationFailed`, so Admin aborts
+    ///   (rolls back) the IDFU instead of resetting with resident work;
+    /// - zero in-flight -> reply `Success`. Partition state is already
+    ///   GSRAM write-through (see [`part`](crate::part)), so there is no
+    ///   separate flush to perform before the SP resets the core.
+    ///
+    /// Returns `true` when the message was a `Shutdown` (and thus fully
+    /// handled here), `false` otherwise so the caller falls back to the
+    /// default echo path.
+    fn try_handle_shutdown(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+        // Only claim messages that carry the `Shutdown` opcode; anything else
+        // is left for the caller's default echo path.
+        let is_shutdown = IpcMessageDecoder::decode_header(&IpcMessage { data: *buf })
+            .map(|header| header.msg_op() == IpcMessageOpCode::Shutdown as u32)
+            .unwrap_or(false);
+        if !is_shutdown {
+            return false;
+        }
+
+        // A `Shutdown`-opcode message that fails to decode/validate (e.g. an
+        // out-of-range `drain_time_ms`) is a malformed request, not "not ours":
+        // reply `InvalidField` rather than mis-ACKing it via the default echo
+        // path (mirrors the reference `handle_shutdown_for_reset_req`).
+        if decode_shutdown(buf).is_none() {
+            error!(
+                "idfu",
+                HsmError::InvalidIpcShutdownMessage,
+                "malformed shutdown request"
+            );
+            let reply = encode_shutdown_ack(buf, IpcMessageStatusCode::InvalidField);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
+
+        // Admin owns the drain (see the docstring): fail closed while any host
+        // IO is still in flight, otherwise acknowledge readiness. This relies
+        // on every spawned `handle_io` task eventually reaching
+        // `io_in_flight_dec` (each runs to completion, or the core faults into
+        // a reset); a task that hung on an `.await` would keep the count
+        // non-zero and block IDFU.
+        let in_flight = self.io_in_flight();
+        let status = if in_flight != 0 {
+            error!(
+                "idfu",
+                HsmError::IoDrainInProgress,
+                "shutdown requested with {} IO in flight; failing closed",
+                in_flight
+            );
+            IpcMessageStatusCode::OperationFailed
+        } else {
+            IpcMessageStatusCode::Success
+        };
+
+        let reply = encode_shutdown_ack(buf, status);
         self.ipc.reply(channel as u8, &reply);
         true
     }
