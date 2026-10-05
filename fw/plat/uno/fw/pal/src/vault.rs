@@ -164,10 +164,13 @@ impl HsmVault for UnoHsmPal {
     }
 
     async fn vault_clear(&self, io: &impl HsmIo) -> HsmResult<()> {
-        // Partition reset: the engine drops this partition's bulk keys with
-        // the accompanying function reset (matching the reference firmware, no
-        // per-key delete here).  Clear the vault first, then free the slot
-        // bitmap so the bits stay reserved across the vault await.
+        // Partition reset (`part_migrate`, for Migrate / NSSR).  The engine-side
+        // keys are removed by the engine itself: for the same state change the
+        // admin core drains this function's HSM queues and sends the engine a
+        // PFN disable, whose teardown zeroes every bulk key the function owns
+        // (as in the reference firmware, which also only resets the slot
+        // bitmap here).  Clear the vault first, then free the slot bitmap so
+        // the bits stay reserved across the vault await.
         let res_mask = PartStore::partition(io.pid()).map_or(0, |p| p.res_mask());
         vault(io).clear(self, io).await?;
         fp_slots_free_mask(res_mask);
@@ -340,7 +343,9 @@ fn fp_slots_free_bits(bits: &[u8; NUM_FP_TABLES]) {
     });
 }
 
-/// Free every FP bulk-key slot in the tables owned by `res_mask`.
+/// Free every FP bulk-key slot in the tables owned by `res_mask`.  Only for
+/// partition reset, where the engine's own function teardown removes the
+/// keys (see `vault_clear`).
 fn fp_slots_free_mask(res_mask: u128) {
     FP_SLOTS.with(|slots| {
         for (table, used) in slots.iter_mut().enumerate().take(NUM_FP_TABLES) {

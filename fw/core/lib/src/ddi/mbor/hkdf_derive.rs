@@ -75,14 +75,21 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
 
     {
         let ikm = pal.vault_key(io, input_key_id)?;
-        pal.hkdf_extract(io, algo, body.salt.as_deref(), ikm, prk)
-            .await?;
+        if let Err(e) = pal
+            .hkdf_extract(io, algo, body.salt.as_deref(), ikm, prk)
+            .await
+        {
+            prk.zeroize();
+            return Err(e);
+        }
     }
 
-    if let Err(e) = pal
+    // The PRK is consumed only by the expansion; wipe it on both paths.
+    let expanded = pal
         .hkdf_expand(io, algo, prk, body.info.as_deref(), out)
-        .await
-    {
+        .await;
+    prk.zeroize();
+    if let Err(e) = expanded {
         out.zeroize();
         return Err(e);
     }

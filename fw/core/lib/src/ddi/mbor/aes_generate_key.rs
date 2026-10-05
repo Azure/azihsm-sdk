@@ -69,7 +69,10 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     // length, so the handler just sizes the buffer per the requested
     // key kind.
     let key_buf = pal.dma_alloc(io, key_len)?;
-    pal.aes_gen_key(io, key_buf).await?;
+    if let Err(e) = pal.aes_gen_key(io, key_buf).await {
+        key_buf.zeroize();
+        return Err(e);
+    }
 
     // Bulk GCM keys live in the bulk-crypto backend: hand the freshly
     // generated material to the backend and keep only the 2-byte
