@@ -88,7 +88,7 @@ variable-length data section.
 | 20 | `mfgr_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Sender manufacturer certificate-chain descriptors (from the `sender_evidence` field group). Optional (see below). |
 | 24 | `owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Sender owner certificate-chain descriptors. Optional. |
 | 28 | `part_owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Sender partition-owner certificate-chain descriptors. Optional. |
-| 32 | `evidence` | `buffer` (single `&ReportDescriptor`, 4 B) | Sender attestation-report (COSE_Sign1) descriptor. Optional. |
+| 32 | `evidence` | `buffer` (single `&ReportDescriptor`, 3 B) | Sender attestation-report (COSE_Sign1) descriptor. Optional. |
 | 36 | `src_remote_backup` | `buffer` (fixed 161 B) | Remote backup to restore: an HPKE-Auth seal of BKS3 = `POK_REMOTE_BACKUP_LEN` (161 B). |
 | 40 | `prev_sd_mk_backup` | `buffer` (fixed 260 B) | Previous security-domain masking-key backup (SDMK masked under the derived SDBMK) = `SD_MK_BACKUP_LEN` (260 B); `SDMK` is recovered from it. |
 

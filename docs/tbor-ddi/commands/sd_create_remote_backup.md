@@ -110,7 +110,8 @@ Carries the 161-byte `pok_remote_backup` seal, the 276-byte
 | Error | Cause |
 |---|---|
 | `TborInvalidFixedLength` | `masked_sealing_key` (276 B) or `policy` (484 B) is the wrong length (rejected at decode before the handler runs) |
-| `InvalidArg` | Not `Initialized`; missing out-of-band receiver material; invalid receiver certificate chain; policy hash mismatch; the policy does not name this partition as the backing partition; or (when `require_trusted_sa_key` is set) invalid evidence or a report that does not attest the receiver-chain `RcvrPub` |
+| `InvalidArg` | Not `Initialized`; missing out-of-band receiver material; the receiver certificate chain is empty or does not anchor to the policy `SATA` key; policy hash mismatch; the policy does not name this partition as the backing partition; or (when `require_trusted_sa_key` is set) the policy `SAPOTA` key is not P-384, the evidence does not anchor to it, or a report that does not attest the receiver-chain `RcvrPub` |
+| Evidence errors | The receiver certificate chain fails X.509 validation — a malformed certificate, or an invalid signature / chain linkage (for example `X509SignatureInvalid`), propagated from the chain validator; or (when `require_trusted_sa_key` is set) an evidence certificate chain fails validation or the report signature is invalid |
 | `SdAlreadyInitialized` | A security domain is already initialized on this partition incarnation (one-shot gate) |
 | `InvalidPermissions` | Not a Crypto-Officer session |
 | `UnsupportedKeyScope` | The masked sealing key's scope has no provisioned masking key |
