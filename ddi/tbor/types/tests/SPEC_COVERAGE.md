@@ -59,6 +59,10 @@ All test names below are relative to the
 | `suite_id` not in `{0x01}` → `UnsupportedSessionSuite` | ✅ 🔁 | `open_session::open_session_unsupported_suite_id_emu` | Loop over `[0x00, 0x02, 0xff]` |
 | Default-PSK gate bypass (E3, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass_emu` |  |
 | Multiple concurrent sessions return distinct session ids | ✅ | `open_session::open_session_multiple_concurrent_emu` |  |
+| Rejected role/type request does not poison the fd | ✅ | `open_session::rejected_role_type_does_not_poison_fd` | Valid session succeeds after rejected CU + Authenticated Phase-1 |
+| Rejected session suite does not consume session state | ✅ | `open_session::rejected_suite_does_not_consume_session_slot` | Valid session succeeds after unsupported suite rejection |
+| Rejected public key does not consume session state | ✅ | `open_session::rejected_pk_init_does_not_consume_session_slot` | Valid session succeeds after invalid `pk_init` rejection |
+| Pending Phase-1 session blocks a second open on the same fd | ✅ | `open_session::pending_session_blocks_second_open_on_same_fd` | Pending session counts toward the per-fd session limit |
 | Malformed `pk_init` (length / curve) | ⚠️ | — | Spec arm exists in handler; no negative test |
 
 ## `SessionOpenFinish` (opcode out-of-session, phase 2 of handshake)
@@ -69,6 +73,11 @@ All test names below are relative to the
 | Phase-2 `seed_envelope` tamper → `SessionAuthFailure` | ✅ | `open_session::session_open_finish_seed_envelope_tampered_emu` | Syntactically valid header, bogus IV/CT/tag |
 | Unknown `session_id` → FW rejection | 🟡 | `open_session::session_open_finish_unknown_session_id_emu` | Asserts `DdiError::DdiError(_)`; specific status not pinned |
 | Second `Finish` against an already-completed slot → FW rejection | 🟡 | `open_session::open_session_double_finish_emu` | Asserts `DdiError::DdiError(_)` |
+| Failed Phase-2 MAC authentication reclaims the pending CU slot | ✅ | `open_session::failed_finish_mac_reclaims_session_state` | Exhausts all CU slots on fresh fds to prove the failed pending slot did not leak |
+| MAC from one pending session cannot authenticate another | ✅ | `open_session::session_open_finish_rejects_mac_from_another_session` | Cross-session MAC substitution is rejected without damaging the source session |
+| Unknown Finish request does not destroy another pending session | ✅ | `open_session::unknown_finish_does_not_destroy_pending_session` | Valid pending session remains finishable after unrelated unknown-session rejection |
+| Authenticated-session MAC key derivation is deterministic | ✅ | `open_session::authenticated_session_mac_key_derivation_is_stable` | Repeated TX/RX derivation from one handshake is stable and direction-specific |
+| Failed Phase-2 leaves the original fd session-bound | ✅ | `open_session::failed_finish_mac_keeps_original_fd_session_bound` | Original fd continues enforcing the per-fd session limit after authentication failure |
 | Finish against a pending slot whose Init was for a different role | ⚠️ | — | Spec arm exists; not exercised |
 
 ## `SessionClose` (opcode in-session, allow-listed)

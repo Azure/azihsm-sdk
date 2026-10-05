@@ -891,7 +891,7 @@ fn pending_session_blocks_second_open_on_same_fd() {
 /// A MAC-authentication failure must reclaim the FW pending-session slot.
 ///
 /// The original fd may remain session-bound after a failed Phase-2, so use
-/// a fresh fd to verify that firmware capacity itself was reclaimed.
+/// fresh fds to exhaust all CU capacity and prove that no pending slot leaked.
 #[test]
 fn failed_finish_mac_reclaims_session_state() {
     let ctx = TestCtx::new();
@@ -924,17 +924,29 @@ fn failed_finish_mac_reclaims_session_state() {
 
     assert_fw_rejects(&err, TborStatus::SessionNotFound);
 
-    // Verify FW capacity was reclaimed using a fresh fd. Reusing `ctx`
-    // would test per-fd bookkeeping rather than FW session-table cleanup.
-    let recovery_ctx = TestCtx::new_with_path(ctx.path());
+    // The original fd may remain session-bound after failed Phase-2.
+    // Open the full CU capacity on fresh fds. If the failed pending slot
+    // leaked, only CU_SESSION_LIMIT - 1 of these opens would succeed.
+    let path = ctx.path().to_owned();
 
-    let recovered = recovery_ctx
-        .open_session(CU, SessionType::PlainText)
-        .expect("FW session slot must be reusable after failed Phase-2");
+    let recovery_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(&path))
+        .collect();
 
-    recovered
-        .close()
-        .expect("recovery session must close successfully");
+    let _recovery_guards: Vec<_> = recovery_ctxs
+        .iter()
+        .enumerate()
+        .map(|(index, recovery_ctx)| {
+            recovery_ctx
+                .open_session(CU, SessionType::PlainText)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "CU recovery session {index} of {CU_SESSION_LIMIT} must succeed \
+                         after failed Phase-2 reclaimed its pending slot: {e:?}"
+                    )
+                })
+        })
+        .collect();
 }
 
 /// A valid MAC generated for session A must not authenticate session B.
