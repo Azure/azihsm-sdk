@@ -29,6 +29,10 @@ pub(crate) fn get_rsa_unwrapping_key(
     priv_key_props: HsmKeyProps,
     pub_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps, HsmKeyProps)> {
+    // The unwrapping key-pair request carries no scope field on either
+    // transport, so reject an explicit scope rather than silently dropping it.
+    priv_key_props.ensure_scope_supported(false)?;
+    pub_key_props.ensure_scope_supported(false)?;
     if session.is_ex() {
         get_rsa_unwrapping_key_tbor(session, priv_key_props, pub_key_props)
     } else {
