@@ -39,20 +39,20 @@ fn sd_restore_remote_backup_roundtrip() {
     let (masked, report) = masked_key_and_report(&session1);
     let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&masked, ev, &policy))
+        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&policy, &masked, ev))
         .expect("create remote backup");
     drop(session1);
 
     // Device 2 (reboot, same seed): restore PartLocalMK from device 1's
     // backup, then restore the security domain from the remote backup.
     let (session2, _policy2, _pid_pub2, _lmk2) =
-        provision_backing(&sata, &pota, Some(policy), Some(&local_mk));
+        provision_backing(&sata, &pota, Some(&policy), Some(&local_mk));
     let restored = evidence
         .with_hsm_evidence(|ev| {
             session2.sd_restore_remote_backup(
+                &policy,
                 &masked,
                 ev,
-                &policy,
                 &created.pok_remote_backup,
                 &created.sd_mk_backup,
             )
@@ -86,14 +86,14 @@ fn sd_restore_remote_backup_is_one_shot() {
     let (masked, report) = masked_key_and_report(&session);
     let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&policy, &masked, ev))
         .expect("create remote backup");
 
     let restored = evidence.with_hsm_evidence(|ev| {
         session.sd_restore_remote_backup(
+            &policy,
             &masked,
             ev,
-            &policy,
             &created.pok_remote_backup,
             &created.sd_mk_backup,
         )

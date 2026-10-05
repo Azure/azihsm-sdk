@@ -44,6 +44,16 @@
 //! saw it because the std PAL clears the flag on `part_enable` and
 //! `clear_enabled_state`.
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::PartPolicy;
@@ -67,16 +77,6 @@ use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::part_policy_with_pota;
 use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::x509_fixture::make_chain;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::GeneratedChain;
-use crate::harness::x509_fixture::RAW_PUB_LEN;
-use crate::harness::SessionHandshake;
-use crate::harness::TestCtx;
-use crate::harness::ROTATED_CO_PSK;
 
 /// `KeyScope::Local` discriminant (wire mirror of the firmware
 /// `HsmKeyScope`).

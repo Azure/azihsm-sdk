@@ -215,6 +215,7 @@ impl PolicyFlags {
     Debug, Clone, PartialEq, Eq, TryFromBytes, IntoBytes, Immutable, KnownLayout, Unaligned,
 )]
 #[repr(C)]
+#[non_exhaustive]
 pub struct PartPolicy {
     /// Policy version (major.minor).
     pub version: PolicyVer,
@@ -270,6 +271,18 @@ impl PartPolicy {
             _reserved: 0,
         }
     }
+
+    /// Borrow a [`PART_POLICY_LEN`]-byte wire image as a [`PartPolicy`]
+    /// **zero-copy**.
+    ///
+    /// Returns `None` when `bytes` is not exactly [`PART_POLICY_LEN`]
+    /// bytes (the struct is [`Unaligned`], so alignment never fails).
+    /// Intended for boundary layers (e.g. the native C API) that receive
+    /// an opaque policy buffer and need a typed view to hand to the
+    /// `PartPolicy`-typed Rust API.
+    pub fn ref_from_wire(bytes: &[u8]) -> Option<&Self> {
+        Self::try_ref_from_bytes(bytes).ok()
+    }
 }
 
 impl Default for PartPolicy {
@@ -302,6 +315,12 @@ mod tests {
     fn zeroed_round_trips_through_bytes() {
         let policy = PartPolicy::zeroed();
         assert_eq!(IntoBytes::as_bytes(&policy), &[0u8; PART_POLICY_LEN][..]);
+    }
+
+    #[test]
+    fn ref_from_wire_rejects_wrong_len() {
+        assert!(PartPolicy::ref_from_wire(&[0u8; PART_POLICY_LEN - 1]).is_none());
+        assert!(PartPolicy::ref_from_wire(&[0u8; PART_POLICY_LEN]).is_some());
     }
 
     #[test]

@@ -46,9 +46,9 @@ std::vector<uint8_t> create_source_backup(
     azihsm_buffer masked_buf{ masked_sender.data(), static_cast<uint32_t>(masked_sender.size()) };
     azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
     azihsm_sd_create_remote_backup_params params{
+        &policy_buf,
         &masked_buf,
         &receiver.get(),
-        &policy_buf,
     };
 
     std::vector<uint8_t> remote;
@@ -202,7 +202,7 @@ TEST_F(azihsm_sd_reseal_backup_test, reseal_backup_roundtrip)
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer src_buf{ src_backup.data(), static_cast<uint32_t>(src_backup.size()) };
         azihsm_sd_reseal_remote_backup_params params{
-            &masked_buf, &src_ev.get(), &dst_ev.get(), &policy_buf, &src_buf,
+            &policy_buf, &masked_buf, &src_ev.get(), &dst_ev.get(), &src_buf,
         };
 
         std::vector<uint8_t> dst_backup;
@@ -254,7 +254,7 @@ TEST_F(azihsm_sd_reseal_backup_test, reseal_backup_rerandomizes)
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer src_buf{ src_backup.data(), static_cast<uint32_t>(src_backup.size()) };
         azihsm_sd_reseal_remote_backup_params params{
-            &masked_buf, &src_ev.get(), &dst_ev.get(), &policy_buf, &src_buf,
+            &policy_buf, &masked_buf, &src_ev.get(), &dst_ev.get(), &src_buf,
         };
 
         std::vector<uint8_t> first;

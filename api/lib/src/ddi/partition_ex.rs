@@ -148,8 +148,8 @@ fn seal_mach_seed_envelope(
 ///
 /// # Errors
 ///
-/// Returns [`HsmError::InvalidArgument`] when any fixed-size input has
-/// the wrong length or `part_policy` fails to decode, propagates
+/// Returns [`HsmError::InvalidArgument`] when a thumbprint input has
+/// the wrong length, propagates
 /// [`HsmError::InternalError`] on a `mach_seed` seal failure, and
 /// surfaces DDI/device failures from the round-trip.
 pub(crate) fn part_init_ex(
@@ -157,14 +157,12 @@ pub(crate) fn part_init_ex(
     session_id: u16,
     param_key: &AesKey,
     mach_seed: &[u8],
-    part_policy: &[u8],
+    part_policy: &PartPolicy,
     pota_thumbprint: &[u8],
     sata_thumbprint: &[u8],
     sapota_thumbprint: Option<&[u8]>,
 ) -> HsmResult<HsmPartInitExResult> {
-    if part_policy.len() != PART_POLICY_LEN
-        || pota_thumbprint.len() != POTA_THUMBPRINT_LEN
-        || sata_thumbprint.len() != SATA_THUMBPRINT_LEN
+    if pota_thumbprint.len() != POTA_THUMBPRINT_LEN || sata_thumbprint.len() != SATA_THUMBPRINT_LEN
     {
         return Err(HsmError::InvalidArgument);
     }
@@ -177,10 +175,9 @@ pub(crate) fn part_init_ex(
     let mut req = TborPartInitReq {
         session_id,
         mach_seed_envelope,
+        part_policy: part_policy.clone(),
         ..Default::default()
     };
-    req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
-        .map_err(|_| HsmError::InvalidArgument)?;
     req.pota_thumbprint.copy_from_slice(pota_thumbprint);
     req.sata_thumbprint.copy_from_slice(sata_thumbprint);
     if let Some(s) = sapota_thumbprint {
@@ -216,8 +213,7 @@ pub(crate) fn part_init_ex(
 ///
 /// # Errors
 ///
-/// Returns [`HsmError::InvalidArgument`] when `part_policy` has the
-/// wrong length or fails to decode, when `pta_cert_chain` is empty,
+/// Returns [`HsmError::InvalidArgument`] when `pta_cert_chain` is empty,
 /// exceeds [`MAX_CERTS`], contains an empty cert, or contains a cert
 /// whose length does not fit in the 16-bit descriptor field, or when a
 /// present `prev_local_mk_backup` is not exactly [`LOCAL_MK_BACKUP_LEN`]
@@ -227,13 +223,10 @@ pub(crate) fn part_init_ex(
 pub(crate) fn part_final_ex(
     partition: &HsmPartition,
     session_id: u16,
-    part_policy: &[u8],
+    part_policy: &PartPolicy,
     pta_cert_chain: &[HsmCert<'_>],
     prev_local_mk_backup: Option<&[u8]>,
 ) -> HsmResult<HsmPartFinalExResult> {
-    if part_policy.len() != PART_POLICY_LEN {
-        return Err(HsmError::InvalidArgument);
-    }
     // The firmware treats a non-empty `prev_local_mk_backup` as a
     // fixed-size envelope of exactly `LOCAL_MK_BACKUP_LEN` bytes, so
     // reject any other present length up front (deterministic guard).
@@ -248,10 +241,9 @@ pub(crate) fn part_final_ex(
     let mut req = TborPartFinalReq {
         session_id,
         cert_descriptors,
+        part_policy: part_policy.clone(),
         ..Default::default()
     };
-    req.part_policy = <PartPolicy as zerocopy::TryFromBytes>::try_read_from_bytes(part_policy)
-        .map_err(|_| HsmError::InvalidArgument)?;
     if let Some(b) = prev_local_mk_backup {
         req.prev_local_mk_backup = b.to_vec();
     }
@@ -325,7 +317,9 @@ pub(crate) fn part_info(partition: &HsmPartition) -> HsmResult<HsmPartInfo> {
 ///
 /// Returns [`HsmError::InternalError`] if the certificate count is zero,
 /// and [`HsmError::CertChainChanged`] if the count or thumbprint changes
-/// between the pre- and post-fetch `GetCertChainInfo` reads.
+/// between the pre- and post-fetch `GetCertChainInfo` reads. This helper is
+/// only used for the production slot (slot 0); the regenerated TBOR slot-2
+/// PID certificate is served earlier in [`fetch_cert_chain_checked`].
 pub(super) fn fetch_cert_chain_checked_tbor(
     dev: &HsmDev,
     slot_id: u8,

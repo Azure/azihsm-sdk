@@ -36,7 +36,7 @@ fn sd_create_remote_backup_roundtrip() {
     let (masked, report) = masked_key_and_report(&session);
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
     let result = evidence
-        .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&masked, receiver, &policy))
+        .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&policy, &masked, receiver))
         .expect("create remote backup");
 
     // Remote backup: HPKE-Auth seal of BKS3, 161 B, non-zero.
@@ -76,12 +76,12 @@ fn sd_create_remote_backup_is_one_shot() {
     let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
 
     evidence
-        .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&masked, receiver, &policy))
+        .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&policy, &masked, receiver))
         .expect("first create remote backup");
 
     // A second create on the same (now initialized) partition must fail.
     let second = evidence
-        .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&masked, receiver, &policy));
+        .with_hsm_evidence(|receiver| session.sd_create_remote_backup(&policy, &masked, receiver));
     assert!(
         matches!(second, Err(HsmError::SdAlreadyInitialized)),
         "second create on an initialized partition must be rejected with \

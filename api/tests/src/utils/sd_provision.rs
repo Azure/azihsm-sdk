@@ -26,22 +26,15 @@ use azihsm_crypto::x509_builder::cert_builder::KeyUsage;
 use azihsm_crypto::x509_builder::cert_builder::LeafCertParams;
 use azihsm_crypto::x509_builder::cert_builder::RootCertParams;
 use azihsm_crypto::x509_builder::cert_builder::SN_LEN;
-use azihsm_crypto::x509_builder::intermediate_cert;
 use azihsm_crypto::x509_builder::leaf_cert;
 use azihsm_crypto::x509_builder::root_cert;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SATA_THUMBPRINT_LEN;
-use zerocopy::IntoBytes;
 
 use crate::utils::partition_ex_helpers::new_partition;
 
@@ -51,20 +44,23 @@ const NOT_BEFORE: &[u8; 15] = b"20250101000000Z";
 const NOT_AFTER: &[u8; 15] = b"20350101000000Z";
 const ROOT_CN: &str = "AZIHSM POTA Root CA";
 const ROOT_SN: &str = "POTAROOT1";
-const PTA_CN: &str = "AZIHSM PTA Intermediate CA";
-const PTA_SN: &str = "PTAINT001";
+/// Fixed PTA `commonName` prefix (mirrors the firmware `PTA_SUBJECT_CN`).
+const PTA_SUBJECT_CN_PREFIX: &str = "Azure Integrated HSM PTA";
+/// Domain-separation label for the PTAID digest (mirrors firmware `PTAID_LABEL`).
+const PTAID_LABEL: &[u8] = b"AZIHSM-PTAID-v1";
+/// PTAID digest bytes hex-encoded into the `commonName`.
+const PTAID_LEN: usize = 16;
+/// Length of the PTA single-`commonName(64)` Name SEQUENCE DER.
+const PTA_SUBJECT_DER_LEN: usize = 13 + 64;
+/// Fixed DER prefix of the single-`commonName(64)` Name SEQUENCE.
+const PTA_SUBJECT_DER_PREFIX: [u8; 13] = [
+    0x30, 0x4b, 0x31, 0x49, 0x30, 0x47, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x40,
+];
 const LEAF_CN: &str = "AZIHSM Evidence Leaf";
 const LEAF_SN: &str = "EVLEAF001";
 
-/// Byte offset of the SATA public-key **data** inside the `PartPolicy`
-/// image: `sata_pub_key` starts at 102 (`kind(2) ‖ len(2) ‖ data(96)`),
-/// so the raw `X ‖ Y` coordinates begin at 106.
-const OFF_SATA_PUB_KEY_DATA: usize = 106;
-
-/// Byte offsets of the backing-partition fields inside the `PartPolicy`
-/// image (mirror of `fw/core/ddi/tbor/types/src/policy.rs`).
-const OFF_BACKUP_PART_ID: usize = 302;
-const OFF_BACKUP_PART_PUB_KEY: usize = 318;
+/// Byte length of the backing-partition identifier carried in the
+/// `PartPolicy` (mirror of `fw/core/ddi/tbor/types/src/policy.rs`).
 const BACKUP_PART_ID_LEN: usize = 16;
 
 /// A fixed non-default CO PSK used to clear the default-PSK gate.
@@ -184,28 +180,64 @@ fn build_root(ca: &CaKey) -> Vec<u8> {
 
 /// Build the PTA intermediate CA certificate carrying the partition PTA
 /// key (`pta_pub_sec1`), signed by `issuer` (the POTA CA).
+///
+/// The subject is the deterministic single-`commonName(64)` PTA profile the
+/// firmware stamps (derived from `pta_pub_sec1`) and the SKID is
+/// SHA-1(SEC1 PTA key), so the issued PTA certificate satisfies the profile
+/// `part_final_ex` enforces before finalization.
 fn build_pta_intermediate(pta_pub_sec1: &[u8; SEC1_PUB_LEN], issuer: &CaKey) -> Vec<u8> {
     let params = IntermediateCertParams {
         public_key: pta_pub_sec1,
         serial_number: &serial(2),
         not_before: NOT_BEFORE,
         not_after: NOT_AFTER,
-        subject_cn: PTA_CN,
-        subject_sn: PTA_SN,
+        subject_cn: "",
+        subject_sn: "",
         issuer_cn: ROOT_CN,
         issuer_sn: ROOT_SN,
         subject_key_id: &sha1_ski(pta_pub_sec1),
         authority_key_id: &issuer.ski(),
         path_len: 0,
     };
-    let mut tbs = azihsm_crypto::x509_builder::intermediate_cert::TBS_TEMPLATE;
-    patch_tbs_intermediate(&mut tbs, &params);
-    let (r, s) = issuer.sign(&tbs);
+    let subject = pta_subject_der(pta_pub_sec1);
+    let mut tbs = [0u8; 1024];
+    let tbs_len =
+        cert_builder::intermediate_cert_tbs_with_subject_name(&params, &subject, &mut tbs)
+            .expect("PTA subject");
+    let (r, s) = issuer.sign(&tbs[..tbs_len]);
     let mut out = vec![0u8; 1024];
-    let len =
-        cert_builder::build_intermediate_cert(&params, &r, &s, &mut out).expect("PTA intermediate");
+    let len = cert_builder::assemble_cert(&tbs[..tbs_len], &r, &s, &mut out).expect("PTA cert");
     out.truncate(len);
     out
+}
+
+/// Derive the deterministic PTA subject Name DER from the SEC1 PTA public
+/// key, mirroring the firmware's PTAID derivation
+/// (`fw/core/lib/src/ddi/tbor/pta.rs`): the subject is a single
+/// `commonName(64)` RDN holding the fixed PTA name, a separating space, and
+/// the lowercase-hex PTAID (`SHA-384(PTAID_LABEL ‖ SEC1 key)[..16]`),
+/// space-padded.
+fn pta_subject_der(sec1_pub: &[u8; SEC1_PUB_LEN]) -> [u8; PTA_SUBJECT_DER_LEN] {
+    let mut input = Vec::with_capacity(PTAID_LABEL.len() + SEC1_PUB_LEN);
+    input.extend_from_slice(PTAID_LABEL);
+    input.extend_from_slice(sec1_pub);
+    let mut algo = HashAlgo::sha384();
+    let mut digest = [0u8; 48];
+    algo.hash(&input, Some(&mut digest)).expect("sha384");
+
+    let mut cn = [b' '; 64];
+    cn[..PTA_SUBJECT_CN_PREFIX.len()].copy_from_slice(PTA_SUBJECT_CN_PREFIX.as_bytes());
+    let hex = b"0123456789abcdef";
+    let base = PTA_SUBJECT_CN_PREFIX.len() + 1;
+    for (i, byte) in digest[..PTAID_LEN].iter().enumerate() {
+        cn[base + 2 * i] = hex[usize::from(byte >> 4)];
+        cn[base + 2 * i + 1] = hex[usize::from(byte & 0x0f)];
+    }
+
+    let mut der = [0u8; PTA_SUBJECT_DER_LEN];
+    der[..PTA_SUBJECT_DER_PREFIX.len()].copy_from_slice(&PTA_SUBJECT_DER_PREFIX);
+    der[PTA_SUBJECT_DER_PREFIX.len()..].copy_from_slice(&cn);
+    der
 }
 
 /// Build a POTA-anchored root -> PTA chain from the partition PTA key.
@@ -358,57 +390,27 @@ fn patch_tbs_root(tbs: &mut [u8], params: &RootCertParams<'_>) {
         .copy_from_slice(params.subject_key_id);
 }
 
-/// Patch an intermediate-cert TBS template with the variable field values.
-fn patch_tbs_intermediate(tbs: &mut [u8], params: &IntermediateCertParams<'_>) {
-    let s_cn = pad_cn(params.subject_cn);
-    let i_cn = pad_cn(params.issuer_cn);
-    let s_sn = pad_sn(params.subject_sn);
-    let i_sn = pad_sn(params.issuer_sn);
-    tbs[intermediate_cert::PUBLIC_KEY_OFFSET..intermediate_cert::PUBLIC_KEY_OFFSET + 97]
-        .copy_from_slice(params.public_key);
-    tbs[intermediate_cert::SERIAL_NUMBER_OFFSET..intermediate_cert::SERIAL_NUMBER_OFFSET + 20]
-        .copy_from_slice(params.serial_number);
-    tbs[intermediate_cert::NOT_BEFORE_OFFSET..intermediate_cert::NOT_BEFORE_OFFSET + 15]
-        .copy_from_slice(params.not_before);
-    tbs[intermediate_cert::NOT_AFTER_OFFSET..intermediate_cert::NOT_AFTER_OFFSET + 15]
-        .copy_from_slice(params.not_after);
-    tbs[intermediate_cert::ISSUER_CN_OFFSET..intermediate_cert::ISSUER_CN_OFFSET + CN_LEN]
-        .copy_from_slice(&i_cn);
-    tbs[intermediate_cert::SUBJECT_CN_OFFSET..intermediate_cert::SUBJECT_CN_OFFSET + CN_LEN]
-        .copy_from_slice(&s_cn);
-    tbs[intermediate_cert::ISSUER_SN_OFFSET..intermediate_cert::ISSUER_SN_OFFSET + SN_LEN]
-        .copy_from_slice(&i_sn);
-    tbs[intermediate_cert::SUBJECT_SN_OFFSET..intermediate_cert::SUBJECT_SN_OFFSET + SN_LEN]
-        .copy_from_slice(&s_sn);
-    tbs[intermediate_cert::SUBJECT_KEY_ID_OFFSET..intermediate_cert::SUBJECT_KEY_ID_OFFSET + 20]
-        .copy_from_slice(params.subject_key_id);
-    tbs[intermediate_cert::AUTHORITY_KEY_ID_OFFSET
-        ..intermediate_cert::AUTHORITY_KEY_ID_OFFSET + 20]
-        .copy_from_slice(params.authority_key_id);
-    tbs[intermediate_cert::PATH_LEN_OFFSET] = params.path_len;
-}
-
 /// Build a unified `PartPolicy` binding the real POTA public key, so
 /// `part_final_ex` can validate a chain anchored to it. SATA carries a
 /// filler key (not chain-validated in this flow).
 fn part_policy_with_pota(pota_raw: &[u8; RAW_PUB_LEN], allow_peer_cloning: bool) -> PartPolicy {
-    let mut sata = [0u8; POLICY_MAX_KEY_LEN];
+    let mut sata = [0u8; RAW_PUB_LEN];
     for (i, b) in sata.iter_mut().enumerate() {
         *b = (0x20u8.wrapping_add(i as u8)) | 0x80;
     }
-    PartPolicy {
-        version: PolicyVer { major: 1, minor: 0 },
-        pota_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, *pota_raw),
-        sata_pub_key: PolicyPubKey::new(PolicyKeyKind::Ecc384, RAW_PUB_LEN as u16, sata),
-        info: [0xAB; POLICY_INFO_LEN],
+    PartPolicyBuilder::new()
+        .version(1, 0)
+        .pota_key(PolicyKeyKind::Ecc384, pota_raw)
+        .sata_key(PolicyKeyKind::Ecc384, &sata)
+        .info(&[0xAB; POLICY_INFO_LEN])
         // `allow_peer_cloning` gates the peer commands
         // (`SdCreatePeerBackup` / `SdRestorePeerBackup`); it is inert for
         // the non-peer commands (`SdCreateRemoteBackup`,
         // `SdResealRemoteBackup`, `SdRestoreRemoteBackup`,
         // `SdRestoreLocalBackup`), which don't gate on it.
-        flags: PolicyFlags::new().with_allow_peer_cloning(allow_peer_cloning),
-        ..PartPolicy::zeroed()
-    }
+        .allow_peer_cloning(allow_peer_cloning)
+        .build()
+        .expect("policy fields fit")
 }
 
 /// Deterministic machine-seed fixture.
@@ -445,6 +447,16 @@ fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
 /// PSK, `part_init_ex`, build a POTA-anchored PTA chain from the CSR, then
 /// `part_final_ex`.
 pub(crate) fn finalized_co_session() -> HsmSession {
+    let (_part, _rev, session) = finalized_co_partition();
+    session
+}
+
+/// Provision a fresh partition's security domain like
+/// [`finalized_co_session`], but also return the owning `HsmPartition`
+/// handle (and its negotiated api-rev) so callers can exercise
+/// partition-scoped, out-of-session operations such as
+/// [`HsmPartition::cert_chain`] against the finalized partition.
+pub(crate) fn finalized_co_partition() -> (HsmPartition, HsmApiRev, HsmSession) {
     let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
@@ -472,11 +484,10 @@ pub(crate) fn finalized_co_session() -> HsmSession {
 
     let pota = CaKey::generate();
     let policy = part_policy_with_pota(&pota.raw_pub(), true);
-    let policy_bytes = policy.as_bytes();
     let init = session
         .part_init_ex(
+            &policy,
             &mach_seed(),
-            policy_bytes,
             &pota_thumbprint(),
             &sata_thumbprint(),
             None,
@@ -493,10 +504,10 @@ pub(crate) fn finalized_co_session() -> HsmSession {
         },
     ];
     session
-        .part_final_ex(policy_bytes, &certs, None)
+        .part_final_ex(&policy, &certs, None)
         .expect("part_final_ex");
 
-    session
+    (part, rev, session)
 }
 
 /// Build a policy naming **this** partition as the backing partition
@@ -512,26 +523,20 @@ fn backing_part_policy(
     sata_pub: &[u8; RAW_PUB_LEN],
     pota_pub: &[u8; RAW_PUB_LEN],
     allow_peer_cloning: bool,
-) -> [u8; PART_POLICY_LEN] {
+) -> PartPolicy {
     // Anchor the policy to a real POTA key so `part_final_ex` can validate
-    // a PTA certificate chain against it.
-    let policy = part_policy_with_pota(pota_pub, allow_peer_cloning);
-    let mut bytes = [0u8; PART_POLICY_LEN];
-    bytes.copy_from_slice(policy.as_bytes());
-
-    // Overwrite the placeholder SATA key with the anchor's real P-384
-    // coordinates (kind / len already Ecc384 / 96).
-    bytes[OFF_SATA_PUB_KEY_DATA..OFF_SATA_PUB_KEY_DATA + RAW_PUB_LEN].copy_from_slice(sata_pub);
-
-    bytes[OFF_BACKUP_PART_ID..OFF_BACKUP_PART_ID + BACKUP_PART_ID_LEN].copy_from_slice(pid);
-
-    // backup_part_pub_key = { kind: Ecc384 (LE), len: 96 (LE), data }.
-    let off = OFF_BACKUP_PART_PUB_KEY;
-    bytes[off..off + 2].copy_from_slice(&PolicyKeyKind::Ecc384.0.to_le_bytes());
-    bytes[off + 2..off + 4].copy_from_slice(&(POLICY_MAX_KEY_LEN as u16).to_le_bytes());
-    bytes[off + 4..off + 4 + POLICY_MAX_KEY_LEN].copy_from_slice(pid_pub);
-
-    bytes
+    // a PTA certificate chain against it; bind the real SATA anchor and
+    // name this partition as the backing partition.
+    PartPolicyBuilder::new()
+        .version(1, 0)
+        .pota_key(PolicyKeyKind::Ecc384, pota_pub)
+        .sata_key(PolicyKeyKind::Ecc384, sata_pub)
+        .backup_part_id(pid)
+        .backup_part_pub_key(PolicyKeyKind::Ecc384, pid_pub)
+        .info(&[0xAB; POLICY_INFO_LEN])
+        .allow_peer_cloning(allow_peer_cloning)
+        .build()
+        .expect("policy fields fit")
 }
 
 /// Owns the DER bytes for the receiver's three evidence chains and the
@@ -625,20 +630,15 @@ pub(crate) fn build_receiver_evidence(
 /// `prev_local_mk` restores `PartLocalMK` during finalize — the reboot
 /// recovery step that lets a captured masked sealing key unmask.
 /// `allow_peer_cloning` sets that flag in the built policy (ignored when
-/// `policy_in` is supplied). Returns the CO session, the policy image, the
+/// `policy_in` is supplied). Returns the CO session, the typed policy, the
 /// PID public key, and the `local_mk_backup` that finalize produced.
 pub(crate) fn provision_backing_ex(
     sata_key: &CaKey,
     pota: &CaKey,
-    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    policy_in: Option<&PartPolicy>,
     prev_local_mk: Option<&[u8]>,
     allow_peer_cloning: bool,
-) -> (
-    HsmSession,
-    [u8; PART_POLICY_LEN],
-    [u8; RAW_PUB_LEN],
-    Vec<u8>,
-) {
+) -> (HsmSession, PartPolicy, [u8; RAW_PUB_LEN], Vec<u8>) {
     let (part, rev) = new_partition();
 
     // Bootstrap the CO session under the default PSK and rotate it; the
@@ -680,20 +680,21 @@ pub(crate) fn provision_backing_ex(
     let mut pid_pub = [0u8; RAW_PUB_LEN];
     pid_pub.copy_from_slice(&pid_pub_vec);
 
-    let policy = policy_in.unwrap_or_else(|| {
-        backing_part_policy(
+    let policy = match policy_in {
+        Some(policy) => policy.clone(),
+        None => backing_part_policy(
             &pid,
             &pid_pub_vec,
             &sata_key.raw_pub(),
             &pota.raw_pub(),
             allow_peer_cloning,
-        )
-    });
+        ),
+    };
 
     let init = session
         .part_init_ex(
-            &mach_seed(),
             &policy,
+            &mach_seed(),
             &pota_thumbprint(),
             &sata_thumbprint(),
             None,
@@ -722,26 +723,21 @@ pub(crate) fn provision_backing_ex(
 pub(crate) fn provision_backing(
     sata_key: &CaKey,
     pota: &CaKey,
-    policy_in: Option<[u8; PART_POLICY_LEN]>,
+    policy_in: Option<&PartPolicy>,
     prev_local_mk: Option<&[u8]>,
-) -> (
-    HsmSession,
-    [u8; PART_POLICY_LEN],
-    [u8; RAW_PUB_LEN],
-    Vec<u8>,
-) {
+) -> (HsmSession, PartPolicy, [u8; RAW_PUB_LEN], Vec<u8>) {
     provision_backing_ex(sata_key, pota, policy_in, prev_local_mk, true)
 }
 
 /// Provision a fresh partition with a **backing-partition policy** — one
 /// that names this partition (via `PartInfo`) as the backup backing
 /// partition and anchors the security domain to `sata_key` — and return
-/// the live CO session, the exact policy image (needed verbatim by
+/// the live CO session, the typed policy (needed by
 /// `sd_create_remote_backup`), and the partition-identity public key that
 /// every evidence leaf certificate must carry.
 pub(crate) fn finalized_backing_session(
     sata_key: &CaKey,
-) -> (HsmSession, [u8; PART_POLICY_LEN], [u8; RAW_PUB_LEN]) {
+) -> (HsmSession, PartPolicy, [u8; RAW_PUB_LEN]) {
     let pota = CaKey::generate();
     let (session, policy, pid_pub, _local_mk) = provision_backing(sata_key, &pota, None, None);
     (session, policy, pid_pub)

@@ -52,9 +52,9 @@ bool create_backup_capture(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
+        &policy_buf,
         &masked_buf,
         &receiver,
-        &policy_buf,
     };
 
     std::vector<uint8_t> remote;
@@ -252,7 +252,7 @@ TEST_F(azihsm_sd_restore_backup_test, restore_backup_roundtrip)
                                   static_cast<uint32_t>(remote_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_remote_backup_params params{
-            &masked_buf, &evidence.get(), &policy_buf, &remote_buf, &prev_mk_buf,
+            &policy_buf, &masked_buf, &evidence.get(), &remote_buf, &prev_mk_buf,
         };
 
         std::vector<uint8_t> pok_local;

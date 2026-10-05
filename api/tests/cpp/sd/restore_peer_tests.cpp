@@ -53,9 +53,9 @@ bool create_sd_capture(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
+        &policy_buf,
         &masked_buf,
         &receiver,
-        &policy_buf,
     };
 
     std::vector<uint8_t> remote;
@@ -266,9 +266,9 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
         azihsm_buffer policy_buf{ dev1.policy.data(), static_cast<uint32_t>(dev1.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
         azihsm_sd_create_peer_backup_params create_params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
             &local_buf,
         };
         std::vector<uint8_t> peer_backup;
@@ -301,7 +301,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_peer_backup_params restore_params{
-            &r_masked_buf, &evidence.get(), &r_policy_buf, &peer_buf, &prev_mk_buf,
+            &r_policy_buf, &r_masked_buf, &evidence.get(), &peer_buf, &prev_mk_buf,
         };
 
         std::vector<uint8_t> pok_local;
@@ -389,9 +389,9 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
         azihsm_sd_create_peer_backup_params create_params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
             &local_buf,
         };
         std::vector<uint8_t> peer_backup;
@@ -404,7 +404,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_peer_backup_params restore_params{
-            &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
+            &policy_buf, &masked_buf, &evidence.get(), &peer_buf, &prev_mk_buf,
         };
         std::vector<uint8_t> pok_local;
         std::vector<uint8_t> sd_mk;
@@ -450,7 +450,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_rejects_without_p
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_peer_backup_params restore_params{
-            &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
+            &policy_buf, &masked_buf, &evidence.get(), &peer_buf, &prev_mk_buf,
         };
         std::vector<uint8_t> pok_local;
         std::vector<uint8_t> sd_mk;

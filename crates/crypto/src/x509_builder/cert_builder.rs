@@ -299,6 +299,13 @@ pub fn build_intermediate_cert(
     sig_s: &[u8; 48],
     out: &mut [u8],
 ) -> Option<usize> {
+    let tbs = intermediate_tbs(params)?;
+    assemble_cert(&tbs, sig_r, sig_s, out)
+}
+
+fn intermediate_tbs(
+    params: &IntermediateCertParams<'_>,
+) -> Option<[u8; super::intermediate_cert::TBS_TEMPLATE.len()]> {
     use super::intermediate_cert::*;
 
     validate_serial(params.serial_number)?;
@@ -324,7 +331,25 @@ pub fn build_intermediate_cert(
     patch(&mut tbs, AUTHORITY_KEY_ID_OFFSET, params.authority_key_id);
     tbs[PATH_LEN_OFFSET] = params.path_len;
 
-    assemble_cert(&tbs, sig_r, sig_s, out)
+    Some(tbs)
+}
+
+/// Build an intermediate TBS preserving a validated CSR's complete DER Name.
+/// The caller must sign exactly the returned bytes.
+pub fn intermediate_cert_tbs_with_subject_name(
+    params: &IntermediateCertParams<'_>,
+    subject_name: &[u8],
+    out: &mut [u8],
+) -> Option<usize> {
+    use super::intermediate_cert::*;
+    let tbs = intermediate_tbs(params)?;
+    replace_tbs_name(
+        &tbs,
+        SUBJECT_CN_OFFSET - 13,
+        PUBLIC_KEY_OFFSET - 23,
+        subject_name,
+        out,
+    )
 }
 
 /// Build a Leaf (end-entity) certificate from the [`leaf_cert`](super::leaf_cert) template.
@@ -369,6 +394,28 @@ pub fn build_leaf_cert(
     assemble_cert(&tbs, sig_r, sig_s, out)
 }
 
+fn replace_tbs_name(
+    tbs: &[u8],
+    start: usize,
+    end: usize,
+    name: &[u8],
+    out: &mut [u8],
+) -> Option<usize> {
+    let body_len = tbs.len() - 4 - (end - start) + name.len();
+    let header_len = 1 + der_helpers::der_length_size(body_len);
+    let len = header_len + body_len;
+    if name.is_empty() || len > out.len() {
+        return None;
+    }
+    out[0] = 0x30;
+    let mut pos = 1 + der_helpers::encode_der_length(&mut out[1..], body_len)?;
+    for bytes in [&tbs[4..start], name, &tbs[end..]] {
+        out[pos..pos + bytes.len()].copy_from_slice(bytes);
+        pos += bytes.len();
+    }
+    Some(pos)
+}
+
 /// Validate that a serial number is valid for DER encoding.
 /// First byte must have bit 7 = 0 (positive integer).
 fn validate_serial(serial: &[u8; 20]) -> Option<()> {
@@ -390,7 +437,12 @@ fn patch(tbs: &mut [u8], offset: usize, value: &[u8]) {
 ///     signatureAlgorithm   AlgorithmIdentifier,
 ///     signatureValue       BIT STRING
 /// }
-fn assemble_cert(tbs: &[u8], sig_r: &[u8; 48], sig_s: &[u8; 48], out: &mut [u8]) -> Option<usize> {
+pub fn assemble_cert(
+    tbs: &[u8],
+    sig_r: &[u8; 48],
+    sig_s: &[u8; 48],
+    out: &mut [u8],
+) -> Option<usize> {
     // Encode signature as DER BIT STRING
     let mut sig_buf = [0u8; MAX_ECDSA384_SIG_DER_LEN];
     let sig_len = der_helpers::encode_ecdsa_signature(&mut sig_buf, sig_r, sig_s)?;
