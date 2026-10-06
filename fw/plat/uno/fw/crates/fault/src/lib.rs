@@ -38,22 +38,35 @@
 //!
 //! # Scope
 //!
-//! This is deliberately a CPU-fault *reporter*. Cross-core crash
-//! notification, persistent crash dumps, and peripheral-error ISRs (present
-//! in the mcr-hsm `exception-handlers` crate) depend on infrastructure the
-//! Uno port does not yet have (Tcon mailbox, crashdump store) and are out of
-//! scope here.
+//! HardFault and Panic are full crash-recovery participants: besides
+//! reporting the fault, they capture a persistent crash dump (into the
+//! reserved HSM DTCM slot via [`azihsm_fw_uno_crashdump`]) and notify the
+//! peer core over TCON wakeup1. This crate also installs the **`tcon_wakeup1`
+//! receiver** — a real NVIC-vectored assembly trampoline (`drivers/pac`
+//! `__INTERRUPTS[89]`) that captures *this* core's dump when a peer core
+//! signals a crash. The remaining exception handlers (`MemManagement` and the
+//! peripheral-error ISRs present in the mcr-hsm `exception-handlers` crate)
+//! are wired in later units of the crash-recovery port.
 
 #![no_std]
 #![allow(unsafe_code)]
 
 mod decode;
 
+use core::arch::global_asm;
+
 use azihsm_fw_hsm_core_tracing::error;
+use azihsm_fw_uno_crashdump::crash_format::CpuRegisterContext;
+use azihsm_fw_uno_crashdump::crashdump_save;
+use azihsm_fw_uno_crashdump::crashdump_save_fmt;
+use azihsm_fw_uno_crashdump::failure_code::FailureCode;
+use azihsm_fw_uno_drivers_nvic::Nvic;
+use azihsm_fw_uno_drivers_tcon::Tcon;
 // `HsmError` is referenced only inside `error!`, which compiles out when no
 // trace level is enabled (production); the import is then unused.
 #[allow(unused_imports)]
 use azihsm_fw_uno_error::HsmError;
+use azihsm_fw_uno_pac::Interrupt;
 use azihsm_fw_uno_reg_cortex_m::scb::regs::ScbRegs;
 use azihsm_fw_uno_reg_cortex_m::scb::CFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::HFSR;
@@ -90,17 +103,48 @@ fn halt() -> ! {
 
 /// Firmware panic handler.
 ///
-/// Emits the panic location and message (via [`core::panic::PanicInfo`]'s
-/// `Display`, which already includes `file:line:col` plus the formatted
-/// message) through the tracing facade, then halts.
-//
-// `info` is consumed only by `error!`, which compiles out when no trace
-// level is enabled (production builds); allow that case to stay warning-free.
-#[allow(unused_variables)]
+/// Reports the panic through the tracing facade, notifies the peer core of
+/// the crash over TCON wakeup1, and captures a persistent crash dump before
+/// halting.
+///
+/// The crash-dump register-context fields are overloaded to carry the panic
+/// site to the shared SP parser, exactly as the reference `mcr-hsm` handler
+/// does: `lr` = pointer to the file name, `pc` = line number, and `sp` =
+/// pointer to the message (only when the message is a plain `&str`). All are
+/// offsets within the CP `.text` image.
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
+    // Disable our own wakeup1 receiver before firing it at the peer core, so
+    // the notification we are about to raise cannot recurse back into this
+    // already-crashing core.
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+
     error!("panic", HsmError::Panic, "#### PANIC ####");
     error!("panic", HsmError::Panic, "{}", info);
+
+    // Notify the peer core of the crash.
+    Tcon::fire_wakeup_timer1();
+
+    // Overload the register context to describe the panic site (see fn docs).
+    let mut context = CpuRegisterContext::default();
+    if let Some(location) = info.location() {
+        context.lr = location.file().as_ptr() as u32;
+        context.pc = location.line();
+    }
+    if let Some(message) = info.message().as_str() {
+        context.sp = message.as_ptr() as u32;
+    }
+
+    // Capture the panic text directly into the reserved crash-dump tail.
+    // `crashdump_save_fmt` renders `format_args!` through a bounded sink (no
+    // allocator — uno is pure `no_std`), so both literal *and formatted*
+    // panics are recorded, truncated to the region's tail capacity. The
+    // file/line/message pointers packed into the register context above remain
+    // as a complement. (Divergence from reference decision #5, which appended
+    // `info.message().to_string()` via the reference's heap allocator that uno
+    // lacks.)
+    crashdump_save_fmt(&context, FailureCode::Panic, format_args!("{info}"));
+
     halt();
 }
 
@@ -111,6 +155,10 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
 /// [`ExceptionFrame`] (R0-R3, R12, LR, PC, xPSR), and `MSP`. A stack
 /// overflow (`HFSR.FORCED` + `CFSR.MSTKERR`/`STKERR`) is reported specially
 /// because exception stacking failed and the frame is unreliable.
+///
+/// After reporting, it notifies the peer core over TCON wakeup1 and captures
+/// a persistent crash dump (mirroring the reference `mcr-hsm` handler) before
+/// halting.
 ///
 /// # Safety
 ///
@@ -193,6 +241,109 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
             stack_dump(msp);
         }
     }
+
+    // ---- Crash capture + cross-core notify -------------------------------
+    // Mirrors the reference `mcr-hsm` `exception_handlers::HardFault`.
+    // Classification uses the reference's FORCED+MSTKERR predicate so the
+    // shared SP parser records the same `failure_code`; note the diagnostic
+    // logging above intentionally treats the broader FORCED+(MSTKERR|STKERR)
+    // as an unreliable-frame overflow for operator visibility.
+    let failure_code = if forced && mstkerr {
+        FailureCode::MemoryFault
+    } else {
+        FailureCode::HardFault
+    };
+
+    // Disable our own wakeup1 receiver before firing it at the peer core, so
+    // the notification cannot recurse back into this already-crashing core.
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+    Tcon::fire_wakeup_timer1();
+
+    let context = if forced && mstkerr {
+        // Exception stacking hit the MPU guard: the pushed frame is garbage,
+        // so record MSP (the approximate stack location at fault) instead.
+        CpuRegisterContext {
+            sp: msp,
+            ..Default::default()
+        }
+    } else {
+        // The `sp` inside the frame is post-stacking; the real SP at the fault
+        // is the frame address plus the frame size. uno targets soft-float
+        // (`thumbv7em-none-eabi`, FPU disabled), so the hardware always pushes
+        // the basic 32-byte frame — `ef + size_of::<ExceptionFrame>()` is exact.
+        let mut ctx = CpuRegisterContext::from_exception_frame(ef);
+        ctx.sp = ef as *const _ as u32 + core::mem::size_of::<ExceptionFrame>() as u32;
+        ctx
+    };
+    crashdump_save(&context, failure_code, None);
+
+    halt();
+}
+
+// tcon wakeup1 receiver ISR.
+//
+// This is the cross-core crash *receiver*: a peer core that faults arms TCON
+// wakeup1 (see the `fire_wakeup_timer1` calls in the panic / HardFault
+// handlers above), which raises IRQ89 on this core. The vector has to preempt
+// a core that may be spinning or halted, so it is a real NVIC-vectored entry
+// (`drivers/pac` `__INTERRUPTS[89]`) rather than a cooperatively-polled
+// `WAKE_TABLE` driver.
+//
+// Implemented as an assembly trampoline (mirroring the reference `mcr-hsm`
+// `tcon_wakeup1_irq`) so it can capture the *interrupted* code's stack frame:
+// EXC_RETURN bit 2 selects which stack (MSP/PSP) was active at preemption, and
+// that stack pointer — the base of the hardware-stacked exception frame — is
+// passed to `collect_crash_dump_tcon_irq` in `r0`.
+global_asm!(
+    ".global TCON_WAKEUP1
+     .type TCON_WAKEUP1,%function
+     .thumb_func
+     .cfi_startproc
+     TCON_WAKEUP1:",
+    "mov r0, lr
+     movs r1, #4
+     tst r0, r1
+     bne 0f
+     mrs r0, MSP
+     b collect_crash_dump_tcon_irq
+     0:
+     mrs r0, PSP
+     b collect_crash_dump_tcon_irq",
+    ".cfi_endproc
+     .size TCON_WAKEUP1, . - TCON_WAKEUP1",
+);
+
+/// Collect a crash dump on receipt of a peer core's TCON wakeup1
+/// notification, then halt.
+///
+/// Tail-called from the `TCON_WAKEUP1` assembly trampoline with `ef` pointing
+/// at the exception frame stacked on whichever stack (MSP/PSP) was active when
+/// the notification preempted this core. Disarms the wakeup timer and the IRQ
+/// (so the notification cannot re-fire), records the interrupted context under
+/// [`FailureCode::OtherCore`], and halts.
+///
+/// # ABI
+///
+/// `#[no_mangle]` + AAPCS: the single `&ExceptionFrame` argument arrives in
+/// `r0`, matching the `b collect_crash_dump_tcon_irq` tail-call from the
+/// trampoline. Must never be called from Rust directly.
+#[allow(dead_code)]
+#[no_mangle]
+fn collect_crash_dump_tcon_irq(ef: &ExceptionFrame) -> ! {
+    // Disarm the wakeup timer and our own IRQ line so the peer's notification
+    // cannot re-fire while (or after) we capture the dump.
+    Tcon::disable_wakeup_timer1();
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+    Nvic::unpend(Interrupt::TCON_WAKEUP1);
+
+    // The `sp` inside the stacked frame is post-stacking; the real SP at
+    // preemption is the frame address plus the frame size. uno targets
+    // soft-float (`thumbv7em-none-eabi`, FPU disabled), so the hardware always
+    // pushes the basic 32-byte frame — `ef + size_of::<ExceptionFrame>()` is
+    // exact.
+    let mut context = CpuRegisterContext::from_exception_frame(ef);
+    context.sp = ef as *const _ as u32 + core::mem::size_of::<ExceptionFrame>() as u32;
+    crashdump_save(&context, FailureCode::OtherCore, None);
 
     halt();
 }

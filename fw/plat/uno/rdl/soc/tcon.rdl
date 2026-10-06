@@ -1,0 +1,103 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// TCON — Timer Controller
+//
+// Provides the 63-bit global timestamp counter (TSC) and two wakeup
+// timers whose expiry raises `tcon_wakeup2_intr_o[0]` (wakeup0) and
+// `tcon_wakeup2_intr_o[1]` (wakeup1) on the NVIC.
+//
+// uno models ONLY the wakeup1 control path used for cross-core crash
+// notification: on a fatal fault the faulting core arms wakeup1 as a
+// one-shot level interrupt so the peer core takes `tcon_wakeup1_irq`
+// (NVIC 89) and collects its own crash dump. The TSC (timer_lo/hi) and
+// wakeup0 (periodic system tick in the reference) are intentionally NOT
+// modeled — uno keeps time via SysTick / Embassy.
+//
+// Base address: 0xB000_5000  (block window 0x1000; matches reference
+//               `mcr-registers` TCON block, immediately below INTC).
+//
+// Internal layout (reference offsets):
+//   TIMER_LO      @ 0x00  (RO — TSC low,  not modeled)
+//   TIMER_HI      @ 0x04  (RO — TSC high, not modeled)
+//   WAKEUP_CTRL   @ 0x10
+//   WAKEUP0_CNT   @ 0x14  (not modeled)
+//   WAKEUP1_CNT   @ 0x18
+//
+// Firmware flow (crash notify — mirrors reference `fire_wakeup_timer1`):
+//   WAKEUP_CTRL.WKINTR_LEVEL_EN[1] = 1   // wakeup1 = level output
+//   WAKEUP_CTRL.WKINTR_RPT_EN[1]   = 0   // wakeup1 = one-shot
+//   WAKEUP1_CNT                    = 1   // fire on next tick
+//   WAKEUP_CTRL.WAKEUP_ENABLE[1]   = 1   // enable wakeup1
+
+
+// ── WAKEUP_CTRL — enable / interrupt-shape control for both wakeup timers ──
+
+reg tcon_wakeup_ctrl_t {                                    // TCON: wakeup_ctrl
+    desc = "Control register for the two wakeup counters. Each field is
+            2 bits — bit [0] selects wakeup0, bit [1] selects wakeup1 —
+            so writes must preserve the unrelated timer's bit.";
+
+    field {
+        desc = "Enable the wakeup counters. [0] enables wakeup0, [1]
+                enables wakeup1. Setting a bit starts that counter
+                counting down from its reload value.";
+    } WAKEUP_ENABLE[1:0] = 0x0;                         // TCON: wakeup_enable
+
+    field { sw = r; } RSVD_0[7:2] = 0x0;
+
+    field {
+        desc = "Interrupt waveform select. 1'b0 = pulse (one 62.5 MHz
+                cycle), 1'b1 = level output held until cleared. [8] for
+                wakeup0, [9] for wakeup1.";
+    } WKINTR_LEVEL_EN[9:8] = 0x0;                       // TCON: wkintr_level_en
+
+    field { sw = r; } RSVD_1[15:10] = 0x0;
+
+    field {
+        desc = "Periodic-repeat enable. 1'b1 = the interrupt re-arms
+                periodically, 1'b0 = one-shot. [16] for wakeup0, [17] for
+                wakeup1.";
+    } WKINTR_RPT_EN[17:16] = 0x0;                       // TCON: wkintr_rpt_en
+
+    field { sw = r; } RSVD_2[31:18] = 0x0;
+};
+
+
+// ── WAKEUP1_CNT — wakeup1 countdown reload value ──
+
+reg tcon_wakeup1_cnt_t {                                    // TCON: wakeup1_cnt
+    desc = "Reload / countdown value for the wakeup1 timer. Writing 1
+            makes wakeup1 expire on the next tick once WAKEUP_ENABLE[1]
+            is set — used to synchronously fire the cross-core crash
+            notification interrupt.";
+
+    field {
+        desc = "wakeup1 countdown value.";
+    } VALUE[31:0] = 0x0;                                // TCON: wakeup1_cnt
+};
+
+
+// ── Top-level Address Map ──
+
+addrmap tcon {
+    name = "Timer Controller";
+    desc = "Global timestamp counter + two wakeup timers. uno models only
+            the wakeup1 control path (WAKEUP_CTRL + WAKEUP1_CNT) used to
+            raise `tcon_wakeup1_irq` (NVIC 89) for cross-core crash
+            notification. TSC and wakeup0 are not modeled.
+
+            Base address: 0xB000_5000.
+
+            Driver uses:
+              WAKEUP_CTRL.WKINTR_LEVEL_EN — wakeup1 level output
+              WAKEUP_CTRL.WKINTR_RPT_EN   — wakeup1 one-shot
+              WAKEUP_CTRL.WAKEUP_ENABLE   — arm/disarm wakeup1
+              WAKEUP1_CNT                 — fire count";
+
+    default hw = na;
+    default sw = rw;
+
+    tcon_wakeup_ctrl_t  WAKEUP_CTRL @ 0x10;
+    tcon_wakeup1_cnt_t  WAKEUP1_CNT @ 0x18;
+};

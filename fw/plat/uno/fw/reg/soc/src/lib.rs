@@ -39,6 +39,7 @@ pub mod part_store_t;
 pub mod psram;
 pub mod rng;
 pub mod sha;
+pub mod tcon;
 pub mod trace_mailbox;
 pub mod uart;
 pub mod upka;

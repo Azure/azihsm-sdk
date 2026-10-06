@@ -352,6 +352,25 @@ impl PartStore {
             Partition(idx).reset();
         }
     }
+
+    /// Re-arms Gate 1 (`unwrapping_key_required`) for every partition that
+    /// still owns table resources, after a warm / fw-update reboot.
+    ///
+    /// The GSRAM-resident store survives a warm reset, so each slot's
+    /// `res_mask` is already correct and no wipe is performed. But the SP
+    /// consumes and clears Gate 1 on every boot, and no `SetResource` IPC is
+    /// replayed on a warm boot to re-assert it — so wherever a partition's
+    /// resource mask is non-zero we re-arm `unwrapping_key_required`, prompting
+    /// the SP to re-stage that partition's RSA unwrapping key. Mirrors the
+    /// reference `PartStateImpl::restore_res_mask`.
+    pub fn rearm_unwrapping_key_required() {
+        for idx in 0..NUM_PARTITIONS {
+            let part = Partition(idx);
+            if part.res_mask() != 0 {
+                part.set_unwrapping_key_required(true);
+            }
+        }
+    }
 }
 
 impl Partition {

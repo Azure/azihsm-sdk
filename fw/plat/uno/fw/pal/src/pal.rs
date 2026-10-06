@@ -56,7 +56,9 @@ use azihsm_fw_uno_drivers_oic::ChannelConfig as OicChannelConfig;
 use azihsm_fw_uno_drivers_oic::OicDriver;
 use azihsm_fw_uno_drivers_rng::RngDriver;
 use azihsm_fw_uno_drivers_sha::ShaDriver;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_drivers_systick as systick_driver;
+use azihsm_fw_uno_drivers_tcon::Tcon;
 use azihsm_fw_uno_drivers_upka::UpkaDriver;
 use azihsm_fw_uno_pac::Interrupt;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_OFFSET;
@@ -546,6 +548,14 @@ impl UnoHsmPal {
         self.boot_phase.set(BootPhase::Running);
         boot_status::set(BootStatus::Run);
 
+        // Enable the TCON wakeup1 receiver now that the Admin bootstrap
+        // handshake is complete. This IRQ is the cross-core crash-notification
+        // trigger: a faulting peer core arms it, and the NVIC-vectored
+        // trampoline in `azihsm_fw_uno_fault` then collects this core's dump.
+        // Enabling it earlier risks a wakeup during partial init.
+        Nvic::unpend(Interrupt::TCON_WAKEUP1);
+        Nvic::enable(Interrupt::TCON_WAKEUP1);
+
         #[cfg(feature = "semihosting")]
         azihsm_fw_uno_drivers_semihosting::sys_ready();
 
@@ -830,7 +840,24 @@ impl HsmPal for UnoHsmPal {
             ((PSRAM_BASE + HSM_TO_FP_IPC_RX_PI_OFFSET) as *mut u32).write_volatile(0);
             ((PSRAM_BASE + HSM_TO_FP_IPC_RX_CI_OFFSET) as *mut u32).write_volatile(0);
         }
-        azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+
+        // Ensure the cross-core crash-notify wakeup timer starts disarmed. It
+        // is (re)enabled only after the Admin bootstrap handshake completes
+        // (see `on_boot_complete`).
+        Tcon::disable_wakeup_timer1();
+        // Recovery boot: only a cold (power-on) boot wipes the partition
+        // store. On a warm / fw-update reset the GSRAM-resident store survived,
+        // so preserve every partition's persisted state (res_mask, keys, creds,
+        // sessions) and only re-arm Gate 1. Mirrors the reference `HsmEnv::new`
+        // constructor selection on `SocInfo::reset_type` (`env.rs`).
+        match azihsm_fw_uno_drivers_soc::reset_type() {
+            SocResetType::Por => {
+                azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+            }
+            SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
+                azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+            }
+        }
         boot_status::set(BootStatus::Done);
     }
 

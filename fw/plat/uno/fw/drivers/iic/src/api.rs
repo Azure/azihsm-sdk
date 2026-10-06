@@ -6,6 +6,7 @@ use core::task::Poll;
 
 use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_ref::StaticRef;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_reg_soc::iic::regs::IicRegs;
 use azihsm_fw_uno_reg_soc::iic::IIC_BASE;
 use azihsm_fw_uno_reg_soc::iic::*;
@@ -159,11 +160,19 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
 
         // ── Step 1: Pre-fill ISQ with buffer addresses ──────────────
-        for i in 0..DEPTH {
-            let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
-            let entry = unsafe { &mut *self.isq_ring.add(i) };
-            entry.addr_lo = buf_addr;
-            entry.addr_hi = 0;
+        // On an fw-update (impactless) warm reset the inbound free list is
+        // left intact so the hardware's in-flight receive buffers survive the
+        // reset; repopulating it would clobber entries the UCD still owns.
+        // Every other reset type (POR / plain warm reset) prefills as normal.
+        // Mirrors the reference `handle_ucd_query` rx-free-list gating
+        // (`env.rs`: `if reset_type() != FwUpdateWarmReset`).
+        if azihsm_fw_uno_drivers_soc::reset_type() != SocResetType::FwUpdateWarmReset {
+            for i in 0..DEPTH {
+                let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
+                let entry = unsafe { &mut *self.isq_ring.add(i) };
+                entry.addr_lo = buf_addr;
+                entry.addr_hi = 0;
+            }
         }
 
         // ── Step 2: Reset RX queue shadow PI ───────────────────────

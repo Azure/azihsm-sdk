@@ -118,6 +118,15 @@ pub mod interrupt {
         /// IPC interrupt controller (IRQ129, ISPR4 bit 1).
         #[allow(non_camel_case_types)]
         INTC_IPC = 129,
+
+        /// TCON wakeup timer 1 (IRQ89, `tcon_wakeup2_intr_o[1]`). Raised on
+        /// a peer core to deliver a cross-core crash notification: the
+        /// faulting core arms wakeup1 (see `drivers/tcon`) and this vector
+        /// preempts the notified core so it can collect its own crash dump.
+        /// The vector-table slot (`__INTERRUPTS[89]`) targets the assembly
+        /// trampoline defined in `azihsm_fw_uno_fault`.
+        #[allow(non_camel_case_types)]
+        TCON_WAKEUP1 = 89,
     }
 
     unsafe impl cortex_m::interrupt::InterruptNumber for Interrupt {
@@ -141,6 +150,7 @@ extern "C" {
     fn GDMA_CQ();
     fn AES_DONE();
     fn SHA_DONE();
+    fn TCON_WAKEUP1();
 }
 
 /// Interrupt vector table — indexed by IRQ number.
@@ -157,6 +167,9 @@ pub static __INTERRUPTS: [Option<unsafe extern "C" fn()>; 224] = {
     table[66] = Some(GDMA_CQ);
     table[103] = Some(IIC_ICQ);
     table[110] = Some(OIC_OCQ);
+    // 89 = TCON_WAKEUP1 — cross-core crash-notify receiver (asm trampoline in
+    // `azihsm_fw_uno_fault`); NVIC-vectored so it preempts a spinning/halted core.
+    table[89] = Some(TCON_WAKEUP1);
     // 129 = INTC_IPC — polled, no ISR
     table
 };
