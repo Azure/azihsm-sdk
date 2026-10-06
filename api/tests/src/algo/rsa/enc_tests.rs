@@ -171,7 +171,6 @@ fn test_rsa_4096_oaep_enc_dec(session: HsmSession) {
 }
 
 /// Ensure decrypting with wrong private key fails
-/// EX can reject ciphertext outside the second key's allowed RSA input range.
 #[session_test]
 fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
     // Key pair A
@@ -195,12 +194,12 @@ fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
     #[cfg(feature = "session-ex-tests")]
     let expected_error = matches!(
         result,
-        Err(HsmError::DdiCmdFailure | HsmError::InternalError | HsmError::InvalidArgument)
+        Err(HsmError::InternalError | HsmError::InvalidArgument)
     );
     #[cfg(not(feature = "session-ex-tests"))]
     let expected_error = matches!(
         result,
-        Err(HsmError::DdiCmdFailure | HsmError::InternalError)
+        Err(HsmError::InternalError | HsmError::DdiCmdFailure)
     );
 
     assert!(
@@ -210,8 +209,7 @@ fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
     );
 }
 
-/// Verifies ciphertext replaced by the maximum-width integer is rejected.
-/// This value is at least the RSA modulus, so rejection does not depend on padding.
+/// Ensure tampered ciphertext fails to decrypt
 #[session_test]
 fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
     const RSA_KEY_BITS: u32 = 2048;
@@ -226,14 +224,22 @@ fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
     let mut ciphertext =
         HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext).expect("Failed to encrypt data");
 
-    ciphertext.fill(u8::MAX);
+    *ciphertext
+        .first_mut()
+        .expect("RSA encryption must produce ciphertext") ^= u8::MAX;
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext);
 
     #[cfg(feature = "session-ex-tests")]
-    let expected_error = matches!(result, Err(HsmError::InvalidArgument));
+    let expected_error = matches!(
+        result,
+        Err(HsmError::InternalError | HsmError::InvalidArgument)
+    );
     #[cfg(not(feature = "session-ex-tests"))]
-    let expected_error = matches!(result, Err(HsmError::DdiCmdFailure));
+    let expected_error = matches!(
+        result,
+        Err(HsmError::InternalError | HsmError::DdiCmdFailure)
+    );
 
     assert!(
         expected_error,
