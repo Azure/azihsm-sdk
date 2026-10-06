@@ -359,8 +359,16 @@ fn verify_key_report(
     // `x ‖ y`, with each coordinate zero-padded to the wire width (P-521:
     // 66 -> 68 bytes). Reverse each COSE_Key coordinate and compare it with
     // the unpadded prefix of the corresponding wire half.
-    assert_eq!(x_be.len(), coord_len, "COSE_Key pk_x matches the curve width");
-    assert_eq!(y_be.len(), coord_len, "COSE_Key pk_y matches the curve width");
+    assert_eq!(
+        x_be.len(),
+        coord_len,
+        "COSE_Key pk_x matches the curve width"
+    );
+    assert_eq!(
+        y_be.len(),
+        coord_len,
+        "COSE_Key pk_y matches the curve width"
+    );
     assert!(
         pub_key_le.len() % 2 == 0 && pub_key_le.len() / 2 >= coord_len,
         "wire public key length must hold two padded coordinates",
@@ -368,7 +376,10 @@ fn verify_key_report(
     let wire_coord_len = pub_key_le.len() / 2;
     let (wire_x, wire_y) = pub_key_le.split_at(wire_coord_len);
     assert!(
-        wire_x[coord_len..].iter().chain(&wire_y[coord_len..]).all(|&b| b == 0),
+        wire_x[coord_len..]
+            .iter()
+            .chain(&wire_y[coord_len..])
+            .all(|&b| b == 0),
         "wire public key coordinate padding must be zero",
     );
     let x_le: Vec<u8> = x_be.iter().rev().copied().collect();

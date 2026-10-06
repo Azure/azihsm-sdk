@@ -68,7 +68,7 @@ enum Fault {
     InactiveCoSession,
 }
 
-#[derive(Arbitrary,Debug)]
+#[derive(Arbitrary, Debug)]
 struct FuzzInput {
     fault: Fault,
     policy_info: [u8; 64],
