@@ -101,6 +101,22 @@ impl KeyClass {
         }
     }
 
+    /// Whether the requested usage is one of the exact permission groups
+    /// accepted by `UnwrapKey` for this class.
+    fn accepts_usage(self, usage: u64) -> bool {
+        match self {
+            Self::Aes => usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT),
+            Self::Rsa | Self::RsaCrt => {
+                usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+                    || usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT)
+            }
+            Self::Ecc => usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY) || usage == KEY_USAGE_DERIVE,
+            Self::HmacSha256 | Self::HmacSha384 | Self::HmacSha512 => {
+                usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+            }
+        }
+    }
+
     /// Whether the recovered key for this class carries a wire public key
     /// (the asymmetric classes) or not (the symmetric classes).
     fn is_asymmetric(self) -> bool {
@@ -332,10 +348,10 @@ fuzz_target!(|input: FuzzInput| {
         let result = ctx.tbor(&req);
 
         // Everything but the scope being provisioned must line up for the
-        // import to succeed: real wrapped material, the class's canonical
-        // usage, the hash actually used to wrap, and an encodable label.
+        // import to succeed: real wrapped material, a usage group accepted
+        // for the class, the hash actually used to wrap, and an encodable label.
         let valid_except_scope = input.use_valid_wrapped_blob
-            && key_usage == input.key_class.valid_usage()
+            && input.key_class.accepts_usage(key_usage)
             && oaep_hash_algo == OAEP_SHA256
             && key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
         let expect_success = valid_except_scope
