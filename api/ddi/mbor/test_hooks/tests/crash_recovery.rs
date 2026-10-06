@@ -363,5 +363,5 @@ fn trigger_crash(
     assert_eq!(resp.data.min.major, 1);
     assert_eq!(resp.data.min.minor, 0);
     assert_eq!(resp.data.max.major, 1);
-    assert_eq!(resp.data.max.minor, 0);
+    assert_eq!(resp.data.max.minor, 1);
 }
