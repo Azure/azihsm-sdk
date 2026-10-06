@@ -76,6 +76,10 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
             return Err(HsmError::InvalidKeyType);
         }
 
+        super::from_ddi::validate_fixed_hmac_length(
+            metadata.key_type,
+            metadata.key_length as usize,
+        )?;
         let kind = super::from_ddi::vault_kind_from_ddi(metadata.key_type)?;
         let attrs: HsmVaultKeyAttrs = metadata.key_attributes.into();
 

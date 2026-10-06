@@ -618,3 +618,14 @@ async fn fp_send_key_update(pal: &UnoHsmPal, info: &KeyUpdateInfo) -> HsmResult<
     }
     Ok(())
 }
+
+impl UnoHsmPal {
+    #[cfg(feature = "fips_validation_hooks")]
+    pub(crate) fn vault_key_session_binding(
+        &self,
+        io: &impl HsmIo,
+        key_id: HsmKeyId,
+    ) -> HsmResult<Option<u16>> {
+        vault(io).key_session_binding(key_id)
+    }
+}
