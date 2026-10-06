@@ -1178,6 +1178,11 @@ struct azihsm_algo algo = {
 
 HKDF derivation implements the KDF as specified in [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869).
 
+The `hmac_algo_id` selects SHA-1, SHA-256, SHA-384, or SHA-512 as the HKDF
+PRF, independently of the derived key type. SHA-1 is supported with both
+legacy and EX sessions; EX requires firmware with TBOR HKDF-SHA1 support.
+Prefer SHA-2 for new applications and use SHA-1 only for legacy compatibility.
+
 |                            |                                                                |
 | -------------------------- | -------------------------------------------------------------- |
 | **Algorithm ID**           | `AZIHSM_ALGO_ID_HKDF_DERIVE`                                   |
