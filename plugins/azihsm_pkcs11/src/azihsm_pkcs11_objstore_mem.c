@@ -213,21 +213,8 @@ static CK_RV mem_destroy(void *ctx, CK_SLOT_ID slot, CK_BBOOL user_logged_in, CK
 /* Per-attribute outcomes follow PKCS#11 §5.7.5: missing type, sensitive value,
  * two-call sizing, and too-small buffer each set ulValueLen and the return
  * value as the spec's cases prescribe. */
-static CK_RV mem_get_attr(
-    void *ctx,
-    CK_SLOT_ID slot,
-    CK_BBOOL user_logged_in,
-    CK_OBJECT_HANDLE h,
-    CK_ATTRIBUTE *tmpl,
-    CK_ULONG count
-)
+static CK_RV read_attrs(const mem_object *o, CK_ATTRIBUTE *tmpl, CK_ULONG count)
 {
-    mem_store *st = (mem_store *)ctx;
-    mem_object *o = lookup(st, h);
-    if (o == NULL || !visible(o, slot, user_logged_in))
-    {
-        return CKR_OBJECT_HANDLE_INVALID;
-    }
     /* Sensitive or non-extractable secret material must not be revealed. */
     CK_BBOOL sensitive =
         attr_bool(o, CKA_SENSITIVE, CK_FALSE) || !attr_bool(o, CKA_EXTRACTABLE, CK_TRUE);
@@ -269,14 +256,12 @@ static CK_RV mem_get_attr(
     return rv;
 }
 
-/* Not reachable yet (no C_SetAttributeValue is wired) but kept correct for
- * when it is. */
-static CK_RV mem_set_attr(
+static CK_RV mem_get_attr(
     void *ctx,
     CK_SLOT_ID slot,
     CK_BBOOL user_logged_in,
     CK_OBJECT_HANDLE h,
-    const CK_ATTRIBUTE *tmpl,
+    CK_ATTRIBUTE *tmpl,
     CK_ULONG count
 )
 {
@@ -286,25 +271,97 @@ static CK_RV mem_set_attr(
     {
         return CKR_OBJECT_HANDLE_INVALID;
     }
+    return read_attrs(o, tmpl, count);
+}
+
+/* The azihsm_pkcs11_objstore_reader a set_attr check sees the object through. */
+static CK_RV read_one(void *rctx, CK_ATTRIBUTE *a)
+{
+    return read_attrs((const mem_object *)rctx, a, 1);
+}
+
+/* All-or-nothing, like the file backend's read-modify-rewrite: every value and
+ * the grown attribute array are allocated before the object is touched, so a
+ * failed allocation leaves it unchanged rather than half-updated. */
+static CK_RV mem_set_attr(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    const CK_ATTRIBUTE *tmpl,
+    CK_ULONG count,
+    azihsm_pkcs11_objstore_check check,
+    void *cctx
+)
+{
+    mem_store *st = (mem_store *)ctx;
+    mem_object *o = lookup(st, h);
+    if (o == NULL || !visible(o, slot, user_logged_in))
+    {
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+    if (check != NULL)
+    {
+        CK_RV crv = check(cctx, read_one, o);
+        if (crv != CKR_OK)
+        {
+            return crv;
+        }
+    }
+    if (count == 0)
+    {
+        return CKR_OK;
+    }
+    if (tmpl == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    CK_ULONG added = 0;
     for (CK_ULONG i = 0; i < count; i++)
     {
         if (tmpl[i].ulValueLen > 0 && tmpl[i].pValue == NULL)
         {
             return CKR_ATTRIBUTE_VALUE_INVALID; /* see mem_create */
         }
-        /* Stage the new value before touching the object, so a failed
-         * allocation (of the value or of a grown attribute array) leaves the
-         * object unchanged rather than half-mutated. */
-        CK_BYTE *nv = NULL;
+        if (find_attr(o, tmpl[i].type) == NULL)
+        {
+            added++; /* a type repeated in tmpl overcounts; the slack is unused */
+        }
+    }
+
+    CK_RV rv = CKR_OK;
+    CK_BYTE **staged = (CK_BYTE **)calloc(count, sizeof(CK_BYTE *));
+    if (staged == NULL)
+    {
+        return CKR_HOST_MEMORY;
+    }
+    for (CK_ULONG i = 0; i < count; i++)
+    {
         if (tmpl[i].ulValueLen > 0)
         {
-            nv = (CK_BYTE *)malloc(tmpl[i].ulValueLen);
-            if (nv == NULL)
+            staged[i] = (CK_BYTE *)malloc(tmpl[i].ulValueLen);
+            if (staged[i] == NULL)
             {
-                return CKR_HOST_MEMORY;
+                rv = CKR_HOST_MEMORY;
+                goto cleanup;
             }
-            memcpy(nv, tmpl[i].pValue, tmpl[i].ulValueLen);
+            memcpy(staged[i], tmpl[i].pValue, tmpl[i].ulValueLen);
         }
+    }
+    if (added > 0)
+    {
+        mem_attr *grown = (mem_attr *)realloc(o->attrs, (o->attr_count + added) * sizeof(mem_attr));
+        if (grown == NULL)
+        {
+            rv = CKR_HOST_MEMORY;
+            goto cleanup;
+        }
+        o->attrs = grown; /* same contents, only more room: still unchanged */
+    }
+
+    /* Commit: nothing below can fail. */
+    for (CK_ULONG i = 0; i < count; i++)
+    {
         mem_attr *a = NULL;
         for (CK_ULONG j = 0; j < o->attr_count; j++)
         {
@@ -316,13 +373,6 @@ static CK_RV mem_set_attr(
         }
         if (a == NULL)
         {
-            mem_attr *grown = (mem_attr *)realloc(o->attrs, (o->attr_count + 1) * sizeof(mem_attr));
-            if (grown == NULL)
-            {
-                free(nv);
-                return CKR_HOST_MEMORY;
-            }
-            o->attrs = grown;
             a = &o->attrs[o->attr_count++];
             memset(a, 0, sizeof(*a));
             a->type = tmpl[i].type;
@@ -332,11 +382,23 @@ static CK_RV mem_set_attr(
             memset(a->value, 0, a->len);
             free(a->value);
         }
-        a->value = nv;
+        a->value = staged[i];
         a->len = tmpl[i].ulValueLen;
+        staged[i] = NULL; /* now owned by the object */
     }
     o->is_private = attr_bool(o, CKA_PRIVATE, o->is_private);
-    return CKR_OK;
+
+cleanup:
+    for (CK_ULONG i = 0; i < count; i++)
+    {
+        if (staged[i] != NULL)
+        {
+            memset(staged[i], 0, tmpl[i].ulValueLen);
+            free(staged[i]);
+        }
+    }
+    free(staged);
+    return rv;
 }
 
 /* PKCS#11 search semantics: an object matches when every template attribute is
@@ -514,6 +576,33 @@ static CK_RV mem_get_key_body(
     return CKR_OK;
 }
 
+static CK_RV mem_get_size(
+    void *ctx,
+    CK_SLOT_ID slot,
+    CK_BBOOL user_logged_in,
+    CK_OBJECT_HANDLE h,
+    CK_ULONG *size
+)
+{
+    mem_store *st = (mem_store *)ctx;
+    if (size == NULL)
+    {
+        return CKR_ARGUMENTS_BAD;
+    }
+    mem_object *o = lookup(st, h);
+    if ((o == NULL) || !visible(o, slot, user_logged_in))
+    {
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
+    CK_ULONG total = o->key_body_len;
+    for (CK_ULONG i = 0; i < o->attr_count; i++)
+    {
+        total += o->attrs[i].len;
+    }
+    *size = total;
+    return CKR_OK;
+}
+
 static void mem_teardown(void *ctx)
 {
     mem_store *st = (mem_store *)ctx;
@@ -541,6 +630,7 @@ static const azihsm_pkcs11_objstore_ops MEM_OPS = {
     .find_final = mem_find_final,
     .set_key_body = mem_set_key_body,
     .get_key_body = mem_get_key_body,
+    .get_size = mem_get_size,
     .teardown = mem_teardown,
     .persist = NULL, /* in-memory: nothing to flush */
 };

@@ -77,15 +77,15 @@ unchanged against the logged-in profile. Public-object and digest tests need no
 login and are untouched. Auto-opening a device session for public sessions was
 considered and rejected — it would defeat the login.
 
-## What the gate covers today (130 of 330)
+## What the gate covers today (131 of 330)
 
 Digests (SHA-1/256/384/512, one-shot and multi-part, sizing, the operation
-state machine), the library/slot/session/login surface, public data objects,
-BER decoding, the AES-CBC one-shot cipher tests (round trip, sizing, wrong key,
+state machine), the library/slot/session/login surface, public data objects
+(including the `C_SetAttributeValue` argument and read-only checks), BER decoding, the AES-CBC one-shot cipher tests (round trip, sizing, wrong key,
 IV validation, argument errors) and the operation-lifetime rules on the cipher
 and digest entry points.
 
-A full run reports 155 passing, but 25 of those assert nothing and are
+A full run reports 156 passing, but 25 of those assert nothing and are
 deliberately **not** on the list: 23 that pkcs11test skips (the MD5 digest
 parameter, token initialisation, the SO logins suppressed by `-X`,
 `C_GetOperationState`, the dual-function digest+encrypt) and the two AES-ECB
@@ -96,12 +96,16 @@ Not yet covered, by bucket: the streaming cipher calls (`C_EncryptUpdate` and
 friends — the AES streaming piece), mechanisms this module does not implement
 (DES/3DES/AES-ECB, RSA, EC, sign/verify, HMAC, key pairs, wrap/unwrap, random
 number generation beyond the pre-`C_Initialize` checks), entry points that are
-stubs (`C_CopyObject`, `C_SetAttributeValue`, `C_GetObjectSize`,
-`C_DigestKey`), key import through `C_CreateObject` with `CKA_VALUE` (the SDK
-has none), and a few tests whose expectations assume a soft token — for
-example `EncryptDecryptInitInvalid` wants `CKR_KEY_TYPE_INCONSISTENT` for an
-advertised-but-unimplemented RSA mechanism, which resolves when the mechanism
-table stops advertising it.
+stubs (`C_CopyObject`, `C_DigestKey`), key import through `C_CreateObject` with
+`CKA_VALUE` (the SDK has none), and a few tests whose expectations assume a
+soft token — for example `EncryptDecryptInitInvalid` wants
+`CKR_KEY_TYPE_INCONSISTENT` for an advertised-but-unimplemented RSA mechanism,
+which resolves when the mechanism table stops advertising it.
+
+The key-attribute latch tests (`SetLatchingAttribute`, `TookanAttackA5a`,
+`TookanAttackA5b`) belong to the 3DES bucket: their fixture hard-codes
+`CKM_DES3_KEY_GEN`. The same latches are checked on AES keys by the gtest
+suite (`integration-tests/cpp/object/attr_tests.cpp`).
 
 Two behaviours cannot be checked on the mock device at all, and are hardware
 run items: a wrong PIN (the mock accepts any credential) and unmasking a

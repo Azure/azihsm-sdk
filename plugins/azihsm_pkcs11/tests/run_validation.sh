@@ -70,6 +70,14 @@ gcc -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
     -o "$WORK/aes_template_test"
 "$WORK/aes_template_test"
 
+echo; echo "== C_SetAttributeValue policy unit test (no device, UBSan) =="
+gcc -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+    -I"$PLUGIN/include/pkcs11-v3.1" -I"$PLUGIN/src" \
+    "$HERE/attr_policy_test.c" \
+    "$PLUGIN/src/azihsm_pkcs11_attr_policy.c" "$PLUGIN/src/azihsm_pkcs11_template.c" \
+    -o "$WORK/attr_policy_test"
+"$WORK/attr_policy_test" | tail -n 1
+
 if [ -f "$PKCS11_TESTING/env.sh" ]; then
     # shellcheck disable=SC1091
     source "$PKCS11_TESTING/env.sh"
