@@ -404,6 +404,7 @@ mod round_trips {
         azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
             crate::rsaimport::AzihsmRsaImport,
             crate::rsasign::AzihsmRsaPssSign,
+            crate::rsadecrypt::AzihsmRsaDecrypt,
         >(&engine)?;
         Ok((engine, engine_raw))
     }

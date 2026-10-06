@@ -55,13 +55,14 @@ use parking_lot::Mutex;
 /// Marker type carrying the engine's RSA sign logic (see [`RsaSignHandler`]).
 struct AzihsmRsaSign;
 
-/// Map the digest NID OpenSSL passes to the HSM hash algorithm.
+/// Map the digest NID OpenSSL passes to the HSM hash algorithm. Shared by the RSA
+/// sign and decrypt (OAEP) paths, so the wording is operation-neutral.
 ///
 /// SHA-256/384/512 only. SHA-1 is deliberately excluded — the SDK marks it
-/// cryptographically broken for signatures — even though the 3.x provider still
-/// maps it for legacy RSA-PKCS#1 compatibility; a SHA-1 (or any other) digest is
-/// rejected with a clear error rather than signed.
-fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
+/// cryptographically broken — even though the 3.x provider still maps it for
+/// legacy RSA-PKCS#1 signatures; a SHA-1 (or any other) digest is rejected with a
+/// clear error.
+pub(crate) fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
     // NIDs are non-negative, so reinterpreting the sign bit is safe.
     #[allow(clippy::cast_sign_loss)]
     match nid as u32 {
@@ -69,7 +70,7 @@ fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
         ffi::NID_sha384 => Ok(HsmHashAlgo::Sha384),
         ffi::NID_sha512 => Ok(HsmHashAlgo::Sha512),
         _ => Err(EngineError::Other(format!(
-            "unsupported RSA signature digest (NID {nid}); supported: SHA-256, SHA-384, SHA-512"
+            "unsupported RSA digest (NID {nid}); supported: SHA-256, SHA-384, SHA-512"
         ))),
     }
 }
@@ -100,7 +101,7 @@ impl RsaSignHandler for AzihsmRsaSign {
 /// Recover the HSM private key stashed in `pkey`'s RSA ex_data, or NULL if
 /// `pkey` carries no engine-bound HSM RSA key (a software key).
 #[allow(unsafe_code)]
-fn hsm_key_from_pkey(pkey: *const ffi::EVP_PKEY) -> *const HsmRsaPrivateKey {
+pub(crate) fn hsm_key_from_pkey(pkey: *const ffi::EVP_PKEY) -> *const HsmRsaPrivateKey {
     if pkey.is_null() {
         return std::ptr::null();
     }
@@ -245,7 +246,7 @@ mod tests {
         );
         let err = hash_from_nid(ffi::NID_sha1 as c_int).expect_err("SHA-1 must be rejected");
         assert!(
-            format!("{err}").contains("unsupported RSA signature digest"),
+            format!("{err}").contains("unsupported RSA digest"),
             "unexpected error: {err}"
         );
     }
