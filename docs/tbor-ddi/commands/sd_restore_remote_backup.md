@@ -35,9 +35,8 @@ Algorithm:
    `require_trusted_sa_key` is the sender **evidence** additionally
    validated: all three evidence chains are validated, with the
    partition-owner chain anchored to the policy `SAPOTA` key; the
-   report's v2 `policy_hash` must equal `SHA-384(policy)`, and its
-   attested COSE_Key must equal the `SndrPub` recovered from the cert
-   chain.
+   report must be v2, and its attested COSE_Key must equal the `SndrPub`
+   recovered from the cert chain.
 3. Unmask `masked_sealing_key` under its scope's masking key → the
    receiver's private HPKE key **`RcvrPriv`** (must be an `SdSealing`
    key), and derive `RcvrPub` on-device.
@@ -68,10 +67,18 @@ partition-owner plus a COSE_Sign1 report) is **optional** and validated
 on-device ([`verify_evidence`](../../../fw/core/evidence/src/lib.rs))
 **only when the policy sets `require_trusted_sa_key`**. In that case the
 partition-owner chain is anchored to the policy **SAPOTA** key, the
-report's v2 `policy_hash` must equal `SHA-384(policy)`, and its attested
-COSE_Key must equal the same `SndrPub` recovered from `SndrCertChain`.
+report must be v2, and its attested COSE_Key must equal the same `SndrPub`
+recovered from `SndrCertChain`.
 When the flag is clear the evidence group is **ignored**: send it empty
 (empty cert chains and a zero-length report descriptor).
+
+The sealing authority can operate under a different partition policy from
+the restored SD. Its report's policy hash is not compared with the destination
+policy: SATA authorizes its sealing key and SAPOTA authorizes its attesting
+partition. Applications requiring a particular authority policy must verify
+that policy separately. The request policy must still match the destination's
+bound policy, and reseal still checks both its source and destination reports
+against the requested SD policy.
 
 ## Request
 
@@ -84,7 +91,7 @@ variable-length data section.
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
 | 8  | `masked_sealing_key` | `buffer` (fixed 276 B) | The **receiver's** masked SD-sealing key (from [`SdSealingKeyGen`](sd_sealing_key_gen.md)); unmasked on-device to recover the receiver's private HPKE key (`RcvrPriv`). Length pinned to `MASKED_SEALING_KEY_LEN` (276 B). Never a vault handle. |
-| 12 | `policy` | `buffer` (fixed 484 B) | Caller-asserted unified `PartPolicy` describing the security domain being restored. Length pinned to `PART_POLICY_LEN` (484 B); its SHA-384 digest must equal the partition's bound `policy_hash` and each report's v2 `policy_hash`. |
+| 12 | `policy` | `buffer` (fixed 484 B) | Caller-asserted unified `PartPolicy` describing the security domain being restored. Length pinned to `PART_POLICY_LEN` (484 B); its SHA-384 digest must equal the destination partition's bound `policy_hash`, not the sealing authority's report hash. |
 | 16 | `sender_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Sender key certificate-chain descriptors (spec `SndrCertChain`). **Always present**; validated and anchored to the policy SATA key, its leaf is `SndrPub`. |
 | 20 | `mfgr_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Sender manufacturer certificate-chain descriptors (from the `sender_evidence` field group). Optional (see below). |
 | 24 | `owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Sender owner certificate-chain descriptors. Optional. |
@@ -131,7 +138,7 @@ Carries the 276-byte `pok_local_backup` blob and the 260-byte
 | Error | Cause |
 |---|---|
 | `TborInvalidFixedLength` | `masked_sealing_key` ≠ 276 B, `policy` ≠ 484 B, `src_remote_backup` ≠ 161 B, or `prev_sd_mk_backup` ≠ 260 B (rejected at decode before the handler runs) |
-| `InvalidArg` | Partition is not `Initialized` (not finalized); or the policy `SATA` key is not P-384; or (when `require_trusted_sa_key` is set) the policy `SAPOTA` key is not P-384, the sender report's `policy_hash` ≠ `SHA-384(policy)`, or the attested COSE_Key ≠ `SndrPub`; or the opened backup is not a 48-byte BKS3 |
+| `InvalidArg` | Partition is not `Initialized` (not finalized); or the request policy differs from the destination's bound policy; or the policy `SATA` key is not P-384; or (when `require_trusted_sa_key` is set) the policy `SAPOTA` key is not P-384 or the attested COSE_Key ≠ `SndrPub`; or the opened backup is not a 48-byte BKS3 |
 | `SdAlreadyInitialized` | A security domain is already initialized on this partition incarnation (one-shot gate) |
 | `SdBackupSvnRollback` | A backup's bound SVN is newer than the current firmware SVN (anti-rollback) |
 | `UnsupportedKeyType` | `masked_sealing_key` is not an `SdSealing` key, or `prev_sd_mk_backup` is not an `SdMasking` envelope |

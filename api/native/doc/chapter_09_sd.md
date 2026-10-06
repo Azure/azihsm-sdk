@@ -14,6 +14,16 @@ after validating output capacity, preserving size probes and returning
 `AZIHSM_STATUS_INVALID_ARGUMENT` for a wrong-length policy once outputs
 are sufficiently sized. The C ABI and DDI wire format are unchanged.
 
+### Masked sealing-key metadata
+
+The host masked-key decoder recognizes the SD sealing-key metadata kind and
+validates the envelope shape. This is metadata parsing, not authentication:
+the HSM must authenticate the blob when it is used. Local-scoped receivers
+require the original partition-local masking key to be restored first.
+Generating a replacement key cannot recover backups sealed to the original
+receiver. This decoder support does not add a public key-import API or a
+native C entry point.
+
 ## azihsm_sess_ex_open
 
 Open a security-domain session to the device.
@@ -561,10 +571,20 @@ The `sender_cert_chain` is always validated and anchored to the policy SATA
 key; its leaf is the sender public key (`SndrPub`) that sealed the remote
 backup. The `sender_evidence` three-chain attestation is verified only when
 the policy sets `require_trusted_sa_key`: its partition-owner chain is
-anchored to the policy SAPOTA key and its report must attest the same
+anchored to the policy SAPOTA key and its v2 report must attest the same
 `SndrPub` recovered from `sender_cert_chain`, otherwise the restore is
 rejected with `AZIHSM_STATUS_INVALID_ARGUMENT`. When the flag is clear the
 evidence is ignored (pass empty chains and an empty report).
+
+The trusted sealing authority may have a different partition policy from the
+restored SD. Its report's policy hash is **not** required to equal the
+destination policy hash: SATA endorses the sender key and SAPOTA authorizes
+its attesting partition. Applications that pin a particular authority policy
+must verify the sender report against that policy. The destination still
+requires the request policy to match its own bound policy. Reseal separately
+requires both the original sender and new receiver reports to match the
+requested SD policy; that check is unchanged. No C ABI or wire-format change
+is required.
 
 The inputs are grouped into an
 [`azihsm_sd_restore_remote_backup_params`](#azihsm_sd_restore_remote_backup_params)
