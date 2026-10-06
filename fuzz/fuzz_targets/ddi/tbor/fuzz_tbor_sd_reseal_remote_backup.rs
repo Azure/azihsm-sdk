@@ -34,7 +34,6 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
-use libfuzzer_sys::arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
