@@ -167,6 +167,24 @@ fn sd_create_peer_backup_roundtrip() {
         resp.pok_peer_backup.iter().any(|&b| b != 0),
         "pok_peer_backup must not be all-zero",
     );
+
+    // Create-peer is stateless and repeatable even after CreateSD has
+    // initialized the domain. Fresh HPKE randomness means the two seals
+    // need not be byte-identical.
+    let repeated = ctx
+        .tbor_oob(&req, &evidence.oob())
+        .expect("repeated SdCreatePeerBackup must succeed");
+    assert_eq!(repeated.pok_peer_backup.len(), POK_REMOTE_BACKUP_LEN);
+    assert!(
+        repeated.pok_peer_backup.iter().any(|&b| b != 0),
+        "repeated pok_peer_backup must not be all-zero",
+    );
+
+    // A different policy is rejected against the partition hash before
+    // the command can proceed to evidence or backup processing.
+    let mut mismatched = req.clone();
+    mismatched.policy.info[0] ^= 1;
+    ctx.expect_fw_reject_oob(&mismatched, &evidence.oob(), TborStatus::InvalidArg);
 }
 
 #[test]
