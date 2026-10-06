@@ -27,19 +27,21 @@ fn sd_create_peer_backup_roundtrip() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked, report) = masked_key_and_report(&session);
-    let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
 
     // Create the security domain first to obtain the device-local backup
     // that CreatePeerBackup recovers BKS3 from.
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session.sd_create_remote_backup(&policy, &masked, rcvr_chain, ev)
+        })
         .expect("create remote backup");
 
     // Self-peer backup: seal to our own attested identity as destination.
     let peer = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
 
@@ -60,21 +62,23 @@ fn sd_create_peer_backup_rerandomizes() {
     let sata_key = CaKey::generate();
     let (session, policy, pid_pub) = finalized_backing_session(&sata_key);
 
-    let (masked, report) = masked_key_and_report(&session);
-    let evidence = build_receiver_evidence(&pid_pub, &sata_key, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
 
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session.sd_create_remote_backup(&policy, &masked, rcvr_chain, ev)
+        })
         .expect("create remote backup");
 
     let first = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
     let second = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
 

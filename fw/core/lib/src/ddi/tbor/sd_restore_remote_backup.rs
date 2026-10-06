@@ -22,10 +22,14 @@
 //!    `Initialized` partition, and fail-fast if the SD is already
 //!    initialized ([`SdAlreadyInitialized`](HsmError::SdAlreadyInitialized)).
 //! 2. Bind the caller-supplied [`PartPolicy`] to the partition's fixed
-//!    `policy_hash`, then verify the **sender** evidence against it: its
-//!    cert chains are validated and anchored to the policy SATA key, its
+//!    `policy_hash`, then authorize the **sender** key: the sender
+//!    certificate chain is validated and anchored to the policy SATA key,
+//!    and its leaf is `SndrPub`.  Only when the policy sets
+//!    `require_trusted_sa_key` is the sender **evidence** additionally
+//!    validated: its cert chains are anchored to the policy SAPOTA key, its
 //!    report's v2 `policy_hash` must equal `SHA-384(policy)`, and its
-//!    attested COSE_Key is recovered as `SndrPub`.
+//!    attested COSE_Key must equal the `SndrPub` recovered from the cert
+//!    chain.
 //! 3. Unmask `masked_sealing_key` → `RcvrPriv` (must be an
 //!    [`SdSealing`](HsmVaultKeyKind::SdSealing) key) and derive `RcvrPub`.
 //! 4. HPKE-Auth-open `src_remote_backup` (`sk_r = RcvrPriv`, sender-auth
@@ -47,6 +51,7 @@ use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_core_crypto_key_report::POLICY_HASH_LEN;
 use azihsm_fw_core_evidence::verify_evidence;
+use azihsm_fw_core_evidence::verify_receiver_cert_chain;
 use azihsm_fw_core_evidence::EvidenceRefs;
 use azihsm_fw_core_evidence::TrustAnchors;
 use azihsm_fw_core_evidence::ATTESTED_KEY_LEN;
@@ -137,8 +142,9 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         masking_key_id_for_scope(pal, io, scope)?
     };
 
-    // The sender attestation evidence is mandatory side-band data carried
-    // in the out-of-band SGL page.
+    // The sender certificate chain (and, when the policy requires a trusted
+    // Sealing Authority key, the sender attestation evidence) are side-band
+    // data carried in the out-of-band SGL page.
     let oob = oob.ok_or(HsmError::InvalidArg)?;
 
     // Allocate the two fixed-size response backups in the IO scope so they
@@ -150,11 +156,12 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         let coord = SD_CURVE.priv_key_len();
         let (svn, owner) = sd_backup::platform_svn_owner(pal)?;
 
-        // `pk_sndr` (the attested `SndrPub`) is recovered by the evidence
-        // check in phase 1 and consumed by the HPKE open in phase 2.
+        // `pk_sndr` (the sender `SndrPub`) is recovered from the sender
+        // certificate chain in phase 1 and consumed by the HPKE open in
+        // phase 2.
         let pk_sndr = alloc.dma_alloc(ATTESTED_KEY_LEN)?;
 
-        // ── Phase 1: policy binding + sender evidence (shared view) ──
+        // ── Phase 1: policy binding + sender authorization (shared view) ──
         {
             let req = TborSdRestoreRemoteBackupReq::decode(&*req_buf)?;
             let policy = req.policy();
@@ -167,34 +174,69 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                 return Err(HsmError::InvalidArg);
             }
 
-            // The sender's report must attest to the same policy.
-            let expected = alloc.dma_alloc(POLICY_HASH_LEN)?;
-            pal.hash(io, HsmHashAlgo::Sha384, policy, expected, true)
-                .await?;
+            // Sender key authorization: validate the sender certificate
+            // chain, anchor it to the policy SATA key, and recover the
+            // sender public key (`SndrPub`) into `pk_sndr`.  This is the
+            // sole source of the HPKE-Auth sender key, always required.
+            verify_receiver_cert_chain(
+                pal,
+                io,
+                &oob,
+                req.sender_cert_chain(),
+                &sata.data[..POLICY_MAX_KEY_LEN],
+                pk_sndr,
+            )
+            .await?;
 
-            let src_hash = alloc.dma_alloc(POLICY_HASH_LEN)?;
-            {
-                let ev = req.sender_evidence();
-                verify_evidence(
-                    pal,
-                    io,
-                    &oob,
-                    &EvidenceRefs {
-                        mfgr_chain: ev.mfgr_cert_chain(),
-                        owner_chain: ev.owner_cert_chain(),
-                        part_owner_chain: ev.part_owner_cert_chain(),
-                        report: ev.evidence(),
-                    },
-                    &TrustAnchors {
-                        sata: &sata.data[..POLICY_MAX_KEY_LEN],
-                    },
-                    pk_sndr,
-                    Some(src_hash),
-                )
-                .await?;
-            }
-            if src_hash[..POLICY_HASH_LEN] != expected[..POLICY_HASH_LEN] {
-                return Err(HsmError::InvalidArg);
+            // Sender attestation: required only when the policy demands a
+            // trusted Sealing Authority key.  Validate the three-chain
+            // evidence, anchor the partition-owner chain to the policy
+            // SAPOTA key, and require the report to attest the same policy
+            // and the same `SndrPub` recovered above.  When the flag is
+            // clear the evidence group is ignored (spec `Option<SndrEvidence>`
+            // absent).
+            if part_policy.flags.require_trusted_sa_key() {
+                let sapota = &part_policy.sapota_pub_key;
+                if sapota.kind() != PolicyKeyKind::Ecc384 || sapota.len() != POLICY_MAX_KEY_LEN {
+                    return Err(HsmError::InvalidArg);
+                }
+
+                // The sender's report must attest to the same policy.
+                let expected = alloc.dma_alloc(POLICY_HASH_LEN)?;
+                pal.hash(io, HsmHashAlgo::Sha384, policy, expected, true)
+                    .await?;
+
+                let src_hash = alloc.dma_alloc(POLICY_HASH_LEN)?;
+                let report_pk = alloc.dma_alloc(pk_sndr.len())?;
+                {
+                    let ev = req.sender_evidence();
+                    verify_evidence(
+                        pal,
+                        io,
+                        &oob,
+                        &EvidenceRefs {
+                            mfgr_chain: ev.mfgr_cert_chain(),
+                            owner_chain: ev.owner_cert_chain(),
+                            part_owner_chain: ev.part_owner_cert_chain(),
+                            report: ev.evidence(),
+                        },
+                        &TrustAnchors {
+                            part_owner_anchor: &sapota.data[..POLICY_MAX_KEY_LEN],
+                        },
+                        report_pk,
+                        Some(src_hash),
+                    )
+                    .await?;
+                }
+                if src_hash[..POLICY_HASH_LEN] != expected[..POLICY_HASH_LEN] {
+                    return Err(HsmError::InvalidArg);
+                }
+
+                // The attested key must be the sender key the cert chain
+                // authorized.
+                if *report_pk != *pk_sndr {
+                    return Err(HsmError::InvalidArg);
+                }
             }
         }
 

@@ -43,6 +43,8 @@ namespace
 bool create_sd_capture(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
+
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_local,
@@ -53,9 +55,10 @@ bool create_sd_capture(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
-        &masked_buf,
-        &receiver,
         &policy_buf,
+        &masked_buf,
+        receiver_chain,
+        &receiver,
     };
 
     std::vector<uint8_t> remote;
@@ -246,13 +249,14 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
 
         // Self-peer backup: the same attested key is both source and
         // receiver.
-        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.pub, key.report);
 
         std::vector<uint8_t> local_backup;
         std::vector<uint8_t> prev_sd_mk;
         ASSERT_TRUE(create_sd_capture(
             dev1.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             dev1.policy,
             local_backup,
@@ -266,9 +270,9 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
         azihsm_buffer policy_buf{ dev1.policy.data(), static_cast<uint32_t>(dev1.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
         azihsm_sd_create_peer_backup_params create_params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
             &local_buf,
         };
         std::vector<uint8_t> peer_backup;
@@ -301,7 +305,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_roundtrip)
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_peer_backup_params restore_params{
-            &r_masked_buf, &evidence.get(), &r_policy_buf, &peer_buf, &prev_mk_buf,
+            &r_policy_buf, &r_masked_buf, &evidence.get(), &peer_buf, &prev_mk_buf,
         };
 
         std::vector<uint8_t> pok_local;
@@ -371,7 +375,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         SealingKeyMaterial key = sealing_key_and_report(ctx.session);
         ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(key.report.empty());
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         // Create the SD (initializing this incarnation) and a peer backup of
         // it, sealed to our own attested identity.
@@ -380,6 +384,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         ASSERT_TRUE(create_sd_capture(
             ctx.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             ctx.policy,
             local_backup,
@@ -389,9 +394,9 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
         azihsm_sd_create_peer_backup_params create_params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
             &local_buf,
         };
         std::vector<uint8_t> peer_backup;
@@ -404,7 +409,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_is_one_shot)
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_peer_backup_params restore_params{
-            &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
+            &policy_buf, &masked_buf, &evidence.get(), &peer_buf, &prev_mk_buf,
         };
         std::vector<uint8_t> pok_local;
         std::vector<uint8_t> sd_mk;
@@ -441,7 +446,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_rejects_without_p
         SealingKeyMaterial key = sealing_key_and_report(ctx.session);
         ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(key.report.empty());
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         std::vector<uint8_t> peer_backup(kPokRemoteBackupLen, 0);
         std::vector<uint8_t> prev_sd_mk(kSdMkBackupLen, 0);
@@ -450,7 +455,7 @@ TEST_F(azihsm_sd_restore_peer_backup_test, restore_peer_backup_rejects_without_p
         azihsm_buffer peer_buf{ peer_backup.data(), static_cast<uint32_t>(peer_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_peer_backup_params restore_params{
-            &masked_buf, &evidence.get(), &policy_buf, &peer_buf, &prev_mk_buf,
+            &policy_buf, &masked_buf, &evidence.get(), &peer_buf, &prev_mk_buf,
         };
         std::vector<uint8_t> pok_local;
         std::vector<uint8_t> sd_mk;

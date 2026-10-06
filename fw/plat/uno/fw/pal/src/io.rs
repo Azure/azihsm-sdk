@@ -81,13 +81,12 @@ impl UnoHsmIo {
     ///
     /// This constructor performs **no scrub**: anything the caller writes to
     /// the admin slot's bump heaps stays resident until some later scrub.
-    /// Use it only on a path that provably dirties neither heap — today just
-    /// the synchronous unwrapping-key import, which cannot `await` a scrub
-    /// and copies straight from `&'static` GSRAM into vault storage. Every
-    /// other admin path must go through
-    /// [`with_admin_io`](UnoHsmPal::with_admin_io), which wipes the slot on
-    /// completion. The name is deliberately blunt so a new call site has to
-    /// opt into the hazard explicitly.
+    /// Its only caller is [`with_admin_io`](UnoHsmPal::with_admin_io), which
+    /// wipes the slot on completion. The admin slot's `IO_META` is shared, so
+    /// it must only be written from the IPC task that runs admin sessions
+    /// sequentially; a host-IO path must use its own IO instead. The name is
+    /// deliberately blunt so a new call site has to opt into the hazard
+    /// explicitly.
     ///
     /// [`ADMIN_IO_INDEX`]: crate::alloc::ADMIN_IO_INDEX
     /// [`UnoScopedAlloc`]: crate::alloc::UnoScopedAlloc
@@ -95,9 +94,13 @@ impl UnoHsmIo {
         let io = Self {
             index: ADMIN_IO_INDEX,
         };
+        // CONTROLLER_ID holds the hardware axi_id (what IIC `recv` records for
+        // a host IO), so an internally created admin IO stores the same
+        // encoding for `pid()` to round-trip it back to `pid`.
+        let axi_id = crate::pal::pfn_to_axi_id(u8::from(pid)).unwrap_or(crate::pal::NO_PARTITION);
         io.io_meta()
             .ctlr
-            .write(IO_META_CTLR::CONTROLLER_ID.val(u8::from(pid) as u32));
+            .write(IO_META_CTLR::CONTROLLER_ID.val(axi_id as u32));
         io
     }
 
@@ -114,9 +117,15 @@ impl HsmIo for UnoHsmIo {
         self.index
     }
 
-    /// Returns the partition ID (controller_id from IO_META).
+    /// Returns the partition ID for this IO.
+    ///
+    /// IO_META records the routing axi_id the hardware reported; partitions
+    /// are indexed by the dense PcieFunction id, so translate here. An axi_id
+    /// naming no function yields an out-of-range id, which the partition
+    /// lookup rejects with `InvalidArg` rather than aliasing a valid slot.
     fn pid(&self) -> HsmPartId {
-        HsmPartId::from(self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8)
+        let axi_id = self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8;
+        HsmPartId::from(crate::pal::axi_id_to_pfn(axi_id).unwrap_or(crate::pal::NO_PARTITION))
     }
 
     /// Returns the queue ID from IO_META.
@@ -211,12 +220,9 @@ impl UnoHsmPal {
     /// resident in the admin slot indefinitely.
     ///
     /// Binding the scrub to the session rather than to each caller means no
-    /// admin path that dirties the slot can forget it. The one deliberate
-    /// exception is [`UnoHsmIo::admin_no_scrub`], whose name states that it
-    /// opts out; it is reserved for paths that provably write nothing to
-    /// either bump heap. `f` also receives a [`UnoScopedAlloc`] rewound to
-    /// the slot's base, so every admin sequence starts from a clean bump
-    /// heap.
+    /// admin path that dirties the slot can forget it. `f` also receives a
+    /// [`UnoScopedAlloc`] rewound to the slot's base, so every admin sequence
+    /// starts from a clean bump heap.
     ///
     /// Sessions must not nest — [`UnoScopedAlloc::for_admin`] rewinds the
     /// slot's watermarks, so an inner session would alias an outer one's

@@ -38,17 +38,19 @@ namespace
 std::vector<uint8_t> create_source_backup(
     SdBackingContext &ctx,
     std::vector<uint8_t> &masked_sender,
+    const std::vector<uint8_t> &receiver_pub,
     const std::vector<uint8_t> &receiver_report
 )
 {
-    SdEvidenceHolder receiver = build_receiver_evidence(ctx, receiver_report);
+    SdEvidenceHolder receiver = build_receiver_evidence(ctx, receiver_pub, receiver_report);
 
     azihsm_buffer masked_buf{ masked_sender.data(), static_cast<uint32_t>(masked_sender.size()) };
     azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
     azihsm_sd_create_remote_backup_params params{
-        &masked_buf,
-        &receiver.get(),
         &policy_buf,
+        &masked_buf,
+        receiver.receiver_chain(),
+        &receiver.get(),
     };
 
     std::vector<uint8_t> remote;
@@ -190,19 +192,20 @@ TEST_F(azihsm_sd_reseal_backup_test, reseal_backup_roundtrip)
         ASSERT_FALSE(sndr.report.empty());
         ASSERT_FALSE(dst.report.empty());
 
-        std::vector<uint8_t> src_backup = create_source_backup(ctx, sndr.masked, rcvr.report);
+        std::vector<uint8_t> src_backup =
+            create_source_backup(ctx, sndr.masked, rcvr.pub, rcvr.report);
         ASSERT_EQ(src_backup.size(), kPokRemoteBackupLen);
 
         // Reseal: open with the receiver key (auth = sender), reseal to the
         // destination receiver.
-        SdEvidenceHolder src_ev = build_receiver_evidence(ctx, sndr.report);
-        SdEvidenceHolder dst_ev = build_receiver_evidence(ctx, dst.report);
+        SdEvidenceHolder src_ev = build_receiver_evidence(ctx, sndr.pub, sndr.report);
+        SdEvidenceHolder dst_ev = build_receiver_evidence(ctx, dst.pub, dst.report);
 
         azihsm_buffer masked_buf{ rcvr.masked.data(), static_cast<uint32_t>(rcvr.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer src_buf{ src_backup.data(), static_cast<uint32_t>(src_backup.size()) };
         azihsm_sd_reseal_remote_backup_params params{
-            &masked_buf, &src_ev.get(), &dst_ev.get(), &policy_buf, &src_buf,
+            &policy_buf, &masked_buf, &src_ev.get(), &dst_ev.get(), &src_buf,
         };
 
         std::vector<uint8_t> dst_backup;
@@ -244,17 +247,18 @@ TEST_F(azihsm_sd_reseal_backup_test, reseal_backup_rerandomizes)
         ASSERT_FALSE(sndr.report.empty());
         ASSERT_FALSE(dst.report.empty());
 
-        std::vector<uint8_t> src_backup = create_source_backup(ctx, sndr.masked, rcvr.report);
+        std::vector<uint8_t> src_backup =
+            create_source_backup(ctx, sndr.masked, rcvr.pub, rcvr.report);
         ASSERT_EQ(src_backup.size(), kPokRemoteBackupLen);
 
-        SdEvidenceHolder src_ev = build_receiver_evidence(ctx, sndr.report);
-        SdEvidenceHolder dst_ev = build_receiver_evidence(ctx, dst.report);
+        SdEvidenceHolder src_ev = build_receiver_evidence(ctx, sndr.pub, sndr.report);
+        SdEvidenceHolder dst_ev = build_receiver_evidence(ctx, dst.pub, dst.report);
 
         azihsm_buffer masked_buf{ rcvr.masked.data(), static_cast<uint32_t>(rcvr.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer src_buf{ src_backup.data(), static_cast<uint32_t>(src_backup.size()) };
         azihsm_sd_reseal_remote_backup_params params{
-            &masked_buf, &src_ev.get(), &dst_ev.get(), &policy_buf, &src_buf,
+            &policy_buf, &masked_buf, &src_ev.get(), &dst_ev.get(), &src_buf,
         };
 
         std::vector<uint8_t> first;
