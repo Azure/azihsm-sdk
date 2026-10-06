@@ -133,40 +133,51 @@ static CK_RV read_bool(
     return rv;
 }
 
-/* Map CKA_CLASS to the rule-table bit; P11_CLS_OTHER when absent or malformed. */
+/*
+ * Map CKA_CLASS to the rule-table bit. An object with no CKA_CLASS, or with one
+ * that is not a CK_OBJECT_CLASS (C_CreateObject does not validate the class),
+ * is still a valid target: it gets P11_CLS_OTHER, the most restrictive class
+ * (only CKA_LABEL may change), and the read outcome that says so is not an
+ * error of the call. Only a failure to read the object at all, such as
+ * CKR_OBJECT_HANDLE_INVALID, is returned.
+ */
 static CK_RV read_class(azihsm_pkcs11_attr_reader read, void *ctx, unsigned *out)
 {
+    *out = P11_CLS_OTHER;
     CK_OBJECT_CLASS cls = 0;
     CK_ATTRIBUTE a = { CKA_CLASS, &cls, sizeof(cls) };
     CK_RV rv = read(ctx, &a);
-    *out = P11_CLS_OTHER;
-    if ((rv == CKR_OK) && (a.ulValueLen == sizeof(cls)))
-    {
-        switch (cls)
-        {
-        case CKO_DATA:
-            *out = P11_CLS_DATA;
-            break;
-        case CKO_SECRET_KEY:
-            *out = P11_CLS_SECRET;
-            break;
-        case CKO_PUBLIC_KEY:
-            *out = P11_CLS_PUBLIC;
-            break;
-        case CKO_PRIVATE_KEY:
-            *out = P11_CLS_PRIVATE;
-            break;
-        default:
-            break;
-        }
-        return CKR_OK;
-    }
-    if ((rv == CKR_OK) || (rv == CKR_ATTRIBUTE_TYPE_INVALID) || (rv == CKR_BUFFER_TOO_SMALL) ||
+    if ((rv == CKR_ATTRIBUTE_TYPE_INVALID) || (rv == CKR_BUFFER_TOO_SMALL) ||
         (rv == CKR_ATTRIBUTE_SENSITIVE))
     {
-        return CKR_OK;
+        return CKR_OK; /* absent, too wide, or unreadable: no usable class */
     }
-    return rv;
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    if (a.ulValueLen != sizeof(cls))
+    {
+        return CKR_OK; /* too narrow: no usable class */
+    }
+    switch (cls)
+    {
+    case CKO_DATA:
+        *out = P11_CLS_DATA;
+        break;
+    case CKO_SECRET_KEY:
+        *out = P11_CLS_SECRET;
+        break;
+    case CKO_PUBLIC_KEY:
+        *out = P11_CLS_PUBLIC;
+        break;
+    case CKO_PRIVATE_KEY:
+        *out = P11_CLS_PRIVATE;
+        break;
+    default:
+        break; /* a class this module stores no rules for */
+    }
+    return CKR_OK;
 }
 
 /* Whether the object carries `type` at all (a sensitive value counts). */

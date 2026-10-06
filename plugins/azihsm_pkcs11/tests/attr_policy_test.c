@@ -50,6 +50,10 @@ static CK_OBJECT_CLASS g_secret = CKO_SECRET_KEY;
 static CK_OBJECT_CLASS g_data = CKO_DATA;
 static CK_OBJECT_CLASS g_private = CKO_PRIVATE_KEY;
 static CK_OBJECT_CLASS g_public = CKO_PUBLIC_KEY;
+static CK_OBJECT_CLASS g_cert = CKO_CERTIFICATE;
+/* A stored CKA_CLASS wider than CK_OBJECT_CLASS, whose leading bytes spell
+ * CKO_SECRET_KEY: read as a class it would wrongly unlock the key rules. */
+static CK_OBJECT_CLASS g_wide_class[2] = { CKO_SECRET_KEY, CKO_SECRET_KEY };
 static CK_KEY_TYPE g_aes = CKK_AES;
 static CK_ULONG g_len32 = 32;
 static CK_BYTE g_secret_bytes[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
@@ -418,6 +422,8 @@ static void test_other_classes(void)
     const CK_ATTRIBUTE pub[] = { ATTR(CKA_CLASS, g_public) };
     const CK_ATTRIBUTE none[] = { ATTR(CKA_LABEL, g_label) };
     const CK_ATTRIBUTE bad_class[] = { ATTR(CKA_CLASS, g_true) }; /* one byte wide */
+    const CK_ATTRIBUTE wide_class[] = { ATTR(CKA_CLASS, g_wide_class) };
+    const CK_ATTRIBUTE cert[] = { ATTR(CKA_CLASS, g_cert) };
     CHECK(
         check_on(priv, 1, CK_TRUE, (CK_ATTRIBUTE)BOOL_ATTR(CKA_SIGN_RECOVER, g_true)) == CKR_OK,
         "private key: CKA_SIGN_RECOVER"
@@ -453,6 +459,18 @@ static void test_other_classes(void)
         check_on(bad_class, 1, CK_TRUE, (CK_ATTRIBUTE)ATTR(CKA_ID, g_label)) ==
             CKR_ATTRIBUTE_TYPE_INVALID,
         "malformed CKA_CLASS: treated as classless"
+    );
+    CHECK(
+        (check_on(wide_class, 1, CK_TRUE, (CK_ATTRIBUTE)ATTR(CKA_ID, g_label)) ==
+         CKR_ATTRIBUTE_TYPE_INVALID) &&
+            (check_on(wide_class, 1, CK_TRUE, (CK_ATTRIBUTE)ATTR(CKA_LABEL, g_label)) == CKR_OK),
+        "over-wide CKA_CLASS (store read BUFFER_TOO_SMALL): treated as classless"
+    );
+    CHECK(
+        (check_on(cert, 1, CK_TRUE, (CK_ATTRIBUTE)ATTR(CKA_LABEL, g_label)) == CKR_OK) &&
+            (check_on(cert, 1, CK_TRUE, (CK_ATTRIBUTE)ATTR(CKA_ID, g_label)) ==
+             CKR_ATTRIBUTE_TYPE_INVALID),
+        "a class without rules (certificate): only CKA_LABEL"
     );
 }
 
