@@ -171,6 +171,7 @@ fn test_rsa_4096_oaep_enc_dec(session: HsmSession) {
 }
 
 /// Ensure decrypting with wrong private key fails
+/// EX can reject ciphertext outside the second key's allowed RSA input range.
 #[session_test]
 fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
     // Key pair A
@@ -191,11 +192,19 @@ fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_b, &ciphertext);
 
+    #[cfg(feature = "session-ex-tests")]
+    let expected_error = matches!(
+        result,
+        Err(HsmError::DdiCmdFailure | HsmError::InternalError | HsmError::InvalidArgument)
+    );
+    #[cfg(not(feature = "session-ex-tests"))]
+    let expected_error = matches!(
+        result,
+        Err(HsmError::DdiCmdFailure | HsmError::InternalError)
+    );
+
     assert!(
-        matches!(
-            result,
-            Err(HsmError::DdiCmdFailure | HsmError::InternalError)
-        ),
+        expected_error,
         "Unexpected error for wrong RSA private key: {:?}",
         result.as_ref().err()
     );

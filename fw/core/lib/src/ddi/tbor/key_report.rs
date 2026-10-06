@@ -198,8 +198,16 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     let masking_key = resolve_masking_key(pal, io, scope, sess_id)?;
 
     pal.alloc_scoped_async(io, async |alloc| {
-        let (report, report_len) =
-            build_key_report(pal, io, alloc, masked_key, masking_key, sess_id, report_data).await?;
+        let (report, report_len) = build_key_report(
+            pal,
+            io,
+            alloc,
+            masked_key,
+            masking_key,
+            sess_id,
+            report_data,
+        )
+        .await?;
         encode_response(pal, io, &report[..report_len])
     })
     .await
