@@ -22,6 +22,7 @@
 
 #![allow(unsafe_code)]
 
+use azihsm_fw_hsm_io::Sqe;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
@@ -62,6 +63,23 @@ fn blob_ref(table: usize, off: usize, len: usize) -> &'static DmaBuf {
     // SAFETY: the caller's `key_location{,_present}` validated that
     // `addr..addr+len` lies within that table's 'static GSRAM blob region.
     unsafe { DmaBuf::from_raw(core::slice::from_raw_parts(addr as *const u8, len)) }
+}
+
+impl UnoHsmPal {
+    /// Reject cross-session access to a `Session`-scoped key with
+    /// [`HsmError::KeyNotFound`]; partition-scoped keys are unaffected.
+    fn enforce_session_key_isolation(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<()> {
+        let Some(bound) = vault(io).key_session(key_id)? else {
+            return Ok(());
+        };
+        let sqe = Sqe::from(io.sqe());
+        let current = sqe.session_flags().id_valid().then(|| sqe.session_id());
+        if current == Some(bound) {
+            Ok(())
+        } else {
+            Err(HsmError::KeyNotFound)
+        }
+    }
 }
 
 impl HsmVault for UnoHsmPal {
@@ -184,6 +202,7 @@ impl HsmVault for UnoHsmPal {
     }
 
     fn vault_key(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<&DmaBuf> {
+        self.enforce_session_key_isolation(io, key_id)?;
         let (table, off, len) = vault(io).key_location(key_id)?;
         Ok(blob_ref(table, off, len))
     }
@@ -193,10 +212,12 @@ impl HsmVault for UnoHsmPal {
     }
 
     fn vault_key_kind(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyKind> {
+        self.enforce_session_key_isolation(io, key_id)?;
         vault(io).key_kind(key_id)
     }
 
     fn vault_key_attrs(&self, io: &impl HsmIo, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
+        self.enforce_session_key_isolation(io, key_id)?;
         vault(io).key_attrs(key_id)
     }
 }
