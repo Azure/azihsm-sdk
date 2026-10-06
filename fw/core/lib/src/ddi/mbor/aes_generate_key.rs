@@ -4,26 +4,24 @@
 //! DDI AesGenerateKey command handler.
 //!
 //! Within an open session, generate a fresh random AES key (128 /
-//! 192 / 256 bits) or an AES-256-GCM bulk key, persist it in the
+//! 192 / 256 bits) or an AES-256 GCM / XTS bulk key, persist it in the
 //! partition vault — optionally session-scoped so it is torn down by
 //! [`CloseSession`](super::close_session) — and return the assigned
 //! `key_id` plus a masked-key envelope that the host may re-import on
 //! a future session.
 //!
-//! For the GCM bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved`)
-//! the response also carries a `bulk_key_id`.  The bulk key is the key
-//! consumed by the bulk GCM encrypt/decrypt op; the host addresses
-//! it via this `bulk_key_id`.  Bulk key material is registered with the
+//! For the bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved` /
+//! `AesXtsBulk256`) the response also carries a `bulk_key_id`.  The bulk
+//! key is the key consumed by the bulk GCM / XTS encrypt/decrypt op; the
+//! host addresses it via this `bulk_key_id`.  Bulk key material is registered with the
 //! bulk-crypto backend (see [`bulk::commit_key`](super::bulk));
 //! the vault stores only the 2-byte backend handle, and `bulk_key_id` is
 //! the distinct backend-assigned id, not the vault `key_id`.
 //!
-//! Scope: 128/192/256-bit AES keys and AES-256-GCM bulk keys.  The
-//! AES-XTS bulk variant is rejected with `InvalidArg`.
+//! Scope: 128/192/256-bit AES keys and AES-256 GCM / XTS bulk keys.
 
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyReq;
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyResp;
-use azihsm_fw_ddi_mbor_types::DdiAesKeySize;
 
 use super::*;
 
@@ -47,17 +45,11 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
 
-    // GCM bulk kinds map to a 32-byte AES-256 key and report a
+    // Bulk kinds (GCM / XTS) map to a 32-byte AES-256 key and report a
     // `bulk_key_id`; non-bulk kinds map to their sized AES vault kind.
-    let is_bulk = matches!(
-        body.key_size,
-        DdiAesKeySize::AesGcmBulk256 | DdiAesKeySize::AesGcmBulk256Unapproved
-    );
-    let (key_len, vault_kind) = if is_bulk {
-        super::from_ddi::aes_bulk(body.key_size)?
-    } else {
-        super::from_ddi::aes(body.key_size)?
-    };
+    let (key_len, vault_kind) = super::from_ddi::aes_bulk(body.key_size)
+        .or_else(|_| super::from_ddi::aes(body.key_size))?;
+    let is_bulk = super::bulk::is_bulk(vault_kind);
     let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, true)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
@@ -74,11 +66,11 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
         return Err(e);
     }
 
-    // Bulk GCM keys live in the bulk-crypto backend: hand the freshly
+    // Bulk keys live in the bulk-crypto backend: hand the freshly
     // generated material to the backend and keep only the 2-byte
     // `bulk_key_id` reference in the vault.  Non-bulk keys are stored
     // directly.  The registration is scoped to the creating session so
-    // later bulk GCM ops (which carry the session id) match.  Scrub the
+    // later bulk ops (which carry the session id) match.  Scrub the
     // material on commit failure before propagating.
     let (key_handle, bulk_key_id) = match super::bulk::commit_key(
         pal,

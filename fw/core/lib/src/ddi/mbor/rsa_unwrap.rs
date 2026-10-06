@@ -25,9 +25,9 @@
 //! copy), matching the zero-copy `reserve` / `from_layout` pattern used
 //! by the other key-producing handlers and the reference firmware.  This
 //! keeps the largest RSA-4096 keys within the fixed per-IO DMA budget.
-//! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES-GCM
-//! bulk variants recover the raw AES key, register it with the bulk-crypto
-//! backend, and return its `bulk_key_id` (AES-XTS bulk is not supported).
+//! The AES, RSA (plain / CRT), and ECC key classes are wired; the AES bulk
+//! variants (GCM / XTS) recover the raw AES key, register it with the
+//! bulk-crypto backend, and return its `bulk_key_id`.
 //! RSA and ECC imports return the imported key's wire public key,
 //! re-derived from the committed vault key.
 
@@ -87,12 +87,13 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     // separate property comparison.
     let unwrap_key_id = HsmKeyId::from(body.key_id);
 
-    // AES-256-GCM bulk keys follow a distinct import path: the recovered
-    // key is handed to the bulk-crypto backend and only its 2-byte
+    // AES-256 bulk keys (GCM / XTS) follow a distinct import path: the
+    // recovered key is handed to the bulk-crypto backend and only its 2-byte
     // `bulk_key_id` handle is kept in the vault (mirroring
     // [`aes_generate_key`](super::aes_generate_key)'s bulk path).  Handle
     // and return here, before the asymmetric / AES import flow below.
     if let Some(bulk_kind) = match body.wrapped_blob_key_class {
+        DdiKeyClass::AesXtsBulk => Some(HsmVaultKeyKind::AesXtsBulk256),
         DdiKeyClass::AesGcmBulk => Some(HsmVaultKeyKind::AesGcmBulk256),
         DdiKeyClass::AesGcmBulkUnapproved => Some(HsmVaultKeyKind::AesGcmBulk256Unapproved),
         _ => None,
@@ -115,7 +116,7 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
 
         // Commit the recovered key: the PAL registers it with the
         // bulk-crypto backend and stores only the 2-byte handle in the
-        // vault (scoped to the creating session so later bulk GCM ops
+        // vault (scoped to the creating session so later bulk ops
         // match), returning the backend id.  RSA-unwrap always produces a
         // bulk key, so `bulk_key_id` is present.  Scrub the recovered
         // material if the commit fails, before propagating the error.
@@ -183,7 +184,7 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     // imported key's vault attributes.  These keys are imported, not
     // generated on-device, so the `for_*` builders are told `local = false`
     // (and, as always, never set `internal`).  AES, RSA (plain / CRT), and
-    // ECC are supported; the AES-GCM bulk variants are handled above.
+    // ECC are supported; the AES bulk variants are handled above.
     let (key_class, import_attrs) = match body.wrapped_blob_key_class {
         DdiKeyClass::Aes => {
             let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, false)?;

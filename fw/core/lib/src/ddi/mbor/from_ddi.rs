@@ -50,7 +50,7 @@ pub(crate) fn curve(curve: DdiEccCurve) -> HsmResult<HsmEccCurve> {
 /// Map a [`DdiAesKeySize`] to its raw byte length and the matching
 /// non-bulk AES vault kind.  Bulk AES variants (XTS / GCM) are
 /// rejected with [`HsmError::InvalidArg`]; use [`aes_bulk`] for the
-/// GCM bulk kinds.
+/// bulk kinds.
 pub(crate) fn aes(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
     match size {
         DdiAesKeySize::Aes128 => Ok((16, HsmVaultKeyKind::Aes128)),
@@ -61,13 +61,13 @@ pub(crate) fn aes(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
 }
 
 /// Map a bulk [`DdiAesKeySize`] to its raw AES-256 byte length and the
-/// matching bulk GCM vault kind.  The two variants differ only in FIPS
+/// matching bulk vault kind.  The two GCM variants differ only in FIPS
 /// posture: `AesGcmBulk256` is FIPS-approved (the device generates the
 /// IV internally on encrypt), `AesGcmBulk256Unapproved` uses the
-/// host-supplied IV.  Non-GCM-bulk sizes return
-/// [`HsmError::InvalidArg`].
+/// host-supplied IV.  Non-bulk sizes return [`HsmError::InvalidArg`].
 pub(crate) fn aes_bulk(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
     match size {
+        DdiAesKeySize::AesXtsBulk256 => Ok((32, HsmVaultKeyKind::AesXtsBulk256)),
         DdiAesKeySize::AesGcmBulk256 => Ok((32, HsmVaultKeyKind::AesGcmBulk256)),
         DdiAesKeySize::AesGcmBulk256Unapproved => {
             Ok((32, HsmVaultKeyKind::AesGcmBulk256Unapproved))
