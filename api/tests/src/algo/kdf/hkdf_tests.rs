@@ -3,6 +3,11 @@
 
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
+use azihsm_crypto as crypto;
+use azihsm_crypto::DeriveOp;
+use azihsm_crypto::ExportableKey;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::PrivateKey;
 use azihsm_crypto::Rng;
 
 use crate::algo::ecc::*;
@@ -157,16 +162,20 @@ fn run_hkdf_matrix_for_curve(session: &HsmSession, curve: HsmEccCurve) {
     }
 }
 
-/// Verifies empty salt and info behave correctly
+/// Verifies empty salt and info are equivalent to omitted values for every hash
 fn run_hkdf_empty_salt_info_test(session: &HsmSession, curve: HsmEccCurve) {
     let (secret_a, secret_b) = derive_ecdh_shared_secrets(session, curve);
 
-    let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, Some(b""), Some(b"")).unwrap();
+    for &hash_algo in supported_hkdf_hash_algos() {
+        let mut empty = HsmHkdfAlgo::new(hash_algo, Some(b""), Some(b"")).unwrap();
+        let mut omitted = HsmHkdfAlgo::new(hash_algo, None, None).unwrap();
 
-    let key_a = derive_aes_key_from_shared_secret(session, &mut hkdf, &secret_a, 256);
-    let key_b = derive_aes_key_from_shared_secret(session, &mut hkdf, &secret_b, 256);
+        let key_a = derive_aes_key_from_shared_secret(session, &mut empty, &secret_a, 256);
+        let key_b = derive_aes_key_from_shared_secret(session, &mut omitted, &secret_b, 256);
 
-    assert_aes_cbc_roundtrip(&key_a, &key_b, b"empty salt info");
+        let plaintext = format!("HKDF hash={hash_algo:?} empty and omitted salt/info");
+        assert_aes_cbc_roundtrip(&key_a, &key_b, plaintext.as_bytes());
+    }
 }
 
 /// Verifies derived keys work with large plaintext inputs
@@ -601,45 +610,153 @@ fn test_hkdf_matrix_p521(session: HsmSession) {
     run_hkdf_matrix_for_curve(&session, HsmEccCurve::P521);
 }
 
-/// Verifies HKDF derivation works correctly when only salt is provided
+/// Verifies HKDF-SHA1 output against host derivation across AES sizes and salt/info cases.
+/// Firmware uses little-endian ECDH input; mock retains the host's big-endian bytes.
+#[session_test]
+fn test_hkdf_sha1_matches_host(session: HsmSession) {
+    const IV_SIZE: usize = 16;
+
+    let curve = HsmEccCurve::P256;
+    let secret_len = curve.key_size_bits().div_ceil(8);
+    let (device_private, device_public) =
+        generate_ecc_keypair_with_derive(session.clone(), curve, true)
+            .expect("Failed to generate device ECDH key pair");
+    let host_curve =
+        crypto::EccCurve::try_from(curve.key_size_bits()).expect("Unsupported host ECDH curve");
+    let host_private =
+        crypto::EccPrivateKey::from_curve(host_curve).expect("Failed to generate host ECDH key");
+    let host_public = host_private
+        .public_key()
+        .expect("Failed to get host public key");
+    let host_public_len = host_public
+        .to_bytes(None)
+        .expect("Failed to query public key size");
+    let mut host_public_der = vec![0u8; host_public_len];
+    host_public
+        .to_bytes(Some(&mut host_public_der))
+        .expect("Failed to export host public key");
+
+    let device_secret =
+        ecdh_derive_shared_secret_from_der(&session, &device_private, &host_public_der)
+            .expect("Failed to derive device ECDH secret");
+    let device_public_der = device_public
+        .pub_key_der_vec()
+        .expect("Failed to export device public key");
+    let peer_public = crypto::EccPublicKey::from_bytes(&device_public_der)
+        .expect("Failed to import device public key");
+    let host_secret = crypto::EcdhAlgo::new(&peer_public)
+        .derive(&host_private, secret_len)
+        .expect("Failed to derive host ECDH secret");
+    let mut host_secret_bytes = vec![0u8; secret_len];
+    let written = host_secret
+        .to_bytes(Some(&mut host_secret_bytes))
+        .expect("Failed to export host ECDH secret");
+    assert_eq!(
+        written, secret_len,
+        "ECDH secret length must match the curve size"
+    );
+    #[cfg(not(feature = "mock"))]
+    host_secret_bytes.reverse();
+    let host_ikm = crypto::GenericSecretKey::from_bytes(&host_secret_bytes)
+        .expect("Failed to import ECDH input for HKDF");
+
+    let salt = b"hkdf-sha1-salt".as_slice();
+    let info = b"hkdf-sha1-info".as_slice();
+    let host_hash = crypto::HashAlgo::sha1();
+    let iv = [0u8; IV_SIZE];
+    let plaintext = b"HKDF-SHA1 host reference ciphertext";
+
+    for (case, (salt, info)) in [
+        (None, None),
+        (Some(&[][..]), Some(&[][..])),
+        (Some(salt), None),
+        (None, Some(info)),
+        (Some(salt), Some(info)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for bits in [128u32, 192, 256] {
+            let key_len = usize::try_from(bits / 8).expect("AES key size must fit usize");
+            let expected =
+                crypto::HkdfAlgo::new(crypto::HkdfMode::ExtractAndExpand, &host_hash, salt, info)
+                    .derive(&host_ikm, key_len)
+                    .expect("Failed to derive host HKDF-SHA1 key");
+            let mut expected_bytes = vec![0u8; key_len];
+            let written = expected
+                .to_bytes(Some(&mut expected_bytes))
+                .expect("Failed to export host HKDF-SHA1 key");
+            assert_eq!(
+                written, key_len,
+                "Host HKDF output length must match AES key size"
+            );
+            let host_key =
+                crypto::AesKey::from_bytes(&expected_bytes).expect("Failed to import host AES key");
+
+            let mut hkdf = HsmHkdfAlgo::new(HsmHashAlgo::Sha1, salt, info)
+                .expect("Failed to create HKDF-SHA1 algorithm");
+            let device_key =
+                derive_aes_key_from_shared_secret(&session, &mut hkdf, &device_secret, bits);
+            let mut host_cipher = crypto::AesCbcAlgo::with_padding(&iv);
+            let expected_ciphertext =
+                crypto::Encrypter::encrypt_vec(&mut host_cipher, &host_key, plaintext)
+                    .expect("Failed to encrypt with host HKDF-SHA1 key");
+            let mut device_cipher = HsmAesCbcAlgo::with_padding(iv.to_vec())
+                .expect("Failed to create device AES-CBC algorithm");
+            let ciphertext = HsmEncrypter::encrypt_vec(&mut device_cipher, &device_key, plaintext)
+                .expect("Failed to encrypt with device HKDF-SHA1 key");
+
+            assert_eq!(
+                ciphertext, expected_ciphertext,
+                "HKDF-SHA1 must match host derivation (case {case}, AES-{bits})"
+            );
+        }
+    }
+}
+
+/// Verifies HKDF derivation works for every hash when only salt is provided
 #[session_test]
 fn test_hkdf_with_only_salt(session: HsmSession) {
     let (shared_secret_a, shared_secret_b) =
         derive_ecdh_shared_secrets(&session, HsmEccCurve::P256);
 
     let salt = b"hkdf-salt-only";
-    for &bits in &[128u32, 192u32, 256u32] {
-        let mut hkdf_algo = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, Some(salt), None)
-            .expect("Failed HKDF algo creation");
+    for &hash_algo in supported_hkdf_hash_algos() {
+        for &bits in &[128u32, 192u32, 256u32] {
+            let mut hkdf_algo =
+                HsmHkdfAlgo::new(hash_algo, Some(salt), None).expect("Failed HKDF algo creation");
 
-        let derived_aes_key_a =
-            derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_a, bits);
-        let derived_aes_key_b =
-            derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_b, bits);
+            let derived_aes_key_a =
+                derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_a, bits);
+            let derived_aes_key_b =
+                derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_b, bits);
 
-        let plaintext = format!("HKDF salt-only AES-{bits} roundtrip").into_bytes();
-        assert_aes_cbc_roundtrip(&derived_aes_key_a, &derived_aes_key_b, &plaintext);
+            let plaintext = format!("HKDF hash={hash_algo:?} salt-only AES-{bits} roundtrip");
+            assert_aes_cbc_roundtrip(&derived_aes_key_a, &derived_aes_key_b, plaintext.as_bytes());
+        }
     }
 }
 
-/// Verifies HKDF derivation works correctly when only info is provided
+/// Verifies HKDF derivation works for every hash when only info is provided
 #[session_test]
 fn test_hkdf_with_only_info(session: HsmSession) {
     let (shared_secret_a, shared_secret_b) =
         derive_ecdh_shared_secrets(&session, HsmEccCurve::P256);
 
     let info = b"hkdf-info-only";
-    for &bits in &[128u32, 192u32, 256u32] {
-        let mut hkdf_algo = HsmHkdfAlgo::new(HsmHashAlgo::Sha256, None, Some(info))
-            .expect("Failed HKDF algo creation");
+    for &hash_algo in supported_hkdf_hash_algos() {
+        for &bits in &[128u32, 192u32, 256u32] {
+            let mut hkdf_algo =
+                HsmHkdfAlgo::new(hash_algo, None, Some(info)).expect("Failed HKDF algo creation");
 
-        let derived_aes_key_a =
-            derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_a, bits);
-        let derived_aes_key_b =
-            derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_b, bits);
+            let derived_aes_key_a =
+                derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_a, bits);
+            let derived_aes_key_b =
+                derive_aes_key_from_shared_secret(&session, &mut hkdf_algo, &shared_secret_b, bits);
 
-        let plaintext = format!("HKDF info-only AES-{bits} roundtrip").into_bytes();
-        assert_aes_cbc_roundtrip(&derived_aes_key_a, &derived_aes_key_b, &plaintext);
+            let plaintext = format!("HKDF hash={hash_algo:?} info-only AES-{bits} roundtrip");
+            assert_aes_cbc_roundtrip(&derived_aes_key_a, &derived_aes_key_b, plaintext.as_bytes());
+        }
     }
 }
 
