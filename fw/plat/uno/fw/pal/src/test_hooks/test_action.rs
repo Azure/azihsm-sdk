@@ -118,14 +118,17 @@ pub(super) async fn dispatch<'p>(
 
     match selector.action {
         #[cfg(feature = "azihsm_test_hooks")]
-        SupportedTestAction::ClearUserCredentials => clear_user_credentials::dispatch(
-            pal,
-            io,
-            hdr,
-            decoder,
-            selector.request_field_count,
-            request_len,
-        ),
+        SupportedTestAction::ClearUserCredentials => {
+            clear_user_credentials::dispatch(
+                pal,
+                io,
+                hdr,
+                decoder,
+                selector.request_field_count,
+                request_len,
+            )
+            .await
+        }
         #[cfg(feature = "azihsm_test_hooks")]
         SupportedTestAction::TriggerCrash => {
             trigger_crash::dispatch(decoder, selector.request_field_count, request_len)
