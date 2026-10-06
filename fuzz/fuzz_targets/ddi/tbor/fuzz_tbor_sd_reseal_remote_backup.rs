@@ -60,7 +60,7 @@ enum Mutation {
     TamperSourceBackup { offset: u16, mask: u8 },
 }
 
-#[derive(Debug)]
+#[derive(Arbitrary, Debug)]
 struct FuzzInput {
     mutation: Mutation,
 }
@@ -70,14 +70,6 @@ impl Default for FuzzInput {
         Self {
             mutation: Mutation::Valid,
         }
-    }
-}
-
-impl<'a> Arbitrary<'a> for FuzzInput {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self {
-            mutation: Mutation::arbitrary(u)?,
-        })
     }
 }
 
@@ -486,10 +478,7 @@ fn run_case(ctx: &TestCtx, mutation: Mutation) {
         .expect("close fuzz CO session");
 }
 
-fuzz_target!(|data: &[u8]| {
-    let mut unstructured = Unstructured::new(data);
-    let input = FuzzInput::arbitrary(&mut unstructured).unwrap_or_default();
-
+fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         run_case(ctx, input.mutation);
     });
