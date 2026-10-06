@@ -37,14 +37,13 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
-use libfuzzer_sys::arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
 const LOCAL_SCOPE: u8 = 0b011;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Arbitrary)]
 enum Fault {
     ValidSelfPeer,
     ValidDistinctKeys,
@@ -69,48 +68,13 @@ enum Fault {
     InactiveCoSession,
 }
 
-#[derive(Debug)]
+#[derive(Arbitrary,Debug)]
 struct FuzzInput {
     fault: Fault,
     policy_info: [u8; 64],
     report_data: [u8; KEY_REPORT_DATA_LEN],
     mutation_mask: u8,
     repeat_count: u8,
-}
-
-impl<'a> Arbitrary<'a> for FuzzInput {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let fault = match u8::arbitrary(u)? % 21 {
-            0 => Fault::ValidSelfPeer,
-            1 => Fault::ValidDistinctKeys,
-            2 => Fault::Repeat,
-            3 => Fault::NotFinalized,
-            4 => Fault::MissingOob,
-            5 => Fault::PolicyMismatch,
-            6 => Fault::CloningDisabled,
-            7 => Fault::EmptyMfgrChain,
-            8 => Fault::EmptyOwnerChain,
-            9 => Fault::EmptyPartOwnerChain,
-            10 => Fault::WrongSataAnchor,
-            11 => Fault::MismatchedEvidenceLeaf,
-            12 => Fault::InvalidReportSignature,
-            13 => Fault::InvalidSenderTag,
-            14 => Fault::InvalidBackupTag,
-            15 => Fault::WrongKindBackup,
-            16 => Fault::ZeroReportLength,
-            17 => Fault::OversizedReportLength,
-            18 => Fault::ReportIndexOutOfRange,
-            19 => Fault::ActiveCuSession,
-            _ => Fault::InactiveCoSession,
-        };
-        Ok(Self {
-            fault,
-            policy_info: <[u8; 64]>::arbitrary(u)?,
-            report_data: <[u8; KEY_REPORT_DATA_LEN]>::arbitrary(u)?,
-            mutation_mask: u8::arbitrary(u)?,
-            repeat_count: u8::arbitrary(u)?,
-        })
-    }
 }
 
 struct Evidence {
