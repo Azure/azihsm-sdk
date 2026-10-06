@@ -342,6 +342,10 @@ impl HsmKeyProps {
         self.pub_key_der = Some(pub_key_der.to_vec());
     }
 
+    pub(crate) fn set_flags(&mut self, flags: HsmKeyFlags) {
+        self.flags = flags;
+    }
+
     pub(crate) fn check_supported_flags(&self, supported_flags: HsmKeyFlags) -> bool {
         // Allow additional flags which is settable for all keys(session flag)
         let allowed_flags = supported_flags

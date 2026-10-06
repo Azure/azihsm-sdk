@@ -439,6 +439,11 @@ The algorithm can wrap and unwrap a target asymmetric key of any length and type
 - A temporary AES key is used for wrapping the target key using AZIHSM_ALGO_ID_AES_KEY_WRAP_KWP mechanism.
 - The temporary AES key is wrapped with the wrapping RSA key using AZIHSM_ALGO_ID_RSA_PKCS_OAEP mechanism.
 
+EX sessions support SHA-1, SHA-256, SHA-384, and SHA-512 for the OAEP and
+MGF1 hashes, which must match. SHA-1 requires firmware with TBOR OAEP-SHA1
+support and is intended for legacy compatibility; prefer SHA-2 for new
+applications. This does not change legacy-session behavior.
+
 |                            |                                                                             |
 | -------------------------- | --------------------------------------------------------------------------- |
 | **Algorithm ID**           | `AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP`                                            |

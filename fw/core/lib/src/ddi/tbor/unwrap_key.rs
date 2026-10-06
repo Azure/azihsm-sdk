@@ -53,6 +53,7 @@ use crate::part_state;
 /// Map the wire OAEP [`HashAlgo`] onto the firmware hash algorithm.
 fn oaep_hsm_hash(algo: HashAlgo) -> HsmResult<HsmHashAlgo> {
     match algo {
+        HashAlgo::Sha1 => Ok(HsmHashAlgo::Sha1),
         HashAlgo::Sha256 => Ok(HsmHashAlgo::Sha256),
         HashAlgo::Sha384 => Ok(HsmHashAlgo::Sha384),
         HashAlgo::Sha512 => Ok(HsmHashAlgo::Sha512),
