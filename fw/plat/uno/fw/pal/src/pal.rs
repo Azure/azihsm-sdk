@@ -538,7 +538,7 @@ impl UnoHsmPal {
                     .await;
             }
             Either::Second(value) => {
-                self.handle_ipc_event(IpcChannel::AdminEvent, value);
+                self.handle_ipc_event(IpcChannel::AdminEvent, value).await;
             }
         }
     }
@@ -892,17 +892,32 @@ impl UnoHsmPal {
 
     /// Handle one IPC event notification.
     ///
+    /// The only event Admin raises on this channel is the PCIe reset
+    /// notification (PERST-down or PF FLR, payload `PcieResetReason`).
+    /// Mirroring the reference firmware's `on_flr`, every partition is reset
+    /// before the event is acknowledged: per-tenant state, vault keys,
+    /// identity, and resource mask are cleared and the partition returns to
+    /// `Unallocated`. Admin resets its own function and resource tables
+    /// once it sees the acknowledgement, so the next driver load
+    /// (PfnEnable, SetResource) starts from the same state as a cold boot.
+    ///
+    /// Admin raises this only after its own boot, which waits for the HSM
+    /// to reach `Running`, so GDMA and the admin IO slot used by the vault
+    /// wipe are available. Before `Running` the event is only acknowledged.
+    ///
     /// # Parameters
     /// - `self`: PAL instance providing the IPC driver.
     /// - `channel`: IPC event channel to acknowledge.
     /// - `value`: Raw event payload delivered by hardware.
-    ///
-    /// # Returns
-    /// Returns `()`.
-    ///
-    /// # Side Effects
-    /// Acknowledges the event in the IPC block for `channel`.
-    fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
+    async fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
+        if self.boot_phase.get() == BootPhase::Running {
+            for pfn in 0..crate::part::NUM_PARTITIONS as u8 {
+                if let Err(_e) = self.part_free(HsmPartId::from(pfn)).await {
+                    error!("pcie", _e, "reset event: partition {} reset failed", pfn);
+                }
+            }
+            info!("pcie", "reset event {}: all partitions reset", value);
+        }
         self.ipc.ack_event(channel as u8, value);
     }
 }
