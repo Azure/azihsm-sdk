@@ -70,7 +70,7 @@ pub struct TborKeyReportReq<'a> {
 
     /// The masked-key envelope to attest. Variable length up to
     /// [`KEY_REPORT_MASKED_KEY_MAX_LEN`].
-    #[tbor(buffer, max_len = 3168)]
+    #[tbor(buffer, max_len = 3168, mutable)]
     pub masked_key: &'a [u8],
 
     /// Caller-supplied [`KEY_REPORT_DATA_LEN`] (128 B) report data bound
