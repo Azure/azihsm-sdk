@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+//! KBKDF execution is legacy-only. In EX builds, success-path tests expect the
+//! explicit unsupported-operation failure, while host property guards remain shared.
+
 use azihsm_api::*;
 use azihsm_api_tests_macro::*;
 use azihsm_crypto::Rng;
@@ -254,18 +257,30 @@ fn run_kbkdf_same_secret_same_params_roundtrip(session: &HsmSession) {
 
 /// Verifies KBKDF Counter Mode matrix coverage for P256.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_matrix_p256(session: HsmSession) {
     run_kbkdf_counter_matrix_for_curve(&session, HsmEccCurve::P256);
 }
 
 /// Verifies KBKDF Counter Mode matrix coverage for P384.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_matrix_p384(session: HsmSession) {
     run_kbkdf_counter_matrix_for_curve(&session, HsmEccCurve::P384);
 }
 
 /// Verifies KBKDF Counter Mode matrix coverage for P521.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_matrix_p521(session: HsmSession) {
     run_kbkdf_counter_matrix_for_curve(&session, HsmEccCurve::P521);
 }
@@ -300,7 +315,10 @@ fn test_kbkdf_derive_unsupported_key_kind_fails(session: HsmSession) {
 
     let err = kbkdf_derive_with_props(&session, HsmHashAlgo::Sha256, props)
         .expect_err("KBKDF derive should reject SharedSecret output key kind");
+    #[cfg(not(feature = "session-ex-tests"))]
     assert_eq!(err, HsmError::InvalidArgument);
+    #[cfg(feature = "session-ex-tests")]
+    assert_eq!(err, HsmError::UnsupportedKeyOperation);
 }
 
 /// Verifies KBKDF rejects deriving with zero output bit length.
@@ -322,36 +340,60 @@ fn test_kbkdf_derive_zero_bit_len_fails(session: HsmSession) {
 
 /// Verifies KBKDF works when only a label is supplied.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_label_only_roundtrip(session: HsmSession) {
     run_kbkdf_label_only_roundtrip(&session);
 }
 
 /// Verifies KBKDF works when only a context is supplied.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_context_only_roundtrip(session: HsmSession) {
     run_kbkdf_context_only_roundtrip(&session);
 }
 
 /// Verifies KBKDF roundtrip with HMAC-SHA512 label/context parameters.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_hmac_sha512_label_context_roundtrip(session: HsmSession) {
     run_kbkdf_hash_label_context_roundtrip(&session, HsmHashAlgo::Sha512, b"kbkdf hmac sha512");
 }
 
 /// Verifies KBKDF roundtrip with HMAC-SHA384 label/context parameters.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_hmac_sha384_label_context_roundtrip(session: HsmSession) {
     run_kbkdf_hash_label_context_roundtrip(&session, HsmHashAlgo::Sha384, b"kbkdf hmac sha384");
 }
 
 /// Verifies KBKDF can derive a 128-bit AES key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_derive_aes_128_roundtrip(session: HsmSession) {
     run_kbkdf_aes_size_roundtrip(&session, 128);
 }
 
 /// Verifies KBKDF can derive a 192-bit AES key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_derive_aes_192_roundtrip(session: HsmSession) {
     run_kbkdf_aes_size_roundtrip(&session, 192);
 }
@@ -385,7 +427,10 @@ fn test_kbkdf_derive_invalid_aes_key_size_fails(session: HsmSession) {
 
     let err = kbkdf_derive_with_props(&session, HsmHashAlgo::Sha256, props)
         .expect_err("KBKDF derive should reject unsupported AES key size");
+    #[cfg(not(feature = "session-ex-tests"))]
     assert_eq!(err, HsmError::InvalidArgument);
+    #[cfg(feature = "session-ex-tests")]
+    assert_eq!(err, HsmError::UnsupportedKeyOperation);
 }
 
 /// Verifies KBKDF rejects non-secret output key classes.
@@ -407,12 +452,20 @@ fn test_kbkdf_derive_non_secret_key_class_fails(session: HsmSession) {
 
 /// Verifies KBKDF derives compatible keys from the same shared secret and parameters.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_same_secret_same_params_roundtrip(session: HsmSession) {
     run_kbkdf_same_secret_same_params_roundtrip(&session);
 }
 
 /// Verifies changing KBKDF label changes the derived key material.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_different_label_produces_non_interoperable_key(session: HsmSession) {
     let (secret_a, secret_b) = derive_ecdh_shared_secrets(&session, HsmEccCurve::P256);
 
@@ -434,6 +487,10 @@ fn test_kbkdf_different_label_produces_non_interoperable_key(session: HsmSession
 
 /// Verifies changing KBKDF context changes the derived key material.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to derive AES key: UnsupportedKeyOperation")
+)]
 fn test_kbkdf_different_context_produces_non_interoperable_key(session: HsmSession) {
     let (secret_a, secret_b) = derive_ecdh_shared_secrets(&session, HsmEccCurve::P256);
 

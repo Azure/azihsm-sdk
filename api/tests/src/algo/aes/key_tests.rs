@@ -340,18 +340,30 @@ fn test_aes_256_key_unwrap(session: HsmSession) {
 
 /// Test AES key unmasking for key sizes of 128
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask AES key: UnsupportedKeyOperation")
+)]
 fn test_aes_128_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 128);
 }
 
 /// Test AES key unmasking for key sizes of 192
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask AES key: UnsupportedKeyOperation")
+)]
 fn test_aes_192_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 192);
 }
 
 /// Test AES key unmasking for key sizes of 256
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask AES key: UnsupportedKeyOperation")
+)]
 fn test_aes_256_key_unmask(session: HsmSession) {
     test_aes_key_unmask_common(&session, 256);
 }
@@ -447,6 +459,12 @@ fn test_aes_unwrap_wrong_algo_fails(session: HsmSession) {
 /// and that the unmasked key is independent of the original key by deleting the
 /// original key before using the unmasked key
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_aes_unmasked_key_independent_handle(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -1206,6 +1224,10 @@ fn test_aes_xts_key_unwrap(session: HsmSession) {
 /// and decryption with correct tweak handling. Also validates that the unmasked key has
 ///  expected properties and capabilities, and is not local to the session.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask AES-XTS key: UnsupportedKeyOperation")
+)]
 fn test_aes_xts_key_unmask(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -1487,6 +1509,10 @@ fn test_aes_xts_unwrap_truncated_blob_fails(session: HsmSession) {
 /// Test AES-GCM key generation, and validate the generated key has expected properties
 /// and capabilities.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to generate AES-GCM key: UnsupportedAlgorithm")
+)]
 fn test_aes_gcm_256_key_generation(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -1515,6 +1541,10 @@ fn test_aes_gcm_256_key_generation(session: HsmSession) {
 /// Test AES-GCM key unmasking for a 256-bit key, and validate the unmasked key has expected
 /// properties and capabilities, and matches the original key's properties.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask AES-GCM key: UnsupportedKeyOperation")
+)]
 fn test_aes_gcm_256_key_unmask(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -1783,6 +1813,10 @@ fn test_aes_gcm_key_gen_no_decrypt_flag_fails(session: HsmSession) {
 /// verifies AES-GCM key generation with non-session persistence creates a non-session key
 /// and succeeds with correct properties and capabilities
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Key generation failed: UnsupportedAlgorithm")
+)]
 fn test_aes_gcm_key_gen_persistent(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)

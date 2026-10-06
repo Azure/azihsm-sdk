@@ -530,6 +530,8 @@ fn get_rsa_unwrapping_key_tbor(
 /// The response key kind, re-derived public key, masked private-key metadata,
 /// and requested private/public properties are validated before an unpinned
 /// key-pair handle is returned.
+/// RSA/RSA-CRT short-input and device argument failures retain the legacy
+/// `DdiCmdFailure` result; ECC and other errors keep their existing mappings.
 fn rsa_aes_unwrap_key_pair_tbor(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -544,7 +546,10 @@ fn rsa_aes_unwrap_key_pair_tbor(
     let (key_class, expected_key_kind) = tbor_key_class_and_kind(&priv_key_props)?;
     let unwrapping_modulus_len = unwrapping_key.size();
     if wrapped_key.len() < unwrapping_modulus_len {
-        return Err(HsmError::InvalidArgument);
+        return Err(match priv_key_props.kind() {
+            HsmKeyKind::Rsa | HsmKeyKind::RsaCrt => HsmError::DdiCmdFailure,
+            _ => HsmError::InvalidArgument,
+        });
     }
 
     // The host wrapper emits the OAEP ciphertext big-endian; TBOR consumes
@@ -565,7 +570,7 @@ fn rsa_aes_unwrap_key_pair_tbor(
     let mut cookie = None;
     let resp = unwrapping_key.with_dev(|dev| {
         dev.exec_op_tbor(&req, None, &mut cookie)
-            .map_err(HsmError::from)
+            .map_err(|err| map_tbor_key_pair_unwrap_error(priv_key_props.kind(), err))
     })?;
 
     if resp.key_kind != expected_key_kind {
@@ -587,6 +592,16 @@ fn rsa_aes_unwrap_key_pair_tbor(
         dev_priv_key_props,
         dev_pub_key_props,
     ))
+}
+
+/// Preserve legacy RSA unwrap argument errors without changing other DDI mappings.
+fn map_tbor_key_pair_unwrap_error(kind: HsmKeyKind, error: DdiError) -> HsmError {
+    match (kind, error) {
+        (HsmKeyKind::Rsa | HsmKeyKind::RsaCrt, DdiError::TborStatus(TborStatus::InvalidArg)) => {
+            HsmError::DdiCmdFailure
+        }
+        (_, error) => HsmError::from(error),
+    }
 }
 
 /// Converts `n_le || e_le` RSA wire bytes to the crypto crate's representation.
