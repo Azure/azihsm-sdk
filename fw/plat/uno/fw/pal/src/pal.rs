@@ -983,6 +983,19 @@ impl HsmPal for UnoHsmPal {
             core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET) as *mut u32, 0);
             core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET) as *mut u32, 0);
         }
+        // The HSM also owns the reply ring of the Admin→HSM request channel
+        // (the channel that carries the boot handshake): reset its producer
+        // and consumer indices on every boot so a reply left unread before a
+        // warm reset is not taken by Admin as the answer to its first boot
+        // request. Admin waits for `Done` (published below) before sending.
+        // Mirrors the reference `admin_to_hsm_ipc_channel_config` (`env.rs`).
+        // SAFETY: both offsets are 4-byte-aligned words in the GSRAM
+        // Admin↔HSM IPC block (`io_gsram`), valid for the device lifetime;
+        // Admin does not access the reply ring until boot status is `Done`.
+        unsafe {
+            ((IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_PI_OFFSET) as *mut u32).write_volatile(0);
+            ((IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_CI_OFFSET) as *mut u32).write_volatile(0);
+        }
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
         self.ipc.enable(IpcChannel::FpMessage as u8);
