@@ -49,7 +49,7 @@ pub enum KeyScope {
 /// unwrapping schemas. Kept as an [`open_enum`] so an unrecognized
 /// discriminant round-trips as `HashAlgo(x)` and is rejected on-device
 /// rather than failing to decode. Each command restricts which algorithms
-/// it accepts; SHA-1 is supported only by `Hash` and `HkdfDerive`.
+/// it accepts; SHA-1 is supported by `Hash`, `HkdfDerive`, and `UnwrapKey`.
 #[repr(u8)]
 #[open_enum]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

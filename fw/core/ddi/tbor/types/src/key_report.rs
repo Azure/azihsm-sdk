@@ -41,24 +41,20 @@ pub const TBOR_OP_KEY_REPORT: u8 = 0x10;
 ///
 /// A masked-key envelope is `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(N) ‖
 /// tag(16)` = `228 + N`, where `N` is the raw key plaintext (48 B for a
-/// P-384 sealing scalar). The command currently attests only ECC-private
-/// kinds; this bound is sized generously to leave headroom for larger
-/// key kinds (e.g. symmetric or larger curves) without a wire change.
-/// Pinned into the `#[tbor(buffer, max_len = 512)]` literal on
+/// P-384 sealing scalar). This bound matches `UnwrapKey` so RSA and RSA-CRT
+/// private-key envelopes also fit.
+/// Pinned into the `#[tbor(buffer, max_len = 3168)]` literal on
 /// [`TborKeyReportReq::masked_key`].
-pub const KEY_REPORT_MASKED_KEY_MAX_LEN: usize = 512;
+pub const KEY_REPORT_MASKED_KEY_MAX_LEN: usize = crate::UNWRAP_MASKED_KEY_MAX_LEN;
 
 /// Length of the caller-supplied `report_data` field bound into the
 /// report payload. Pinned into the `#[tbor(buffer, len = 128)]` literal
 /// on [`TborKeyReportReq::report_data`].
 pub const KEY_REPORT_DATA_LEN: usize = 128;
 
-/// Maximum wire length of the returned COSE_Sign1 `report`. The command
-/// currently attests ECC-private keys (P-256/384/521 COSE_Key); this
-/// bound carries headroom for a future largest case (a 4096-bit RSA
-/// COSE_Key) so the wire size need not change if RSA attestation is
-/// later added. Pinned into the `#[tbor(buffer, max_len = 1024)]`
-/// literal on [`TborKeyReportResp::report`].
+/// Maximum wire length of the returned COSE_Sign1 `report`, including the
+/// largest supported public key (a 4096-bit RSA COSE_Key). Pinned into the
+/// `#[tbor(buffer, max_len = 1024)]` literal on [`TborKeyReportResp::report`].
 pub const KEY_REPORT_MAX_LEN: usize = 1024;
 
 /// `KeyReport` request schema.
@@ -74,7 +70,7 @@ pub struct TborKeyReportReq<'a> {
 
     /// The masked-key envelope to attest. Variable length up to
     /// [`KEY_REPORT_MASKED_KEY_MAX_LEN`].
-    #[tbor(buffer, max_len = 512)]
+    #[tbor(buffer, max_len = 3168)]
     pub masked_key: &'a [u8],
 
     /// Caller-supplied [`KEY_REPORT_DATA_LEN`] (128 B) report data bound
@@ -134,7 +130,7 @@ mod tests {
     fn schema_lengths_match_pinned_values() {
         // The `#[tbor(... len)]` attributes must remain numeric literals;
         // pin them against the exported consts.
-        const _: () = assert!(512 == KEY_REPORT_MASKED_KEY_MAX_LEN);
+        const _: () = assert!(3168 == KEY_REPORT_MASKED_KEY_MAX_LEN);
         const _: () = assert!(128 == KEY_REPORT_DATA_LEN);
         const _: () = assert!(1024 == KEY_REPORT_MAX_LEN);
         assert_eq!(TBOR_OP_KEY_REPORT, 0x10);
