@@ -59,7 +59,7 @@ struct DdiTestActionResp {
 #[derive(Debug, Copy, Clone)]
 #[repr(u32)]
 enum SupportedTestAction {
-    /// Inject a crash into the HSM or Admin core.
+    /// Inject a crash into the HSM/Admin/FP cores.
     #[cfg(feature = "azihsm_test_hooks")]
     TriggerCrash = 8,
     /// Clear the partition's stored user credential.

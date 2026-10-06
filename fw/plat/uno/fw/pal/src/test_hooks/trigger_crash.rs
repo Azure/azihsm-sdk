@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Decode and execute `TestAction::TriggerCrash` for the HSM and Admin cores.
+//! Decode and execute `TestAction::TriggerCrash` for the HSM, Admin or Fast-path cores.
 //!
 //! The wire enums and request map mirror the host test-hooks definitions
 //! locally so the PAL remains independent of the host crate.
