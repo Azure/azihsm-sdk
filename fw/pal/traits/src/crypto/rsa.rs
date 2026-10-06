@@ -212,8 +212,9 @@ pub trait HsmRsa {
     ///   matching `key_size.is_crt()`.
     /// - `y` — input integer; must be exactly
     ///   `key_size.modulus_len()` bytes, in wire **little-endian** byte
-    ///   order.  The PAL flips to its primitive's native order (e.g. the
-    ///   std/OpenSSL PAL reverses to big-endian).
+    ///   order, and must satisfy `1 < y < n - 1`, where `n` is the
+    ///   private key's modulus.  The PAL flips to its primitive's native
+    ///   order (e.g. the std/OpenSSL PAL reverses to big-endian).
     /// - `x` — output integer; must be exactly
     ///   `key_size.modulus_len()` bytes, written in wire **little-endian**
     ///   byte order.
@@ -221,7 +222,8 @@ pub trait HsmRsa {
     /// # Returns
     ///
     /// - `Ok(())` — `x` populated.
-    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch.
+    /// - `Err(HsmError::InvalidArg)` — buffer-size mismatch or `y` does
+    ///   not satisfy `1 < y < n - 1`.
     /// - `Err(HsmError)` — PKA driver failure.
     async fn mod_exp_priv(
         &self,

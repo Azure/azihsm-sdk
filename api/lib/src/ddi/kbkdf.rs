@@ -52,6 +52,9 @@ pub(crate) fn kbkdf_derive(
     context: Option<&[u8]>,
     derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    // KBKDF derivation is MBOR-only and cannot carry a masking scope;
+    // reject an explicit scope so it is not silently dropped.
+    derived_key_props.ensure_scope_supported(false)?;
     // Build the DDI KBKDF counter-mode derive key command request.
     let req = DdiKbkdfCounterHmacDeriveCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::KbkdfCounterHmacDerive, &shared_secret.session()),

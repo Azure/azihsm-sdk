@@ -232,6 +232,10 @@ impl<S: TableStorage> KeyVault<S> {
     /// remain reserved.  It can be re-enabled via [`enable`](Self::enable)
     /// or finalized (zeroized) via [`delete`](Self::delete).
     ///
+    /// Teardown paths that must still resolve a soft-deleted key use the
+    /// disabled-aware lookups [`key_entry`](Self::key_entry) and
+    /// [`key_location_present`](Self::key_location_present).
+    ///
     /// This is the staging half of a reversible delete used by the
     /// upper-layer undo log: `disable` at mutation time, `enable` to roll
     /// back on failure, `delete` to commit (zeroize) on success.  Unlike
@@ -290,6 +294,36 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(())
     }
 
+    /// Visits every session-scoped key bound to `session`, passing each
+    /// key's id, kind, and stored material to `f`.
+    ///
+    /// Read-only pre-pass used by callers that must release an external
+    /// mirror of a key (e.g. a bulk-crypto engine slot, addressed by the
+    /// stored handle) before the vault entries are dropped by
+    /// [`delete_by_session`](Self::delete_by_session).  It visits the same
+    /// entries that walk evicts — live *and* disabled — so a soft-deleted
+    /// key's external mirror is not missed.
+    pub fn for_each_session_key<F: FnMut(HsmKeyId, HsmVaultKeyKind, &DmaBuf) -> HsmResult<()>>(
+        &self,
+        session: u16,
+        mut f: F,
+    ) -> HsmResult<()> {
+        for table in 0..self.storage.table_count() {
+            if !self.storage.is_valid_table(table) {
+                continue;
+            }
+            for slot in 0..ENTRIES_PER_TABLE {
+                let entry = *self.storage.entry(table, slot)?;
+                if !entry.is_free() && entry.session() && entry.session_or_tag() == session {
+                    let key_id = make_key_id(table, slot);
+                    let blob = self.key_present(key_id)?;
+                    f(key_id, entry.kind(), blob)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Deletes every key in every owned table, zeroing all material.
     pub async fn clear<G: HsmGdmaController>(
         &mut self,
@@ -319,17 +353,23 @@ impl<S: TableStorage> KeyVault<S> {
     pub fn key(&self, key_id: HsmKeyId) -> HsmResult<&DmaBuf> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
-        let len = self.resolved_len(table, &entry)?;
-        let key_off = entry.attrs_byte_offset() + ATTRIBUTES_BLOB_SIZE;
-        // Bound-check against the blob rather than indexing blindly: a
-        // corrupted block offset / persisted length must surface as
-        // `KeyNotFound`, never a panic (untrusted-input boundary).
-        let blob = self.storage.blob(table)?;
-        let end = key_off.checked_add(len).ok_or(HsmError::KeyNotFound)?;
-        if end > blob.len() {
-            return Err(HsmError::KeyNotFound);
-        }
-        Ok(&blob[key_off..end])
+        self.blob_of(table, &entry)
+    }
+
+    /// Disabled-aware variant of [`key`](Self::key), for the teardown walks
+    /// that also visit disabled entries (see [`key_entry`](Self::key_entry)).
+    fn key_present(&self, key_id: HsmKeyId) -> HsmResult<&DmaBuf> {
+        let (table, slot) = split_key_id(key_id);
+        let entry = self.entry_present(table, slot)?;
+        self.blob_of(table, &entry)
+    }
+
+    fn blob_of(&self, table: usize, entry: &Entry) -> HsmResult<&DmaBuf> {
+        let (_, off, len) = self.location_of(table, entry)?;
+        // `location_of` bound-checked `off..off + len` against the blob, so
+        // a corrupted block offset / persisted length has already surfaced
+        // as `KeyNotFound` rather than a panic (untrusted-input boundary).
+        Ok(&self.storage.blob(table)?[off..off + len])
     }
 
     /// Returns a key's [`HsmVaultKeyKind`].
@@ -346,11 +386,30 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(entry.session().then_some(entry.session_or_tag()))
     }
 
+    /// Disabled-aware entry lookup: returns any *present* entry, live or
+    /// disabled, rejecting only a free slot.
+    ///
+    /// The undo-log commit path deletes a soft-deleted (disabled) key, so a
+    /// caller that must classify a key before deleting it needs to see the
+    /// entries that [`key_kind`](Self::key_kind) intentionally hides.
+    pub fn key_entry(&self, key_id: HsmKeyId) -> HsmResult<Entry> {
+        let (table, slot) = split_key_id(key_id);
+        self.entry_present(table, slot)
+    }
+
     /// Returns a key's [`HsmVaultKeyAttrs`].
     pub fn key_attrs(&self, key_id: HsmKeyId) -> HsmResult<HsmVaultKeyAttrs> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
         Ok(self.read_attrs(table, entry.attrs_byte_offset())?.attrs)
+    }
+
+    /// Returns the owning session id for a session-scoped key, or `None`
+    /// for a partition-scoped (tag-addressed) key.
+    pub fn key_session(&self, key_id: HsmKeyId) -> HsmResult<Option<u16>> {
+        let (table, slot) = split_key_id(key_id);
+        let entry = self.entry(table, slot)?;
+        Ok(entry.session().then(|| entry.session_or_tag()))
     }
 
     /// Returns the canonical byte length for a key `kind` — the fixed size
@@ -404,7 +463,19 @@ impl<S: TableStorage> KeyVault<S> {
     pub fn key_location(&self, key_id: HsmKeyId) -> HsmResult<(usize, usize, usize)> {
         let (table, slot) = split_key_id(key_id);
         let entry = self.entry(table, slot)?;
-        let len = self.resolved_len(table, &entry)?;
+        self.location_of(table, &entry)
+    }
+
+    /// Disabled-aware variant of [`key_location`](Self::key_location), for
+    /// the delete path (see [`key_entry`](Self::key_entry)).
+    pub fn key_location_present(&self, key_id: HsmKeyId) -> HsmResult<(usize, usize, usize)> {
+        let (table, slot) = split_key_id(key_id);
+        let entry = self.entry_present(table, slot)?;
+        self.location_of(table, &entry)
+    }
+
+    fn location_of(&self, table: usize, entry: &Entry) -> HsmResult<(usize, usize, usize)> {
+        let len = self.resolved_len(table, entry)?;
         let off = entry.attrs_byte_offset() + ATTRIBUTES_BLOB_SIZE;
         // Validate `off..off+len` lies within the table blob: callers
         // build a raw pointer/slice from this tuple (e.g. the Uno PAL),
@@ -432,11 +503,21 @@ impl<S: TableStorage> KeyVault<S> {
     }
 
     fn entry(&self, table: usize, slot: usize) -> HsmResult<Entry> {
+        let entry = self.entry_present(table, slot)?;
+        if entry.disabled() {
+            return Err(HsmError::KeyNotFound);
+        }
+        Ok(entry)
+    }
+
+    /// Like [`entry`](Self::entry) but also accepts a disabled entry —
+    /// only a genuinely free slot is rejected.
+    fn entry_present(&self, table: usize, slot: usize) -> HsmResult<Entry> {
         if !self.storage.is_valid_table(table) || slot >= ENTRIES_PER_TABLE {
             return Err(HsmError::KeyNotFound);
         }
         let entry = *self.storage.entry(table, slot)?;
-        if entry.is_free() || entry.disabled() {
+        if entry.is_free() {
             return Err(HsmError::KeyNotFound);
         }
         Ok(entry)

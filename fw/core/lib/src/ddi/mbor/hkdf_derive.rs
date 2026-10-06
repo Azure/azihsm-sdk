@@ -29,10 +29,10 @@ use super::*;
 /// single-threaded cooperative executor; multiple IOs are in flight and
 /// interleave at await points — including inside the awaited
 /// `vault_key_create` (which can yield on Uno during the GDMA key copy) —
-/// but this handler's only partition-state mutation is that single,
-/// self-contained `vault_key_create`, with no multi-step
-/// read-modify-write across an await for an interleaved handler to
-/// corrupt.
+/// but this handler's only partition-state mutations are that single,
+/// self-contained `vault_key_create` and, if a later step fails, the
+/// deletion of the key it just created — no multi-step read-modify-write
+/// across an await for an interleaved handler to corrupt.
 pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -75,50 +75,76 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
 
     {
         let ikm = pal.vault_key(io, input_key_id)?;
-        pal.hkdf_extract(io, algo, body.salt.as_deref(), ikm, prk)
-            .await?;
+        if let Err(e) = pal
+            .hkdf_extract(io, algo, body.salt.as_deref(), ikm, prk)
+            .await
+        {
+            prk.zeroize();
+            return Err(e);
+        }
     }
 
-    pal.hkdf_expand(io, algo, prk, body.info.as_deref(), out)
-        .await?;
+    // The PRK is consumed only by the expansion; wipe it on both paths.
+    let expanded = pal
+        .hkdf_expand(io, algo, prk, body.info.as_deref(), out)
+        .await;
+    prk.zeroize();
+    if let Err(e) = expanded {
+        out.zeroize();
+        return Err(e);
+    }
 
-    // Commit the derived key to the vault, session-scoped iff requested.
-    let key_id: u16 = pal
-        .vault_key_create(
-            io,
-            out,
-            target.kind,
-            attrs.session().then_some(HsmSessId::from(sess_id)),
-            attrs,
-        )
-        .await?
-        .into();
+    // Commit the derived key: AES-GCM bulk keys are handed to the
+    // bulk-crypto backend (the vault records only the returned
+    // `bulk_key_id` handle, carried in the response for later bulk GCM
+    // ops); every other kind is stored directly in the vault.  Scrub the
+    // derived material if the commit fails, before propagating the error.
+    let (key_handle, bulk_key_id) =
+        match super::bulk::commit_key(pal, io, out, target.kind, HsmSessId::from(sess_id), attrs)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                out.zeroize();
+                return Err(e);
+            }
+        };
+    let key_id: u16 = key_handle.into();
 
     // Envelope the derived key into the host's opaque re-import blob.
-    let masked_key = super::masking::mask_blob(
-        pal,
-        io,
-        HsmSessId::from(sess_id),
-        super::masking::MaskSpec {
-            attrs,
-            key_type: super::from_pal::vault_kind_ddi(target.kind)?,
-            key_label: body.key_properties.key_label,
-            key_length: out.len() as u16,
-        },
-        &out[..],
-    )
-    .await?;
-
-    let resp = pal.dma_alloc_var(io, |buf| {
-        super::encode_resp(
-            &super::success_hdr_sess(hdr, DdiOp::HkdfDerive, sess_id),
-            &DdiHkdfDeriveResp {
-                key_id,
-                masked_key,
-                bulk_key_id: None,
+    let result = async {
+        let masked_key = super::masking::mask_blob(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            super::masking::MaskSpec {
+                attrs,
+                key_type: super::from_pal::vault_kind_ddi(target.kind)?,
+                key_label: body.key_properties.key_label,
+                key_length: out.len() as u16,
             },
-            buf,
+            &out[..],
         )
-    })?;
-    Ok(resp)
+        .await?;
+
+        pal.dma_alloc_var(io, |buf| {
+            super::encode_resp(
+                &super::success_hdr_sess(hdr, DdiOp::HkdfDerive, sess_id),
+                &DdiHkdfDeriveResp {
+                    key_id,
+                    masked_key,
+                    bulk_key_id,
+                },
+                buf,
+            )
+        })
+    }
+    .await;
+
+    // Scrub the derived key material now that the vault (or the bulk-crypto
+    // backend, for bulk keys) owns it and masking has consumed it.  Wipe on
+    // all paths — including a masking error — since the per-IO arena is not
+    // guaranteed to be wiped on teardown.
+    out.zeroize();
+    super::bulk::rollback_on_err(pal, io, key_handle, result.map(|b| &*b)).await
 }

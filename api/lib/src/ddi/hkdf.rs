@@ -59,6 +59,9 @@ pub(crate) fn hkdf_derive(
     info: Option<&[u8]>,
     derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    // A masking scope can only be honored on the TBOR path; reject an
+    // explicit scope on MBOR so it is not silently dropped.
+    derived_key_props.ensure_scope_supported(shared_secret.session().is_ex())?;
     // Transport is selected by session type: a V2 (TBOR) session derives
     // from the caller-held masked shared secret; a V1 (MBOR) session from
     // the device-resident secret id.
@@ -131,9 +134,10 @@ fn hkdf_derive_tbor(
         return Err(HsmError::InvalidKeyProps);
     }
 
+    let scope = derived_key_props.tbor_scope();
     let req = TborHkdfDeriveReq {
         session_id: shared_secret.session().ex_session_id()?,
-        scope: derived_key_props.tbor_scope(),
+        scope,
         hash_algo: tbor_hash_algo(hash_algo)?,
         key_type,
         // Fixed canonical AES / HMAC output; the variable-length HMAC
@@ -150,6 +154,7 @@ fn hkdf_derive_tbor(
             .map_err(HsmError::from)
     })?;
 
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     let dev_key_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
     // Validate that the device returned properties match the requested properties.
     if !derived_key_props.validate_dev_props(&dev_key_props) {

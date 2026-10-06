@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
@@ -191,10 +192,13 @@ impl UnoHsmPal {
     /// `Allocated | Enabled | Disabled → Unallocated`.
     ///
     /// If the partition is `Enabled`, its enable-time state is cleared first
-    /// (an implicit disable). The identity key is deleted, all identity and
-    /// enable-time material is zeroized, the resource mask is released, and
-    /// the generation counter is bumped so previously issued key handles are
-    /// rejected. Freeing an already-`Unallocated` partition is a no-op.
+    /// (an implicit disable). The identity key and every other vault key are
+    /// deleted (releasing the partition's fast-path bulk-key slots), all
+    /// identity and enable-time material is zeroized, the resource mask is
+    /// released, and the generation counter is bumped so previously issued
+    /// key handles are rejected. Freeing an already-`Unallocated` partition is
+    /// a no-op. If the vault clear fails, its error is returned and the
+    /// partition stays allocated so the free can be retried.
     pub(crate) async fn part_free(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         if part.state()? == PartState::Unallocated {
@@ -202,16 +206,21 @@ impl UnoHsmPal {
         }
 
         // Disable: clear enable-time keys/state (no-op if not enabled), then
-        // delete the identity key. One admin session covers every vault
+        // delete the identity key and every remaining vault key, which also
+        // releases the fast-path bulk-key slots (the engine drops the keys on
+        // the function's teardown). One admin session covers every vault
         // delete below, so the slot is scrubbed once instead of once per key.
-        self.with_admin_io(pid, async |admin_io, _alloc| {
-            self.clear_enabled_state(admin_io, pid).await;
-            if let Some(key_id) = part.id_key_id() {
-                self.delete_key(admin_io, key_id).await;
-            }
-        })
-        .await;
+        let cleared = self
+            .with_admin_io(pid, async |admin_io, _alloc| {
+                self.clear_enabled_state(admin_io, pid).await;
+                if let Some(key_id) = part.id_key_id() {
+                    self.delete_key(admin_io, key_id).await;
+                }
+                self.vault_clear(admin_io).await
+            })
+            .await;
 
+        cleared?;
         part.clear_identity();
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
@@ -585,12 +594,13 @@ impl UnoHsmPal {
         // because the session slots were never freed.
 
         // Wipe every vault key (app + session + internal) so no prior
-        // tenant key material survives the reset. Runs inside a
-        // `with_admin_io` session so the per-IO scratch the clear touches
-        // is scrubbed on exit — an admin IO obtained any other way would
-        // bypass the teardown wipe.
+        // tenant key material survives the reset, and release the partition's
+        // fast-path engine bulk-key slots. Runs inside a `with_admin_io`
+        // session so the per-IO scratch the clear touches is scrubbed on
+        // exit — an admin IO obtained any other way would bypass the
+        // teardown wipe.
         self.with_admin_io(pid, async |admin_io, _alloc| {
-            crate::vault::vault(admin_io).clear(self, admin_io).await
+            self.vault_clear(admin_io).await
         })
         .await?;
         // Clear the per-tenant persistent state (including the session
@@ -652,14 +662,12 @@ impl UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
-        // Raw admin IO rather than a `with_admin_io` session: this path is
-        // synchronous (it must not yield, so it cannot await a scrub) and it
-        // allocates no scratch — `create_sync` copies straight from the
-        // `&'static` GSRAM slot into vault storage, so the admin slot is never
-        // dirtied and there is nothing to wipe. The handle is only used to
-        // select the partition's vault.
-        let admin_io = UnoHsmIo::admin_no_scrub(pid);
-        let kid = crate::vault::vault(&admin_io).create_sync(
+        // The caller's IO selects the partition's vault. `create_sync` copies
+        // straight from the `&'static` GSRAM slot into vault storage, so no
+        // scratch is allocated. The shared admin slot is deliberately not
+        // used: rewriting its `IO_META` here would retarget an admin session
+        // suspended on another partition's provisioning.
+        let kid = crate::vault::vault(io).create_sync(
             u8::from(pid),
             bk,
             HsmVaultKeyKind::Rsa2kPrivate,

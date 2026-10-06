@@ -36,6 +36,7 @@ pub mod io_gsram;
 pub mod key_vault_table_t;
 pub mod oic;
 pub mod part_store_t;
+pub mod psram;
 pub mod rng;
 pub mod sha;
 pub mod trace_mailbox;
