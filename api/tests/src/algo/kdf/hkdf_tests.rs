@@ -7,7 +7,6 @@ use azihsm_crypto as crypto;
 use azihsm_crypto::DeriveOp;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::ImportableKey;
-use azihsm_crypto::KeyGenerationOp;
 use azihsm_crypto::PrivateKey;
 use azihsm_crypto::Rng;
 
@@ -622,8 +621,10 @@ fn test_hkdf_sha1_matches_host(session: HsmSession) {
     let (device_private, device_public) =
         generate_ecc_keypair_with_derive(session.clone(), curve, true)
             .expect("Failed to generate device ECDH key pair");
+    let host_curve =
+        crypto::EccCurve::try_from(curve.key_size_bits()).expect("Unsupported host ECDH curve");
     let host_private =
-        crypto::EccPrivateKey::generate(secret_len).expect("Failed to generate host ECDH key");
+        crypto::EccPrivateKey::from_curve(host_curve).expect("Failed to generate host ECDH key");
     let host_public = host_private
         .public_key()
         .expect("Failed to get host public key");
