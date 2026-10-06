@@ -511,6 +511,11 @@ struct azihsm_algo algo = {
 
 ECDSA without hashing is an algorithm for single-part signatures and verification for ECDSA.
 
+EX sessions support SHA-256, SHA-384, and SHA-512 digests on P-256, P-384,
+and P-521. When the digest is longer than the curve's order, signing retains
+the most significant bits as required by ECDSA; for example, P-256 with
+SHA-512 uses the first 256 bits of the big-endian digest.
+
 |                            |                                                           |
 | -------------------------- | --------------------------------------------------------- |
 | **Algorithm ID**           | `AZIHSM_ALGO_ID_ECDSA`                                    |
