@@ -102,17 +102,30 @@ impl KeyClass {
     }
 
     /// Whether the requested usage is one of the exact permission groups
-    /// accepted by `UnwrapKey` for this class.
+    /// accepted by `UnwrapKey` for this class. Undefined bits are ignored,
+    /// matching firmware's `attrs_for_class`, which checks only the seven
+    /// known usage flags.
     fn accepts_usage(self, usage: u64) -> bool {
+        let known_usage = usage
+            & (KEY_USAGE_ENCRYPT
+                | KEY_USAGE_DECRYPT
+                | KEY_USAGE_SIGN
+                | KEY_USAGE_VERIFY
+                | KEY_USAGE_DERIVE
+                | KEY_USAGE_WRAP
+                | KEY_USAGE_UNWRAP);
         match self {
-            Self::Aes => usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT),
+            Self::Aes => known_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT),
             Self::Rsa | Self::RsaCrt => {
-                usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
-                    || usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT)
+                known_usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+                    || known_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT)
             }
-            Self::Ecc => usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY) || usage == KEY_USAGE_DERIVE,
+            Self::Ecc => {
+                known_usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+                    || known_usage == KEY_USAGE_DERIVE
+            }
             Self::HmacSha256 | Self::HmacSha384 | Self::HmacSha512 => {
-                usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+                known_usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
             }
         }
     }
