@@ -405,7 +405,7 @@ fn run_invalid_signature_format_test(
     );
 }
 
-/// Verifies hash/curve mismatch does not incorrectly succeed
+/// Verifies supported hashes sign and verify even when their width differs from the curve.
 fn run_hash_curve_mismatch_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
@@ -415,11 +415,11 @@ fn run_hash_curve_mismatch_test(session: &HsmSession, curve: HsmEccCurve, algo: 
     let mut verify_algo = HsmHashSignAlgo::new(algo);
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, data, &sig);
 
-    // must NOT incorrectly verify
     assert!(
-        result.is_ok(),
-        "Hash/curve mismatch should succeed for {:?}, got {:?}",
+        matches!(result, Ok(true)),
+        "Signature must verify for {:?} with {:?}, got {:?}",
         curve,
+        algo,
         result
     );
 }
