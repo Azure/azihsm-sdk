@@ -1507,12 +1507,8 @@ fn test_aes_xts_unwrap_truncated_blob_fails(session: HsmSession) {
 // ================================
 
 /// Test AES-GCM key generation, and validate the generated key has expected properties
-/// and capabilities.
+/// and capabilities. Unsupported generation must remain a test failure.
 #[session_test]
-#[cfg_attr(
-    feature = "session-ex-tests",
-    should_panic(expected = "Failed to generate AES-GCM key: UnsupportedAlgorithm")
-)]
 fn test_aes_gcm_256_key_generation(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -1813,10 +1809,6 @@ fn test_aes_gcm_key_gen_no_decrypt_flag_fails(session: HsmSession) {
 /// verifies AES-GCM key generation with non-session persistence creates a non-session key
 /// and succeeds with correct properties and capabilities
 #[session_test]
-#[cfg_attr(
-    feature = "session-ex-tests",
-    should_panic(expected = "Key generation failed: UnsupportedAlgorithm")
-)]
 fn test_aes_gcm_key_gen_persistent(session: HsmSession) {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
