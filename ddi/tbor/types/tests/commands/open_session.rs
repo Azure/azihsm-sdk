@@ -844,7 +844,14 @@ fn session_open_init_multi_threaded_single_winner_keeps_pending_session_finishab
     );
 
     for err in rejections.into_iter().map(Result::unwrap_err) {
-        assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
+        // A loser may reach FW before the winning response binds the fd, or
+        // encounter the driver's per-fd limit after that binding completes.
+        match err {
+            DdiError::TborStatus(status)
+                if status == TborStatus::VaultSessionLimitReached
+                    || status == TborStatus::FileHandleSessionLimitReached => {}
+            other => panic!("unexpected SessionOpenInit rejection: {other:?}"),
+        }
     }
 
     let pending = winners
