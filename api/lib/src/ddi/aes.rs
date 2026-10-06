@@ -506,6 +506,7 @@ fn aes_xts_encrypt_decrypt(
 /// Creates a new AES-GCM key using the specified key properties and returns both
 /// the key handle for performing operations and the masked key material for
 /// secure storage. AES-GCM keys are 256-bit only.
+/// Uses MBOR for legacy sessions; TBOR generation is not yet supported.
 ///
 /// # Arguments
 ///
@@ -526,6 +527,18 @@ fn aes_xts_encrypt_decrypt(
 /// - The session is invalid or closed
 #[resiliency_key_gen(session = "session")]
 pub(crate) fn aes_gcm_generate_key(
+    session: &HsmSession,
+    props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    if session.is_ex() {
+        aes_gcm_generate_key_tbor(session, props)
+    } else {
+        aes_gcm_generate_key_mbor(session, props)
+    }
+}
+
+/// Generates an AES-GCM bulk key using the legacy MBOR command.
+fn aes_gcm_generate_key_mbor(
     session: &HsmSession,
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
@@ -553,6 +566,14 @@ pub(crate) fn aes_gcm_generate_key(
     }
 
     Ok((key_id.release(), key_props))
+}
+
+/// Placeholder for TBOR AES-GCM key generation, which is not yet supported.
+fn aes_gcm_generate_key_tbor(
+    _session: &HsmSession,
+    _props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    Err(HsmError::UnsupportedAlgorithm)
 }
 
 /// Encrypts data using AES-GCM mode at the DDI layer.

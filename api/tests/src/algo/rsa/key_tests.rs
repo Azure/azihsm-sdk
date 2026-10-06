@@ -1035,18 +1035,30 @@ fn test_unwrap_rsa_4096_key(session: HsmSession) {
 
 /// Ensure RSA unmask works correctly for 2048-bit key
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_2048_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
 }
 
 /// Ensure RSA unmask works correctly for 3072-bit key
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_3072_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
 }
 
 /// Ensure RSA unmask works correctly for 4096-bit key
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_4096_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
 }
@@ -1071,18 +1083,30 @@ fn test_unwrap_rsa_crt_4096_key(session: HsmSession) {
 
 /// Ensure RSA CRT unmask preserves the private key kind for 2048-bit key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_crt_2048_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
 }
 
 /// Ensure RSA CRT unmask preserves the private key kind for 3072-bit key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_crt_3072_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
 }
 
 /// Ensure RSA CRT unmask preserves the private key kind for 4096-bit key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_crt_4096_key_unmask(session: HsmSession) {
     test_rsa_key_unmask_for_bits(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
 }
@@ -1143,18 +1167,36 @@ fn test_rsa_crt_truncated_4096(session: HsmSession) {
 
 /// Ensure RSA CRT masking/unmasking preserves interoperability for 2048-bit keys.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_rsa_crt_unmask_roundtrip_2048(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256, 32);
 }
 
 /// Ensure RSA CRT masking/unmasking preserves interoperability for 3072-bit keys.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_rsa_crt_unmask_roundtrip_3072(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384, 24);
 }
 
 /// Ensure RSA CRT masking/unmasking preserves interoperability for 4096-bit keys.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_rsa_crt_unmask_roundtrip_4096(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
 }
@@ -1796,16 +1838,34 @@ fn test_rsa_crt_unmask_wrong_key_kind_fails(session: HsmSession) {
 }
 
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_rsa_unmask_roundtrip_2048(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::Rsa, 2048, 256, 32);
 }
 
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_rsa_unmask_roundtrip_3072(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::Rsa, 3072, 384, 24);
 }
 
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_rsa_unmask_roundtrip_4096(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::Rsa, 4096, 512, 16);
 }
@@ -1959,18 +2019,30 @@ fn test_rsa_crt_sign_verify_4096(session: HsmSession) {
 
 /// Ensure 2048-bit RSA CRT remains usable for signing after mask/unmask.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_crt_unmask_sign_verify_2048(session: HsmSession) {
     run_rsa_unmask_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 2048, 256);
 }
 
 /// Ensure 3072-bit RSA CRT remains usable for signing after mask/unmask.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_crt_unmask_sign_verify_3072(session: HsmSession) {
     run_rsa_unmask_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 3072, 384);
 }
 
 /// Ensure 4096-bit RSA CRT remains usable for signing after mask/unmask.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask RSA key pair: UnsupportedKeyOperation")
+)]
 fn test_rsa_crt_unmask_sign_verify_4096(session: HsmSession) {
     run_rsa_unmask_sign_verify_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512);
 }

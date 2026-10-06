@@ -22,17 +22,11 @@ fn import_rsa_key(
     .expect("Failed to import RSA encrypt/decrypt key pair")
 }
 
-/// RSA-CRT import → OAEP encrypt → decrypt through a V2 (TBOR) session
-/// for every supported key size, exercising masked CRT private keys.
+/// Verify labeled, session-scoped RSA-CRT keys through OAEP for every key size.
+/// The mock backend does not preserve caller-supplied key labels.
 #[cfg(not(feature = "mock"))]
-#[test]
-fn test_rsa_crt_enc_dec_tbor_all_key_sizes() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
+#[session_test]
+fn test_rsa_crt_enc_dec_labeled_session_keys(session: HsmSession) {
     for (bits, modulus_bytes) in [(2048, 256), (3072, 384), (4096, 512)] {
         let label = b"rsa-crt-decrypt-key";
         let host_key =
@@ -47,11 +41,11 @@ fn test_rsa_crt_enc_dec_tbor_all_key_sizes() {
             ImportedRsaKeyUsage::EncryptDecrypt,
             true,
         )
-        .expect("Failed to import RSA-CRT encrypt/decrypt key pair over TBOR");
+        .expect("Failed to import RSA-CRT encrypt/decrypt key pair");
         assert_eq!(priv_key.label(), label.to_vec());
         assert_eq!(pub_key.label(), label.to_vec());
 
-        let plaintext = b"RSA TBOR encrypt/decrypt";
+        let plaintext = b"RSA encrypt/decrypt";
         let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha256, None);
         let ciphertext = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext)
             .expect("Failed to encrypt data");
