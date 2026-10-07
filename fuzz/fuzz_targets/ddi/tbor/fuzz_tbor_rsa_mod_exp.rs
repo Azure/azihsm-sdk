@@ -215,9 +215,8 @@ fuzz_target!(|input: FuzzInput| {
         let mut import_succeeded = false;
         let (masked_key, modulus_len) = if generate_valid_key {
             match input.key_scope {
-                KeyScope::Ephemeral | KeyScope::Local => common::finalize_partition(ctx, &session),
                 KeyScope::SecurityDomain => common::create_test_security_domain(ctx, &session),
-                _ => {}
+                _ => common::finalize_partition(ctx, &session),
             }
             let modulus_len = input.key_size.modulus_bytes();
             match import_rsa_key(
