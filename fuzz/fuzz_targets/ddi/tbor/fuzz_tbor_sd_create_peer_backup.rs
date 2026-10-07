@@ -225,7 +225,7 @@ fuzz_target!(|input: FuzzInput| {
             return;
         }
 
-        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+        let mut session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
         let info = ctx
             .tbor(&TborPartInfoReq::new())
             .expect("PartInfo should succeed");
@@ -307,32 +307,34 @@ fuzz_target!(|input: FuzzInput| {
             .expect("SdCreateRemoteBackup fixture must create a valid local backup")
             .pok_local_backup;
 
-        // Reboot and restore only PartLocalMK. The generated local backup and
-        // sealing-key envelopes remain valid, but the security domain itself
-        // is not restored, so the fuzzed command exercises its pre-SD-init
-        // lifecycle path as well as its stateless repeatability.
-        ctx.session_close(session.session_id)
-            .expect("close setup CO session before reboot");
-        ctx.erase()
-            .expect("factory-reset between backup generation and peer create");
-        let mut session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        let restore_init = ctx
-            .part_init(
+        if input.key_scope == common::KeyScope::Local {
+            // Reboot and restore only PartLocalMK. The generated local backup
+            // and sealing-key envelopes remain valid, but the security domain
+            // itself is not restored, so the fuzzed command exercises its
+            // pre-SD-init lifecycle path as well as its stateless repeatability.
+            ctx.session_close(session.session_id)
+                .expect("close setup CO session before reboot");
+            ctx.erase()
+                .expect("factory-reset between backup generation and peer create");
+            session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+            let restore_init = ctx
+                .part_init(
+                    &session,
+                    &common::mach_seed(),
+                    &policy_bytes,
+                    &common::pota_thumbprint(),
+                )
+                .expect("PartInit should succeed after fixture reboot");
+            let restore_pta = make_pta_chain(&pota, &pta_pub_from_csr(&restore_init.pta_csr));
+            let restore_pta_items = restore_pta.der_items();
+            ctx.part_final(
                 &session,
-                &common::mach_seed(),
                 &policy_bytes,
-                &common::pota_thumbprint(),
+                &finalized.local_mk_backup,
+                &restore_pta_items,
             )
-            .expect("PartInit should succeed after fixture reboot");
-        let restore_pta = make_pta_chain(&pota, &pta_pub_from_csr(&restore_init.pta_csr));
-        let restore_pta_items = restore_pta.der_items();
-        ctx.part_final(
-            &session,
-            &policy_bytes,
-            &finalized.local_mk_backup,
-            &restore_pta_items,
-        )
-        .expect("PartFinal should restore only the local masking key");
+            .expect("PartFinal should restore only the local masking key");
+        }
 
         // Apply only mutations with a deterministic semantic outcome. A zero
         // mask deliberately leaves the fixture valid and must remain success.
