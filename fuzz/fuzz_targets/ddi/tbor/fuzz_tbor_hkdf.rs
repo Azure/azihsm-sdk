@@ -76,32 +76,26 @@ fuzz_target!(|input: FuzzInput| {
         let generated_secret = if input.use_valid_key_id {
             match input.key_scope {
                 KeyScope::Session => {}
-                KeyScope::Ephemeral | KeyScope::Local => {
-                    common::finalize_partition(ctx, &session)
-                }
-                KeyScope::SecurityDomain => {
-                    common::create_test_security_domain(ctx, &session)
-                }
+                KeyScope::Ephemeral | KeyScope::Local => common::finalize_partition(ctx, &session),
+                KeyScope::SecurityDomain => common::create_test_security_domain(ctx, &session),
             }
 
             let scope = input.key_scope.to_tbor();
             let result: Result<Vec<u8>, DdiError> = (|| {
-                let key_a = ctx
-                    .tbor(&TborEccGenerateKeyReq {
-                        session_id: session.session_id,
-                        scope,
-                        curve: input.key_curve.to_tbor(),
-                        key_usage: input.key_usage,
-                        key_label: input.key_label.clone(),
-                    })?;
-                let key_b = ctx
-                    .tbor(&TborEccGenerateKeyReq {
-                        session_id: session.session_id,
-                        scope,
-                        curve: input.key_curve.to_tbor(),
-                        key_usage: input.key_usage,
-                        key_label: input.key_label.clone(),
-                    })?;
+                let key_a = ctx.tbor(&TborEccGenerateKeyReq {
+                    session_id: session.session_id,
+                    scope,
+                    curve: input.key_curve.to_tbor(),
+                    key_usage: input.key_usage,
+                    key_label: input.key_label.clone(),
+                })?;
+                let key_b = ctx.tbor(&TborEccGenerateKeyReq {
+                    session_id: session.session_id,
+                    scope,
+                    curve: input.key_curve.to_tbor(),
+                    key_usage: input.key_usage,
+                    key_label: input.key_label.clone(),
+                })?;
                 let secret = ctx.tbor(&TborEcdhDeriveReq {
                     session_id: session.session_id,
                     scope,
@@ -127,8 +121,8 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let have_valid_secret = generated_secret.is_some();
-        let masked_secret = generated_secret
-            .unwrap_or_else(|| input.cmdreq_data.masked_secret.clone());
+        let masked_secret =
+            generated_secret.unwrap_or_else(|| input.cmdreq_data.masked_secret.clone());
         let scope = input.key_scope.to_tbor();
         let req = TborHkdfDeriveReq {
             session_id: session.session_id,

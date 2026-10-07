@@ -346,10 +346,7 @@ fuzz_target!(|input: FuzzInput| {
         match (&result, expect_success) {
             (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
             (Ok(resp), true) => {
-                assert!(
-                    !resp.masked_key.is_empty(),
-                    "masked key must not be empty"
-                );
+                assert!(!resp.masked_key.is_empty(), "masked key must not be empty");
                 assert_eq!(
                     !resp.pub_key.is_empty(),
                     input.key_class.is_asymmetric(),

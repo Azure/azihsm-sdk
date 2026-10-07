@@ -157,12 +157,8 @@ fuzz_target!(|input: FuzzInput| {
 
         let generated_key = if generate_valid_key {
             match input.key_scope {
-                KeyScope::Ephemeral | KeyScope::Local => {
-                    common::finalize_partition(ctx, &session)
-                }
-                KeyScope::SecurityDomain => {
-                    common::create_test_security_domain(ctx, &session)
-                }
+                KeyScope::Ephemeral | KeyScope::Local => common::finalize_partition(ctx, &session),
+                KeyScope::SecurityDomain => common::create_test_security_domain(ctx, &session),
                 _ => {}
             }
 
@@ -197,8 +193,7 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let expect_success = generated_key.is_some();
-        let masked_key =
-            generated_key.unwrap_or_else(|| fuzzed_masked_key(&input.cmdreq_data));
+        let masked_key = generated_key.unwrap_or_else(|| fuzzed_masked_key(&input.cmdreq_data));
 
         let msg = bounded_msg(&input.cmdreq_data.msg);
 

@@ -17,19 +17,20 @@ use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
@@ -39,9 +40,8 @@ use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::PolicyVer;
-use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::ReportDescriptor;
+use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
@@ -424,8 +424,11 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
         major: POLICY_VERSION_MAJOR,
         minor: 0,
     };
-    policy.pota_pub_key =
-        PolicyPubKey::new(PolicyKeyKind::Ecc384, POLICY_MAX_KEY_LEN as u16, pota_pub_key);
+    policy.pota_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        pota_pub_key,
+    );
     policy.sata_pub_key = PolicyPubKey::new(
         PolicyKeyKind::Ecc384,
         POLICY_MAX_KEY_LEN as u16,
@@ -444,12 +447,7 @@ pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
     let pota = CaKey::generate();
     let policy = known_good_part_policy(pota.raw_pub());
     let init = ctx
-        .part_init(
-            session,
-            &mach_seed(),
-            &policy,
-            &pota_thumbprint(),
-        )
+        .part_init(session, &mach_seed(), &policy, &pota_thumbprint())
         .expect("PartInit should succeed");
     let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(session, &policy, &[], &chain.der_items())
@@ -481,10 +479,9 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         .expect("PartInfo PID public key should have the expected length");
     let pota = CaKey::generate();
     let sata = CaKey::generate();
-    let mut policy = <PartPolicy as TryFromBytes>::try_read_from_bytes(
-        &known_good_part_policy(pota.raw_pub()),
-    )
-    .expect("known-good partition policy should decode");
+    let mut policy =
+        <PartPolicy as TryFromBytes>::try_read_from_bytes(&known_good_part_policy(pota.raw_pub()))
+            .expect("known-good partition policy should decode");
     policy.sata_pub_key = PolicyPubKey::new(
         PolicyKeyKind::Ecc384,
         POLICY_MAX_KEY_LEN as u16,
@@ -502,12 +499,7 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     policy_bytes.copy_from_slice(policy.as_bytes());
 
     let init = ctx
-        .part_init(
-            session,
-            &mach_seed(),
-            &policy_bytes,
-            &pota_thumbprint(),
-        )
+        .part_init(session, &mach_seed(), &policy_bytes, &pota_thumbprint())
         .expect("PartInit should succeed");
     let pta_chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(session, &policy_bytes, &[], &pta_chain.der_items())
