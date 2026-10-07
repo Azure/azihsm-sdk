@@ -402,7 +402,7 @@ global_asm!(
 /// trampoline. Must never be called from Rust directly.
 #[allow(dead_code)]
 #[no_mangle]
-fn collect_crash_dump_tcon_irq(ef: &ExceptionFrame) -> ! {
+extern "C" fn collect_crash_dump_tcon_irq(ef: &ExceptionFrame) -> ! {
     // Disarm the wakeup timer and our own IRQ line so the peer's notification
     // cannot re-fire while (or after) we capture the dump.
     Tcon::disable_wakeup_timer1();
