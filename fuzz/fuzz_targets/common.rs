@@ -14,7 +14,11 @@ use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
@@ -422,4 +426,22 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
     let mut bytes = [0u8; PART_POLICY_LEN];
     bytes.copy_from_slice(policy.as_bytes());
     bytes
+}
+
+/// Drive `PartInit` → `PartFinal` so the partition is initialized and
+/// partition-local masking keys are available to a fuzz target.
+pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
+    let pota = CaKey::generate();
+    let policy = known_good_part_policy(pota.raw_pub());
+    let init = ctx
+        .part_init(
+            session,
+            &mach_seed(),
+            &policy,
+            &pota_thumbprint(),
+        )
+        .expect("PartInit should succeed");
+    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(session, &policy, &[], &chain.der_items())
+        .expect("PartFinal should succeed");
 }

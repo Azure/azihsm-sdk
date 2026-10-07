@@ -19,12 +19,8 @@ use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::*;
 use common::EccCurve;
 use libfuzzer_sys::arbitrary;
@@ -239,24 +235,6 @@ struct FuzzUnwrapKeyReq {
 /// wraps with below.
 const OAEP_SHA256: u8 = 1;
 
-/// Drive `PartInit` → `PartFinal` to provision the built-in RSA unwrapping
-/// key required by `GetUnwrappingKey` and `UnwrapKey`.
-fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
-    let pota = CaKey::generate();
-    let policy = common::known_good_part_policy(pota.raw_pub());
-    let init = ctx
-        .part_init(
-            session,
-            &common::mach_seed(),
-            &policy,
-            &common::pota_thumbprint(),
-        )
-        .expect("PartInit should succeed");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
-    ctx.part_final(session, &policy, &[], &chain.der_items())
-        .expect("PartFinal should succeed");
-}
-
 /// Build a fixed-byte-pattern buffer (`fill` repeated `len` times), used
 /// for the AES / HMAC symmetric key material.
 fn alloc_vec(fill: u8, len: usize) -> Vec<u8> {
@@ -318,7 +296,7 @@ fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        finalize_partition(ctx, &session);
+        common::finalize_partition(ctx, &session);
 
         let hsm_pub = ctx
             .tbor(&TborGetUnwrappingKeyReq {

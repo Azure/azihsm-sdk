@@ -154,24 +154,6 @@ fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor
     }
 }
 
-/// Initialize and finalize the partition so its Ephemeral and Local
-/// masking keys are available.
-fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
-    let pota = CaKey::generate();
-    let policy = common::known_good_part_policy(pota.raw_pub());
-    let init = ctx
-        .part_init(
-            session,
-            &common::mach_seed(),
-            &policy,
-            &common::pota_thumbprint(),
-        )
-        .expect("PartInit should succeed");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
-    ctx.part_final(session, &policy, &[], &chain.der_items())
-        .expect("PartFinal should succeed");
-}
-
 /// Create a security domain so its masking key is available to
 /// `HmacGenerateKey`.
 fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
@@ -289,7 +271,9 @@ fuzz_target!(|input: FuzzInput| {
 
         let generated_key = if generate_valid_key {
             match input.key_scope {
-                KeyScope::Ephemeral | KeyScope::Local => finalize_partition(ctx, &session),
+                KeyScope::Ephemeral | KeyScope::Local => {
+                    common::finalize_partition(ctx, &session)
+                }
                 KeyScope::SecurityDomain => create_test_security_domain(ctx, &session),
                 _ => {}
             }

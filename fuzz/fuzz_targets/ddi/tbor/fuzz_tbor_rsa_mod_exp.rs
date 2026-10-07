@@ -18,12 +18,8 @@ use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -113,25 +109,6 @@ struct FuzzInput {
 /// to outlive the fuzzed `RsaModExp` call.
 /// `HashAlgo::Sha256` discriminant used to OAEP-wrap the KEK in `UnwrapKey`.
 const RSA_OAEP_SHA256: u8 = 1;
-
-/// Drive `PartInit` → `PartFinal` so the partition is `Initialized`: the
-/// built-in RSA unwrapping key that `GetUnwrappingKey` / `UnwrapKey`
-/// depend on is only provisioned once the partition is finalized.
-fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
-    let pota = CaKey::generate();
-    let policy = common::known_good_part_policy(pota.raw_pub());
-    let init = ctx
-        .part_init(
-            session,
-            &common::mach_seed(),
-            &policy,
-            &common::pota_thumbprint(),
-        )
-        .expect("PartInit should succeed");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
-    ctx.part_final(session, &policy, &[], &chain.der_items())
-        .expect("PartFinal should succeed");
-}
 
 /// Deterministic xorshift64* fill used to materialize the fuzzed `y`
 /// operand from `rand_seed`, avoiding a dependency on the `rand` crate.
@@ -231,7 +208,7 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let (masked_key, modulus_len) = if generate_valid_key {
-            finalize_partition(ctx, &session);
+            common::finalize_partition(ctx, &session);
             let modulus_len = input.key_size.modulus_bytes();
             let masked_key =
                 import_rsa_key(ctx, session.session_id, modulus_len, input.crt, key_usage);
