@@ -347,7 +347,7 @@ fn verify_key_report(
         "COSE_Key pk_y matches the curve width"
     );
     assert!(
-        pub_key_le.len() % 2 == 0 && pub_key_le.len() / 2 >= coord_len,
+        pub_key_le.len().is_multiple_of(2) && pub_key_le.len() / 2 >= coord_len,
         "wire public key length must hold two padded coordinates",
     );
     let wire_coord_len = pub_key_le.len() / 2;

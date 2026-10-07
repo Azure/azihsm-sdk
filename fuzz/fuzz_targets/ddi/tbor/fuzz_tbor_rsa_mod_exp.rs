@@ -213,7 +213,7 @@ fn import_rsa_key(
         KEY_CLASS_RSA
     };
 
-    Ok(ctx
+    ctx
         .tbor(&TborUnwrapKeyReq {
             session_id,
             scope,
@@ -223,7 +223,7 @@ fn import_rsa_key(
             wrapped_blob,
             key_label: key_label.to_vec(),
         })
-        .map(|resp| resp.masked_key)?)
+        .map(|resp| resp.masked_key)
 }
 
 fuzz_target!(|input: FuzzInput| {
