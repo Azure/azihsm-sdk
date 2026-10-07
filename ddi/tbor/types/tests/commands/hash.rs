@@ -26,6 +26,14 @@ use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
+/// All supported TBOR Hash algorithms.
+const HASH_ALGOS: [u8; 4] = [
+    HASH_ALGO_SHA1,
+    HASH_ALGO_SHA256,
+    HASH_ALGO_SHA384,
+    HASH_ALGO_SHA512,
+];
+
 /// Clear the CU default-PSK gate without keeping a session slot occupied.
 fn rotate_cu_psk_and_close(ctx: &TestCtx) {
     let bootstrap = ctx
@@ -70,7 +78,7 @@ fn digest_len(algo: u8) -> usize {
     }
 }
 
-/// Verifies SHA-256, SHA-384, and SHA-512 digests match the host for varied inputs.
+/// Verifies SHA-1, SHA-256, SHA-384, and SHA-512 digests match the host for varied inputs.
 #[test]
 fn hash_matches_host_all_algos() {
     let ctx = TestCtx::new();
@@ -82,12 +90,7 @@ fn hash_matches_host_all_algos() {
     let long: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
 
     for msg in [short, empty, long] {
-        for mode in [
-            HASH_ALGO_SHA1,
-            HASH_ALGO_SHA256,
-            HASH_ALGO_SHA384,
-            HASH_ALGO_SHA512,
-        ] {
+        for mode in HASH_ALGOS {
             let dev = device_digest(&ctx, session.session_id, mode, msg.clone());
             assert_eq!(
                 dev.len(),
@@ -145,8 +148,11 @@ fn hash_invalid_algos_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    // Exported TBOR algorithms are 1, 2, and 3.
-    // Exercise out-of-range values without assuming how 0 is handled.
+    // Valid algorithms are:
+    //   0 = SHA-1
+    //   1 = SHA-256
+    //   2 = SHA-384
+    //   3 = SHA-512
     for algo in [HASH_ALGO_SHA512.wrapping_add(1), 0x7f, u8::MAX] {
         ctx.expect_fw_reject(
             &TborHashReq {
@@ -169,7 +175,7 @@ fn hash_binary_message_matches_host() {
         0x00, 0xff, 0x80, 0x7f, 0x00, 0x01, 0xfe, 0xaa, 0x55, 0x00, 0xff,
     ];
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         assert_eq!(dev, host_digest(algo, &msg));
@@ -182,7 +188,7 @@ fn hash_different_messages_produce_different_digests() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let digest_a = device_digest(&ctx, session.session_id, algo, b"abc".to_vec());
         let digest_b = device_digest(&ctx, session.session_id, algo, b"abd".to_vec());
 
@@ -199,12 +205,12 @@ fn hash_block_boundary_lengths_match_host() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    // SHA-256 block = 64 bytes.
+    // SHA-1/SHA-256 block = 64 bytes.
     // SHA-384/SHA-512 block = 128 bytes.
     for len in [1usize, 55, 56, 63, 64, 65, 111, 112, 127, 128, 129] {
         let msg: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
 
-        for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        for algo in HASH_ALGOS {
             let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
             assert_eq!(
@@ -242,7 +248,7 @@ fn hash_same_message_different_algos() {
     let session = finalized_co_session(&ctx);
     let msg = b"same message".to_vec();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let digest = device_digest(&ctx, session.session_id, algo, msg.clone());
         assert_eq!(
             digest.len(),
@@ -263,7 +269,7 @@ fn hash_one_bit_message_change_changes_digest() {
     let mut msg_b = msg_a.clone();
     msg_b[31] ^= 0x01;
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let digest_a = device_digest(&ctx, session.session_id, algo, msg_a.clone());
         let digest_b = device_digest(&ctx, session.session_id, algo, msg_b.clone());
 
@@ -285,7 +291,7 @@ fn hash_crypto_user_session_matches_host() {
 
     let msg = b"crypto-user hash".to_vec();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         assert_eq!(
@@ -296,12 +302,22 @@ fn hash_crypto_user_session_matches_host() {
     }
 }
 
-/// Verifies SHA-256, SHA-384, and SHA-512 against known-answer vectors.
+/// Verifies SHA-1, SHA-256, SHA-384, and SHA-512 against known-answer vectors.
 #[test]
 fn hash_known_answer_vectors() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let msg = b"abc".to_vec();
+
+    let sha1_expected = [
+        0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e, 0x25, 0x71, 0x78, 0x50, 0xc2,
+        0x6c, 0x9c, 0xd0, 0xd8, 0x9d,
+    ];
+
+    assert_eq!(
+        device_digest(&ctx, session.session_id, HASH_ALGO_SHA1, msg.clone()),
+        sha1_expected,
+    );
 
     let sha256_expected = [
         0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22,
@@ -366,7 +382,7 @@ fn hash_same_request_is_deterministic() {
     let session = finalized_co_session(&ctx);
     let msg = b"deterministic hash input".to_vec();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let first = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         let second = device_digest(&ctx, session.session_id, algo, msg.clone());
@@ -386,7 +402,7 @@ fn hash_all_byte_values_matches_host() {
 
     let msg: Vec<u8> = (0u8..=u8::MAX).collect();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         assert_eq!(
@@ -414,7 +430,7 @@ fn hash_session_usable_after_invalid_algo() {
 
     let msg = b"valid request after rejection".to_vec();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         assert_eq!(
@@ -439,7 +455,7 @@ fn hash_consecutive_different_length_messages_match_host() {
         vec![0xc3; 513],
     ];
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         for msg in &messages {
             let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
@@ -462,9 +478,11 @@ fn hash_alternating_algorithms_match_host() {
     let msg = b"alternate hash algorithms on one session".to_vec();
 
     let sequence = [
+        HASH_ALGO_SHA1,
         HASH_ALGO_SHA256,
         HASH_ALGO_SHA512,
         HASH_ALGO_SHA384,
+        HASH_ALGO_SHA1,
         HASH_ALGO_SHA256,
         HASH_ALGO_SHA384,
         HASH_ALGO_SHA512,
@@ -497,7 +515,7 @@ fn hash_zero_byte_positions_match_host() {
     ];
 
     for msg in &messages {
-        for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        for algo in HASH_ALGOS {
             let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
             assert_eq!(
@@ -520,7 +538,7 @@ fn hash_matches_across_co_and_cu_sessions() {
 
     let co_session = finalized_co_session(&ctx);
 
-    let co_digests: Vec<(u8, Vec<u8>)> = [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512]
+    let co_digests: Vec<(u8, Vec<u8>)> = HASH_ALGOS
         .into_iter()
         .map(|algo| {
             let digest = device_digest(&ctx, co_session.session_id, algo, msg.clone());
@@ -576,7 +594,7 @@ fn hash_valid_session_usable_after_invalid_session_request() {
 
     let msg = b"valid session still works".to_vec();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         assert_eq!(
@@ -620,7 +638,7 @@ fn hash_new_session_works_after_previous_session_closed() {
     let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
     let msg = b"new session after previous session closed".to_vec();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, cu_session.session_id, algo, msg.clone());
 
         assert_eq!(
@@ -640,7 +658,7 @@ fn hash_max_message_length_matches_host() {
 
     let msg: Vec<u8> = (0..2048usize).map(|i| (i % 251) as u8).collect();
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let dev = device_digest(&ctx, session.session_id, algo, msg.clone());
 
         assert_eq!(
@@ -661,7 +679,7 @@ fn hash_over_max_message_length_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+    for algo in HASH_ALGOS {
         let result = ctx.tbor(&TborHashReq {
             session_id: session.session_id,
             algo,
