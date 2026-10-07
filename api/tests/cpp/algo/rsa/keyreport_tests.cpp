@@ -12,7 +12,9 @@
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/key_import.hpp"
 #include "utils/rsa_keygen.hpp"
+#include "utils/utils.hpp"
 
 class azihsm_rsa_keyattest : public ::testing::Test
 {
@@ -41,7 +43,37 @@ static azihsm_status generate_rsa_private_key_for_attest(
     auto_key &pub_key
 )
 {
+#if SESSION_EX_TESTS
+    auto_key wrapping_priv_key;
+    auto_key wrapping_pub_key;
+    auto err = generate_rsa_unwrapping_keypair(
+        session,
+        wrapping_priv_key.get_ptr(),
+        wrapping_pub_key.get_ptr()
+    );
+    if (err != AZIHSM_STATUS_SUCCESS)
+    {
+        return err;
+    }
+
+    key_props props = {
+        .key_kind = AZIHSM_KEY_KIND_RSA,
+        .key_size_bits = 2048,
+        .session_key = false,
+        .encrypt = true,
+        .decrypt = true,
+    };
+    err = import_keypair(
+        wrapping_pub_key.get(),
+        wrapping_priv_key.get(),
+        rsa_private_key_der,
+        props,
+        priv_key.get_ptr(),
+        pub_key.get_ptr()
+    );
+#else
     auto err = generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
+#endif
     if (err != AZIHSM_STATUS_SUCCESS)
     {
         return err;
@@ -59,16 +91,16 @@ static azihsm_status generate_rsa_private_key_for_attest(
 TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
-        // Generate an RSA 2048 key pair
+        // Prepare an RSA 2048 key pair
         auto_key priv_key;
         auto_key pub_key;
-        auto err = generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr());
+        auto err = generate_rsa_private_key_for_attest(session, priv_key, pub_key);
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
         // Prepare report data (128 bytes is the maximum)
-        std::vector<uint8_t> report_data(128, 0x42);
+        std::vector<uint8_t> report_data(kReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -102,6 +134,54 @@ TEST_F(azihsm_rsa_keyattest, attest_rsa_2048_key)
     });
 }
 
+#if SESSION_EX_TESTS
+TEST_F(azihsm_rsa_keyattest, attest_rejects_partition_unwrapping_key)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        ASSERT_EQ(
+            generate_rsa_unwrapping_keypair(session, priv_key.get_ptr(), pub_key.get_ptr()),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        std::vector<uint8_t> report_data(kReportDataSize, 0x42);
+        azihsm_buffer report_data_buf{ report_data.data(),
+                                       static_cast<uint32_t>(report_data.size()) };
+        azihsm_buffer report_buf{ nullptr, 0 };
+        ASSERT_EQ(
+            azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf),
+            AZIHSM_STATUS_PROPERTY_NOT_PRESENT
+        );
+    });
+}
+
+TEST_F(azihsm_rsa_keyattest, attest_rejects_noncanonical_report_data_lengths)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        ASSERT_EQ(
+            generate_rsa_private_key_for_attest(session, priv_key, pub_key),
+            AZIHSM_STATUS_SUCCESS
+        );
+
+        for (uint32_t length :
+             { 0u, 1u, kLegacyReportDataSize, kReportDataSize - 1, kReportDataSize + 1 })
+        {
+            SCOPED_TRACE(length);
+            std::vector<uint8_t> report_data(length, 0x42);
+            azihsm_buffer report_data_buf{ report_data.data(), length };
+            azihsm_buffer report_buf{ nullptr, 0 };
+            ASSERT_EQ(
+                azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+        }
+    });
+}
+#endif
+
 // Verifies that attestation rejects an invalid key handle.
 TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle)
 {
@@ -109,7 +189,7 @@ TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle)
         // Use an invalid key handle
         azihsm_handle invalid_key = 0;
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -134,7 +214,7 @@ TEST_F(azihsm_rsa_keyattest, attest_public_key_fails)
         ASSERT_NE(pub_key.get(), 0);
 
         // Try to attest the public key (should fail - only private keys can be attested)
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -157,7 +237,7 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_max_report_data_size)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(128, 0x5A);
+        std::vector<uint8_t> report_data(kReportDataSize, 0x5A);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -188,7 +268,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_larger_than_max)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(129, 0x42);
+        std::vector<uint8_t> report_data(kReportDataSize + 1, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -200,6 +280,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_larger_than_max)
     });
 }
 
+#if !SESSION_EX_TESTS
 // Verifies that empty report data is accepted.
 TEST_F(azihsm_rsa_keyattest, attest_accepts_empty_report_data)
 {
@@ -228,6 +309,8 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_empty_report_data)
     });
 }
 
+#endif
+
 // Verifies that a too-small report output buffer fails and returns the required size.
 TEST_F(azihsm_rsa_keyattest, attest_rejects_small_report_buffer_and_sets_required_size)
 {
@@ -239,7 +322,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_small_report_buffer_and_sets_require
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -263,7 +346,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_buffer)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -283,7 +366,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_output_pointer_with_nonz
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -305,7 +388,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_null_report_data_pointer_with_nonzer
             AZIHSM_STATUS_SUCCESS
         );
 
-        azihsm_buffer report_data_buf{ nullptr, 64 };
+        azihsm_buffer report_data_buf{ nullptr, kValidReportDataSize };
 
         std::vector<uint8_t> report(512);
         azihsm_buffer report_buf{ report.data(), static_cast<uint32_t>(report.size()) };
@@ -326,7 +409,7 @@ TEST_F(azihsm_rsa_keyattest, attest_same_key_multiple_times_succeeds)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -379,7 +462,7 @@ TEST_F(azihsm_rsa_keyattest, attest_invalid_key_handle_size_query_fails)
 
         azihsm_handle invalid_key = 0;
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -407,7 +490,7 @@ TEST_F(azihsm_rsa_keyattest, attest_deleted_private_key_fails)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         priv_key.release();
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -430,7 +513,7 @@ TEST_F(azihsm_rsa_keyattest, attest_succeeds_with_exact_required_report_size)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x7B);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x7B);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -464,10 +547,15 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
         );
 
         std::vector<std::vector<uint8_t>> report_data_cases = {
+#if SESSION_EX_TESTS
+            std::vector<uint8_t>(kReportDataSize, 0x00),
+            std::vector<uint8_t>(kReportDataSize, 0xFF),
+#else
             std::vector<uint8_t>(1, 0x00),
-            std::vector<uint8_t>(32, 0xFF),
-            std::vector<uint8_t>(64, 0xA5),
-            std::vector<uint8_t>(128, 0x5A),
+            std::vector<uint8_t>(kLegacyReportDataSize / 2, 0xFF),
+#endif
+            std::vector<uint8_t>(kValidReportDataSize, 0xA5),
+            std::vector<uint8_t>(kReportDataSize, 0x5A),
         };
 
         for (size_t i = 0; i < report_data_cases.size(); ++i)
@@ -496,6 +584,7 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
     });
 }
 
+#if !SESSION_EX_TESTS
 // Verifies that 127-byte report data is accepted just below the max boundary.
 TEST_F(azihsm_rsa_keyattest, attest_accepts_report_data_one_less_than_max)
 {
@@ -507,7 +596,7 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_report_data_one_less_than_max)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(127, 0x33);
+        std::vector<uint8_t> report_data(kReportDataSize - 1, 0x33);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -527,6 +616,8 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_report_data_one_less_than_max)
     });
 }
 
+#endif
+
 // Verifies that a public key also fails during size-query mode.
 TEST_F(azihsm_rsa_keyattest, attest_public_key_size_query_fails)
 {
@@ -538,7 +629,7 @@ TEST_F(azihsm_rsa_keyattest, attest_public_key_size_query_fails)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -566,7 +657,7 @@ TEST_F(azihsm_rsa_keyattest, attest_deleted_public_key_fails)
         ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
         pub_key.release();
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -589,7 +680,7 @@ TEST_F(azihsm_rsa_keyattest, attest_retry_after_small_buffer_succeeds)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -621,7 +712,7 @@ TEST_F(azihsm_rsa_keyattest, attest_size_query_returns_stable_required_size)
             AZIHSM_STATUS_SUCCESS
         );
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
