@@ -26,6 +26,7 @@ use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
@@ -542,18 +543,30 @@ impl UnoHsmPal {
 
     /// Disables partition `pid`: `Enabled` → `Disabled`.
     ///
-    /// Deletes the enable-time keys and clears their handles and public
-    /// keys.
+    /// Deletes session-owned keys before clearing the enable-time keys and
+    /// session mappings. If session-key cleanup fails, mappings are kept so
+    /// the operation can be retried.
     ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
     pub(crate) async fn part_disable(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Enabled => {
-                self.with_admin_io(pid, async |admin_io, _alloc| {
+                self.with_admin_io(pid, async |admin_io, _alloc| -> HsmResult<()> {
+                    let sessions = SessionStore::partition(pid)?;
+                    for (slot, key_id) in sessions.occupied_physical_ids().into_iter().enumerate() {
+                        if key_id.is_some() {
+                            self.vault_key_delete_by_session(
+                                admin_io,
+                                HsmSessId::from(slot as u16),
+                            )
+                            .await?;
+                        }
+                    }
                     self.clear_enabled_state(admin_io, pid).await;
+                    Ok(())
                 })
-                .await;
+                .await?;
                 part.set_state(PartState::Disabled);
                 Ok(())
             }
