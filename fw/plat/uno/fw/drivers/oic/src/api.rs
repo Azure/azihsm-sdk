@@ -157,18 +157,60 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
     /// Must only be called after any boot handshake completes. Calling this
     /// earlier can race the controller-side owner of shared common and IRQ
     /// registers.
-    pub fn init(&self) {
+    pub fn init(&self, fw_update: bool) {
         let config = self.config;
         let regs = self.regs;
         let ch = config.channel as usize;
 
-        // Detect if channel was already programmed by another core
+        // Read the current enable state of both queues once. It also drives
+        // the fw-update attach decision below.
         let ocq_ctrl = regs.ocq_ch[ch].ctrl.get();
         let osq_ctrl = regs.osq_ch[ch].ctrl.get();
+        let already_enabled = (ocq_ctrl & 0x1 != 0) && (osq_ctrl & 0x1 != 0);
+        // The queue must also already point at THIS firmware's ring buffers.
+        // A fw-update from a different image (or firmware family) leaves the
+        // channel enabled but programmed with foreign base addresses; attaching
+        // to that would read/write the wrong memory, so require a base-address
+        // match before adopting the hardware state.
+        let ours = regs.ocq_ch[ch].base_lo.get() == config.ocq_base
+            && regs.osq_ch[ch].base_lo.get() == config.osq_base;
+
+        // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
+        // On a FwUpdateWarmReset the outbound queues were programmed and
+        // enabled by the previous firmware and must survive the update.
+        // Resetting the ring indices or re-enabling would desync the host.
+        // Resume instead: adopt the hardware's current OCQ consumer and OSQ
+        // producer indices into the driver's software state so `send` and
+        // completion handling continue from the right slot. Outstanding tags
+        // are treated as free (`tag_free` from `new`): the host re-issues any
+        // IO cancelled across the update, matching the reference firmware's
+        // `open_proxy_channel` (attach) path on fw-update (`admin/src/env.rs`).
+        //
+        // Attach only when the queue is genuinely running AND programmed by
+        // this firmware. Any other fw-update case (fresh flash, foreign image,
+        // partially-initialised queue) falls through to the full program, so
+        // attach can never adopt foreign or uninitialised hardware state.
+        if fw_update && already_enabled && ours {
+            let hw_ocq_head = regs.ocq_ch[ch].head.read(OCQ_CHANNEL_HEAD::HEAD) as u16;
+            let hw_osq_tail = regs.osq_ch[ch].tail.read(OSQ_CHANNEL_TAIL::TAIL) as u16;
+            self.state.with(|s| {
+                s.ocq_head = hw_ocq_head;
+                s.osq_tail = hw_osq_tail;
+            });
+            if config.interrupt {
+                let val = regs.irq_enable.read(IRQ_ENABLE::IRQ_EN) | (1 << config.channel);
+                regs.irq_enable.write(IRQ_ENABLE::IRQ_EN.val(val));
+            }
+            return;
+        }
+
+        // Full program path (POR / plain warm reset / fw-update with queues not
+        // enabled). Warn if a queue is unexpectedly already enabled, since the
+        // full reprogram below will reset a running queue.
         if ocq_ctrl & 0x1 != 0 || osq_ctrl & 0x1 != 0 {
             warn!(
                 "oic",
-                "ch={} ALREADY ENABLED before init! ocq_ctrl={:#x} osq_ctrl={:#x}",
+                "ch={} ALREADY ENABLED before full init! ocq_ctrl={:#x} osq_ctrl={:#x}",
                 config.channel,
                 ocq_ctrl,
                 osq_ctrl

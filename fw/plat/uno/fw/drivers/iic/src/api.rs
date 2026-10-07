@@ -140,18 +140,57 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     /// Must only be called after any boot handshake completes. Calling this
     /// earlier can race the controller-side owner of shared common and IRQ
     /// registers.
-    pub fn init(&self) {
+    pub fn init(&self, fw_update: bool) {
         let config = self.config;
         let regs = self.regs;
         let ch = config.channel as usize;
 
-        // Detect if channel was already programmed by another core
+        // Read the current enable state of both queues once. It also drives
+        // the fw-update attach decision below.
         let icq_ctrl = regs.icq_ch[ch].ctrl.get();
         let isq_ctrl = regs.isq_ch[ch].ctrl.get();
+        let already_enabled = (icq_ctrl & 0x1 != 0) && (isq_ctrl & 0x1 != 0);
+        // The queue must also already point at THIS firmware's ring buffers.
+        // A fw-update from a different image (or firmware family) leaves the
+        // channel enabled but programmed with foreign base addresses; attaching
+        // to that would read/write the wrong memory, so require a base-address
+        // match before adopting the hardware state.
+        let ours = regs.icq_ch[ch].base_lo.get() == config.icq_base
+            && regs.isq_ch[ch].base_lo.get() == config.isq_base;
+
+        // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
+        // On a FwUpdateWarmReset the queues were programmed and enabled by the
+        // previous firmware and must survive the update, so the host's
+        // in-flight position is preserved. Resetting the ring indices,
+        // re-prefilling the ISQ, or re-enabling would desync the host and lose
+        // in-flight IO. Instead resume: adopt the hardware's current ICQ
+        // consumer index into the driver's software state so `recv` continues
+        // from the right completion slot. Mirrors the reference firmware's
+        // `open_channel` (attach) path on fw-update (`hsm/src/env.rs`).
+        //
+        // Attach only when the queue is genuinely running AND programmed by
+        // this firmware. Any other fw-update case (fresh flash, foreign image,
+        // partially-initialised queue) falls through to the full program, so
+        // attach can never adopt foreign or uninitialised hardware state.
+        if fw_update && already_enabled && ours {
+            let hw_head = regs.icq_ch[ch].head.read(ICQ_CHANNEL_HEAD::HEAD) as u16;
+            self.state.with(|s| s.icq_head = hw_head);
+            // The completion IRQ enable does not survive the core reset even
+            // though the queue programming does; re-arm it (idempotent).
+            if config.interrupt {
+                let val = regs.irq_enable.read(IRQ_ENABLE::IRQ_EN) | (1 << config.channel);
+                regs.irq_enable.write(IRQ_ENABLE::IRQ_EN.val(val));
+            }
+            return;
+        }
+
+        // Full program path (POR / plain warm reset / fw-update with queues not
+        // enabled). Warn if a queue is unexpectedly already enabled, since the
+        // full reprogram below will reset a running queue.
         if icq_ctrl & 0x1 != 0 || isq_ctrl & 0x1 != 0 {
             warn!(
                 "iic",
-                "ch={} ALREADY ENABLED before init! icq_ctrl={:#x} isq_ctrl={:#x}",
+                "ch={} ALREADY ENABLED before full init! icq_ctrl={:#x} isq_ctrl={:#x}",
                 config.channel,
                 icq_ctrl,
                 isq_ctrl
@@ -159,8 +198,9 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
 
         // ── Step 1: Pre-fill ISQ with buffer addresses ──────────────
-        // IDFU resume is not implemented; initialize the free list together
-        // with the queue pointers below rather than partially retaining it.
+        // The free list is initialized together with the queue pointers
+        // below; it is never partially retained. A fw-update attach returns
+        // before this point and leaves the free list and its indices intact.
         for i in 0..DEPTH {
             let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
             let entry = unsafe { &mut *self.isq_ring.add(i) };

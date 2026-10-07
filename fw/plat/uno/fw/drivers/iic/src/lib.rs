@@ -35,7 +35,7 @@
 //!     io_meta_base: 0x6109_0C00,
 //!     interrupt: true,
 //! });
-//! iic.init();
+//! iic.init(false); // full program; pass true to attach on fw-update
 //! iic.enable();
 //! let slot = iic.recv().await;
 //! iic.free_io(slot, queue_id);

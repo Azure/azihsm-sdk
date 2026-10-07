@@ -605,8 +605,21 @@ impl UnoHsmPal {
     /// - Publishes `Run` to shared boot-status memory.
     /// - Optionally emits semihosting `SYS_READY` when feature-enabled.
     fn on_boot_complete(&self) {
-        self.iic.init();
-        self.oic.init();
+        // On an impactless (fw-update) warm reset the IIC/OIC queues were
+        // programmed and enabled by the previous firmware and must survive the
+        // update; the drivers attach (resume from the hardware indices) rather
+        // than reprogram. Every other reset type performs a full program.
+        // GDMA is re-initialised unconditionally, mirroring the reference
+        // Admin's unconditional `GdmaController::new_with_enable`.
+        let fw_update = azihsm_fw_uno_drivers_soc::reset_type() == SocResetType::FwUpdateWarmReset;
+        info!(
+            "boot",
+            "on_boot_complete: fw_update={} -> IIC/OIC {}",
+            fw_update,
+            if fw_update { "attach" } else { "program" }
+        );
+        self.iic.init(fw_update);
+        self.oic.init(fw_update);
         self.gdma.init();
         self.boot_phase.set(BootPhase::Running);
         boot_status::set(BootStatus::Run);
@@ -1024,13 +1037,19 @@ impl HsmPal for UnoHsmPal {
         // constructor selection on `SocInfo::reset_type` (`env.rs`).
         match azihsm_fw_uno_drivers_soc::reset_type() {
             SocResetType::Por => {
+                info!("boot", "init: reset=POR -> partition store init_default");
                 azihsm_fw_uno_drivers_part_store::PartStore::init_default();
             }
             SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
+                info!(
+                    "boot",
+                    "init: reset=warm/fwupdate -> keep store, rearm gate1"
+                );
                 azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
             }
         }
         boot_status::set(BootStatus::Done);
+        info!("boot", "init: boot_status=Done published");
     }
 
     /// Cooperative NVIC polling loop.
