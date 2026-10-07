@@ -23,31 +23,10 @@ use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
 use common::EccCurve;
+use common::KeyScope;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-/// `KeyScope` wire discriminants. `Session`, `Ephemeral`, and `Local` have
-/// provisioned masking keys after `PartFinal`; `SecurityDomain` requires
-/// `CreateSD` and exercises the `UnsupportedKeyScope` reject path.
-#[derive(Arbitrary, Debug, Clone, Copy)]
-enum KeyScope {
-    Session,
-    Ephemeral,
-    Local,
-    SecurityDomain,
-}
-
-impl KeyScope {
-    fn to_tbor(self) -> u8 {
-        match self {
-            Self::Session => common::KEY_SCOPE_SESSION,
-            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
-            Self::Local => common::KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
-        }
-    }
-}
 
 /// RSA modulus sizes (in bytes) supported by `UnwrapKey`'s `Rsa` /
 /// `RsaCrt` classes, mirroring `RsaKeySize` from the MBOR `RsaUnwrap`

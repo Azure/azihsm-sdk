@@ -21,6 +21,7 @@ use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
+use common::KeyScope;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -32,30 +33,6 @@ use libfuzzer_sys::fuzz_target;
 enum KeyAvailability {
     App,
     Session,
-}
-
-/// Scope requested for the imported RSA key.
-#[derive(Arbitrary, Debug, Clone, Copy)]
-enum KeyScope {
-    Unspecified,
-    Session,
-    Ephemeral,
-    Local,
-    SecurityDomain,
-    Internal,
-}
-
-impl KeyScope {
-    fn to_tbor(self) -> u8 {
-        match self {
-            Self::Unspecified => common::KEY_SCOPE_UNSPECIFIED,
-            Self::Session => common::KEY_SCOPE_SESSION,
-            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
-            Self::Local => common::KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
-            Self::Internal => common::KEY_SCOPE_INTERNAL,
-        }
-    }
 }
 
 /// RSA modulus size for host-generated keys, mirroring the MBOR

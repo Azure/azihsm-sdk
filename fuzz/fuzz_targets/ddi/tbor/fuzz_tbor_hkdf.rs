@@ -12,29 +12,10 @@ use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
 use common::EccCurve;
+use common::KeyScope;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-
-/// TBOR key scopes used for ECC key generation, ECDH derivation, and HKDF.
-#[derive(Arbitrary, Debug, Clone, Copy)]
-enum KeyScope {
-    Session,
-    Ephemeral,
-    Local,
-    SecurityDomain,
-}
-
-impl KeyScope {
-    fn to_tbor(self) -> u8 {
-        match self {
-            Self::Session => common::KEY_SCOPE_SESSION,
-            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
-            Self::Local => common::KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
-        }
-    }
-}
 
 /// Fuzzed fields corresponding to the TBOR `HkdfDerive` request. The MBOR
 /// `key_id` is replaced with a masked ECDH secret, and `key_tag` maps to the
@@ -78,6 +59,7 @@ fuzz_target!(|input: FuzzInput| {
                 KeyScope::Session => {}
                 KeyScope::Ephemeral | KeyScope::Local => common::finalize_partition(ctx, &session),
                 KeyScope::SecurityDomain => common::create_test_security_domain(ctx, &session),
+                KeyScope::Unspecified | KeyScope::Internal => {}
             }
 
             let scope = input.key_scope.to_tbor();
@@ -110,7 +92,11 @@ fuzz_target!(|input: FuzzInput| {
                 Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
                 Err(_)
                     if input.key_usage != KEY_USAGE_DERIVE
-                        || input.key_label.len() > TBOR_KEY_LABEL_MAX_LEN =>
+                        || input.key_label.len() > TBOR_KEY_LABEL_MAX_LEN
+                        || matches!(
+                            input.key_scope,
+                            KeyScope::Unspecified | KeyScope::Internal
+                        ) =>
                 {
                     None
                 }
@@ -138,6 +124,13 @@ fuzz_target!(|input: FuzzInput| {
         let result = ctx.tbor(&req);
 
         let expect_success = have_valid_secret
+            && matches!(
+                input.key_scope,
+                KeyScope::Session
+                    | KeyScope::Ephemeral
+                    | KeyScope::Local
+                    | KeyScope::SecurityDomain
+            )
             && input.key_usage == KEY_USAGE_DERIVE
             && input.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN
             && matches!(input.cmdreq_data.hash_algo, 1..=3)
