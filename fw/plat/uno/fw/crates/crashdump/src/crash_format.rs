@@ -13,7 +13,7 @@
 //! Two helper contexts feed [`crate::crashdump_save`]:
 //! - [`CpuRegisterContext`] — the general-purpose register snapshot, either
 //!   captured from a hardware [`ExceptionFrame`] or filled in by hand (panic
-//!   packs `file`/`line`/`message` pointers into `lr`/`pc`/`sp`).
+//!   records the handler's SP/PC, not source-location or message pointers).
 //! - [`RegisterBlockContext`] — the SCB fault registers (`CFSR`/`MMFAR`/`BFAR`).
 
 // Only required by the (currently disabled) Debug impl below.
