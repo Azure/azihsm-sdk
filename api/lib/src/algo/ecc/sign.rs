@@ -13,6 +13,47 @@ use super::*;
 pub struct HsmEccSignAlgo {}
 
 impl HsmEccSignAlgo {
+    /// Inspects the scope and curve of a TBOR masked ECC signing key.
+    ///
+    /// Validates framing and metadata, not authenticity. Authentication
+    /// requires an actual signing operation on the device.
+    pub fn masked_key_info(masked_key: &[u8]) -> HsmResult<(HsmKeyScope, HsmEccCurve)> {
+        let scope = HsmKeyScope::from_u8(ddi::HsmMaskedKey::tbor_scope(masked_key)?)?;
+        let props = ddi::HsmMaskedKey::to_key_props(masked_key)?;
+        if props.kind() != HsmKeyKind::Ecc || !props.can_sign() {
+            return Err(HsmError::InvalidKey);
+        }
+        Ok((scope, props.ecc_curve().ok_or(HsmError::InvalidKey)?))
+    }
+
+    /// Signs a pre-computed hash directly with a caller-held TBOR masked key.
+    ///
+    /// No unmask command or resident key object is created. The original blob
+    /// is supplied to `EccSign`; firmware authenticates it and signs on use.
+    /// Metadata parsing here does not establish the blob's authenticity.
+    /// Returns raw big-endian `r || s`, or its required size when `signature`
+    /// is absent. A size query does not authenticate the key.
+    pub fn sign_masked(
+        session: &HsmSession,
+        masked_key: &[u8],
+        data: &[u8],
+        signature: Option<&mut [u8]>,
+    ) -> HsmResult<usize> {
+        if !session.is_ex() {
+            return Err(HsmError::UnsupportedApiRevision);
+        }
+        Self::default().hash_algo(data)?;
+        let (_, curve) = Self::masked_key_info(masked_key)?;
+        let expected_len = curve.signature_size();
+        let Some(signature) = signature else {
+            return Ok(expected_len);
+        };
+        if signature.len() < expected_len {
+            return Err(HsmError::BufferTooSmall);
+        }
+        ddi::ecc_sign_masked_tbor(session, masked_key, curve, data, signature)
+    }
+
     /// Infers the hash algorithm from hash data length.
     ///
     /// # Parameters

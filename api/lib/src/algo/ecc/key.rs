@@ -106,7 +106,11 @@ impl HsmEccPrivateKey {
             Err(HsmError::InvalidKeyProps)?;
         }
 
-        if priv_props.is_session() != pub_props.is_session() {
+        // Both halves of the pair must resolve to the same effective
+        // masking scope. Comparing the TBOR scope folds in the legacy
+        // SESSION flag plus any explicit scope, so a non-session public
+        // scope can no longer be silently ignored.
+        if priv_props.tbor_scope() != pub_props.tbor_scope() {
             Err(HsmError::InvalidKeyProps)?;
         }
 
@@ -185,6 +189,31 @@ impl HsmVerificationKey for HsmEccPublicKey {}
 #[derive(Default)]
 pub struct HsmEccKeyGenAlgo {}
 
+impl HsmEccKeyGenAlgo {
+    fn generate(
+        session: &HsmSession,
+        priv_key_props: HsmKeyProps,
+        pub_key_props: HsmKeyProps,
+    ) -> HsmResult<(HsmEccPrivateKey, HsmEccPublicKey)> {
+        HsmEccPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
+        // The private half's scope is guarded inside `ecc_generate_key`;
+        // reject an unsupported explicit scope on the public half too.
+        pub_key_props.ensure_scope_supported(session.is_ex())?;
+        let (handle, priv_key_props, pub_key_props) =
+            ddi::ecc_generate_key(session, priv_key_props)?;
+        let Some(pub_key_der) = pub_key_props.pub_key_der() else {
+            return Err(HsmError::InternalError);
+        };
+        use crypto::ImportableKey;
+        let crypto_key =
+            crypto::EccPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
+        let pub_key = HsmEccPublicKey::new(pub_key_props, crypto_key);
+        let priv_key =
+            HsmEccPrivateKey::new(session.clone(), priv_key_props, handle, pub_key.clone());
+        Ok((priv_key, pub_key))
+    }
+}
+
 impl HsmKeyPairGenOp for HsmEccKeyGenAlgo {
     type PrivateKey = HsmEccPrivateKey;
     type Session = HsmSession;
@@ -213,29 +242,7 @@ impl HsmKeyPairGenOp for HsmEccKeyGenAlgo {
         ),
         Self::Error,
     > {
-        //validate private and public key properties
-        HsmEccPrivateKey::validate_key_pair_props(&priv_key_props, &pub_key_props)?;
-
-        // Create the ECC Key in the HSM via DDI.
-        let (handle, priv_key_props, pub_key_props) =
-            ddi::ecc_generate_key(session, priv_key_props)?;
-
-        // Extract the public key DER from the private key properties.
-        let Some(pub_key_der) = pub_key_props.pub_key_der() else {
-            return Err(HsmError::InternalError);
-        };
-
-        // Import the public key using azihsm-crypto.
-        use crypto::ImportableKey;
-        let crypto_key =
-            crypto::EccPublicKey::from_bytes(pub_key_der).map_hsm_err(HsmError::InternalError)?;
-
-        // Construct the HSM ECC key objects.
-        let pub_key = HsmEccPublicKey::new(pub_key_props, crypto_key);
-        let priv_key =
-            HsmEccPrivateKey::new(session.clone(), priv_key_props, handle, pub_key.clone());
-
-        Ok((priv_key, pub_key))
+        Self::generate(session, priv_key_props, pub_key_props)
     }
 }
 

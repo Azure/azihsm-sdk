@@ -1195,7 +1195,15 @@ struct azihsm_sd_create_remote_backup_params
      */
     const struct azihsm_buffer *masked_sealing_key;
     /*
-     Receiver attestation evidence.
+     Receiver key certificate chain (spec `RcvrCertChain`): validated
+     and anchored to the policy SATA key, its leaf is the recipient key
+     the remote backup is sealed to.  Always required.
+     */
+    struct azihsm_sd_cert_chain receiver_cert_chain;
+    /*
+     Receiver attestation evidence.  Verified only when the policy sets
+     `require_trusted_sa_key`; pass empty chains and an empty report
+     otherwise.
      */
     const struct azihsm_sd_evidence *receiver_evidence;
 };
@@ -1244,7 +1252,15 @@ struct azihsm_sd_restore_remote_backup_params
      */
     const struct azihsm_buffer *masked_sealing_key;
     /*
-     Sender attestation evidence.
+     Sender key certificate chain (spec `SndrCertChain`): validated and
+     anchored to the policy SATA key, its leaf is the sender key that
+     sealed the remote backup.  Always required.
+     */
+    struct azihsm_sd_cert_chain sender_cert_chain;
+    /*
+     Sender attestation evidence.  Verified only when the policy sets
+     `require_trusted_sa_key`; pass empty chains and an empty report
+     otherwise.
      */
     const struct azihsm_sd_evidence *sender_evidence;
     /*
@@ -2665,9 +2681,12 @@ azihsm_status azihsm_part_get_prop(azihsm_handle handle, struct azihsm_part_prop
  @brief Create a new security domain and its remote backup
 
  Creates a security domain under the calling session's partition from
- `params.part_policy`, using the sender's masked sealing key and the
- receiver's attestation evidence, and returns the three backups the
- firmware produces.
+ `params.part_policy`, using the sender's masked sealing key. The
+ recipient key is recovered from the authoritative
+ `params.receiver_cert_chain` (always required, anchored to the policy
+ SATA key); the `params.receiver_evidence` is optional and verified only
+ when the policy sets `require_trusted_sa_key`. Returns the three backups
+ the firmware produces.
 
  @param[in] sess_handle Handle to the security-domain session
  @param[in] params Create-backup input buffers
@@ -2736,9 +2755,10 @@ azihsm_status azihsm_sd_reseal_remote_backup(
  @brief Restore a security domain from a remote backup
 
  HPKE-opens `params.src_remote_backup` with the receiver's masked sealing
- key (authenticated by the sender in `params.sender_evidence`), recovers
- the security-domain masking key from `params.prev_sd_mk_backup`, and
- returns the refreshed device-local backups.
+ key (authenticated by the sender key recovered from
+ `params.sender_cert_chain`), recovers the security-domain masking key
+ from `params.prev_sd_mk_backup`, and returns the refreshed device-local
+ backups.
 
  @param[in] sess_handle Handle to the security-domain session
  @param[in] params Restore-backup input buffers

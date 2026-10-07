@@ -7,17 +7,8 @@
 //! higher-level HKDF algorithm implementation to derive an HSM-managed symmetric key from an
 //! HSM-managed shared secret.
 
-use azihsm_ddi_tbor_types::HASH_ALGO_SHA256;
-use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
-use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_AES128;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_AES192;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_AES256;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA256;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA384;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA512;
-use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::TborHkdfDeriveReq;
+use azihsm_ddi_tbor_types::*;
 use resiliency_macro::resiliency_key_op;
 
 use super::*;
@@ -59,6 +50,9 @@ pub(crate) fn hkdf_derive(
     info: Option<&[u8]>,
     derived_key_props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    // A masking scope can only be honored on the TBOR path; reject an
+    // explicit scope on MBOR so it is not silently dropped.
+    derived_key_props.ensure_scope_supported(shared_secret.session().is_ex())?;
     // Transport is selected by session type: a V2 (TBOR) session derives
     // from the caller-held masked shared secret; a V1 (MBOR) session from
     // the device-resident secret id.
@@ -131,10 +125,11 @@ fn hkdf_derive_tbor(
         return Err(HsmError::InvalidKeyProps);
     }
 
+    let scope = derived_key_props.tbor_scope();
     let req = TborHkdfDeriveReq {
         session_id: shared_secret.session().ex_session_id()?,
-        scope: derived_key_props.tbor_scope(),
-        hash_algo: tbor_hash_algo(hash_algo)?,
+        scope,
+        hash_algo: tbor_hash_algo(hash_algo),
         key_type,
         // Fixed canonical AES / HMAC output; the variable-length HMAC
         // `key_length` is unused for these key types.
@@ -150,6 +145,7 @@ fn hkdf_derive_tbor(
             .map_err(HsmError::from)
     })?;
 
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     let dev_key_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
     // Validate that the device returned properties match the requested properties.
     if !derived_key_props.validate_dev_props(&dev_key_props) {
@@ -178,12 +174,12 @@ fn tbor_hkdf_key_type(props: &HsmKeyProps) -> HsmResult<u8> {
 }
 
 /// Maps `HsmHashAlgo` to the 1-byte TBOR `HashAlgo` discriminant.
-fn tbor_hash_algo(algo: HsmHashAlgo) -> HsmResult<u8> {
+fn tbor_hash_algo(algo: HsmHashAlgo) -> u8 {
     match algo {
-        HsmHashAlgo::Sha256 => Ok(HASH_ALGO_SHA256),
-        HsmHashAlgo::Sha384 => Ok(HASH_ALGO_SHA384),
-        HsmHashAlgo::Sha512 => Ok(HASH_ALGO_SHA512),
-        _ => Err(HsmError::InvalidArgument),
+        HsmHashAlgo::Sha1 => HASH_ALGO_SHA1,
+        HsmHashAlgo::Sha256 => HASH_ALGO_SHA256,
+        HsmHashAlgo::Sha384 => HASH_ALGO_SHA384,
+        HsmHashAlgo::Sha512 => HASH_ALGO_SHA512,
     }
 }
 

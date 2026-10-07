@@ -23,8 +23,13 @@ use std::process::Command;
 use azihsm_ossl_engine_sys as ffi;
 use openssl::ec::EcGroup;
 use openssl::ec::EcKey;
+use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::PKey;
+use openssl::rsa::Padding;
+use openssl::rsa::Rsa;
+use openssl::sign::RsaPssSaltlen;
+use openssl::sign::Verifier;
 use serial_test::serial;
 
 /// Write owner-only (0600) key material.
@@ -668,6 +673,203 @@ fn hkdf_via_engine_capi() {
         ffi::ENGINE_free(e);
     }
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Sign `msg` (SHA-256) through `pkey` via `EVP_DigestSign*`, optionally under
+/// RSA-PSS (`rsa_padding_mode:pss`, `rsa_pss_saltlen:digest`). The engine is NOT
+/// passed to `EVP_DigestSignInit` (that would also try to fetch the digest from
+/// the engine, which provides none); the loaded key is bound to the engine via
+/// `EVP_PKEY_set1_engine` by the caller, so the pkey ctx resolves to the engine's
+/// RSA `EVP_PKEY_METHOD` (reaching the PSS override) while the digest stays
+/// software.
+#[allow(unsafe_code)]
+fn capi_rsa_digest_sign(pkey: *mut ffi::EVP_PKEY, msg: &[u8], pss: bool) -> Vec<u8> {
+    let pad_key = CString::new("rsa_padding_mode").unwrap();
+    let pad_val = CString::new("pss").unwrap();
+    let salt_key = CString::new("rsa_pss_saltlen").unwrap();
+    let salt_val = CString::new("digest").unwrap();
+    // SAFETY: EVP_DigestSign sequence; pctx is owned by the md ctx (not freed
+    // separately), every return code is checked, and the md ctx is freed.
+    unsafe {
+        let ctx = ffi::EVP_MD_CTX_new();
+        assert!(!ctx.is_null());
+        let mut pctx: *mut ffi::EVP_PKEY_CTX = std::ptr::null_mut();
+        assert_eq!(
+            ffi::EVP_DigestSignInit(
+                ctx,
+                &mut pctx,
+                ffi::EVP_sha256(),
+                std::ptr::null_mut(),
+                pkey,
+            ),
+            1,
+            "EVP_DigestSignInit"
+        );
+        if pss {
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(pctx, pad_key.as_ptr(), pad_val.as_ptr()),
+                1,
+                "rsa_padding_mode:pss"
+            );
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(pctx, salt_key.as_ptr(), salt_val.as_ptr()),
+                1,
+                "rsa_pss_saltlen:digest"
+            );
+        }
+        assert_eq!(
+            ffi::EVP_DigestUpdate(ctx, msg.as_ptr().cast(), msg.len()),
+            1,
+            "EVP_DigestUpdate"
+        );
+        let mut siglen: usize = 0;
+        assert_eq!(
+            ffi::EVP_DigestSignFinal(ctx, std::ptr::null_mut(), &mut siglen),
+            1,
+            "EVP_DigestSignFinal (size query)"
+        );
+        let mut sig = vec![0u8; siglen];
+        let rc = ffi::EVP_DigestSignFinal(ctx, sig.as_mut_ptr(), &mut siglen);
+        assert_eq!(
+            rc,
+            1,
+            "EVP_DigestSignFinal: {}",
+            openssl::error::ErrorStack::get()
+        );
+        sig.truncate(siglen);
+        ffi::EVP_MD_CTX_free(ctx);
+        sig
+    }
+}
+
+/// Software SHA-256 verify of `sig` over `msg` with `pub_der` (SPKI), optionally
+/// under RSA-PSS with a digest-length salt. Returns whether it verifies.
+fn sw_rsa_verify(pub_der: &[u8], msg: &[u8], sig: &[u8], pss: bool) -> bool {
+    let pubkey = PKey::public_key_from_der(pub_der).unwrap();
+    let mut v = Verifier::new(MessageDigest::sha256(), &pubkey).unwrap();
+    if pss {
+        v.set_rsa_padding(Padding::PKCS1_PSS).unwrap();
+        v.set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH).unwrap();
+    }
+    v.update(msg).unwrap();
+    v.verify(sig).unwrap()
+}
+
+/// RSA import + load + sign over the real C ABI: import a software RSA key into
+/// the HSM through `EVP_PKEY_CTX_new_id(RSA, engine)` + `azihsm.input_key`
+/// control strings + `EVP_PKEY_keygen` (writing the masked blob), load the blob
+/// back through `ENGINE_load_private_key` (`azihsm://…;type=rsa`), then sign with
+/// it under both PKCS#1 v1.5 (RSA_METHOD sign slot) and PSS (the RSA
+/// EVP_PKEY_METHOD sign override) via `EVP_DigestSign`, verifying each in
+/// software against the public half. A single engine load covers the whole flow.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn sign_rsa_key_via_engine_capi() {
+    use std::ffi::c_int;
+
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let dir = setup_keymat();
+
+    // Fixture: a software RSA-2048 key as unencrypted PKCS#8 DER, plus its SPKI.
+    let sw = Rsa::generate(2048).unwrap();
+    let sw_pkey = PKey::from_rsa(sw).unwrap();
+    let input_der = sw_pkey.private_key_to_pkcs8().unwrap();
+    let pub_der = sw_pkey.public_key_to_der().unwrap();
+    let input_path = dir.join("rsa_input.der");
+    write_secret(&input_path, &input_der);
+    let blob = dir.join("rsa_key.bin");
+
+    let e = open_dynamic_engine(&engine_so);
+
+    // Import into the HSM via the keygen ABI (genpkey-equivalent), discarding the
+    // returned key — the point is to exercise the load path next.
+    let cstr = |s: &str| CString::new(s).unwrap();
+    // SAFETY: standard EVP_PKEY keygen (import) sequence on the engine handle;
+    // every return code is checked and both the ctx and the key are freed.
+    unsafe {
+        let ctx = ffi::EVP_PKEY_CTX_new_id(ffi::EVP_PKEY_RSA as c_int, e);
+        assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id(RSA, engine)");
+        assert_eq!(ffi::EVP_PKEY_keygen_init(ctx), 1, "EVP_PKEY_keygen_init");
+        for (k, v) in [
+            ("rsa_keygen_bits", "2048"),
+            ("azihsm.input_key", input_path.to_str().unwrap()),
+            ("azihsm.masked_key", blob.to_str().unwrap()),
+            ("azihsm.key_kind", "RSA-CRT"),
+        ] {
+            let key = cstr(k);
+            let value = cstr(v);
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(ctx, key.as_ptr(), value.as_ptr()),
+                1,
+                "import option {k}"
+            );
+        }
+        let mut imported = std::ptr::null_mut();
+        assert_eq!(
+            ffi::EVP_PKEY_keygen(ctx, &mut imported),
+            1,
+            "EVP_PKEY_keygen (import): {}",
+            openssl::error::ErrorStack::get()
+        );
+        ffi::EVP_PKEY_CTX_free(ctx);
+        ffi::EVP_PKEY_free(imported);
+    }
+    assert!(
+        blob.is_file() && std::fs::metadata(&blob).unwrap().len() > 0,
+        "masked blob not written"
+    );
+
+    // Load the masked blob through the real loader on the same engine.
+    let uri = cstr(&format!("azihsm://{};type=rsa", blob.display()));
+    // SAFETY: e is the initialized engine; uri is a valid NUL-terminated string.
+    let raw = unsafe {
+        ffi::ENGINE_load_private_key(e, uri.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    assert!(!raw.is_null(), "ENGINE_load_private_key returned NULL");
+
+    // Bind the loaded key to the engine so a NULL-engine EVP_DigestSignInit still
+    // resolves PSS to the engine's RSA EVP_PKEY_METHOD (the digest stays software).
+    // SAFETY: raw is a valid EVP_PKEY; e is the initialized engine.
+    let bind_rc = unsafe { ffi::EVP_PKEY_set1_engine(raw, e) };
+    assert_eq!(bind_rc, 1, "EVP_PKEY_set1_engine");
+
+    let msg = b"engine rsa signing over the capi path";
+
+    // PKCS#1 v1.5 (reaches the RSA_METHOD sign slot) and PSS (reaches the RSA
+    // EVP_PKEY_METHOD sign override) — each verified in software.
+    let sig_v15 = capi_rsa_digest_sign(raw, msg, false);
+    assert!(!sig_v15.is_empty(), "empty v1.5 signature");
+    assert!(
+        sw_rsa_verify(&pub_der, msg, &sig_v15, false),
+        "v1.5 signature must verify against the public key"
+    );
+
+    let sig_pss = capi_rsa_digest_sign(raw, msg, true);
+    assert!(!sig_pss.is_empty(), "empty PSS signature");
+    assert!(
+        sw_rsa_verify(&pub_der, msg, &sig_pss, true),
+        "PSS signature must verify against the public key"
+    );
+
+    // A tampered message must not verify under PSS.
+    assert!(
+        !sw_rsa_verify(
+            &pub_der,
+            b"engine rsa signing over the capi path?",
+            &sig_pss,
+            true
+        ),
+        "tampered message unexpectedly verified"
+    );
+
+    // SAFETY: raw is the owning EVP_PKEY from ENGINE_load_private_key; e is ours.
+    unsafe {
+        ffi::EVP_PKEY_free(raw);
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -81,13 +81,12 @@ impl UnoHsmIo {
     ///
     /// This constructor performs **no scrub**: anything the caller writes to
     /// the admin slot's bump heaps stays resident until some later scrub.
-    /// Use it only on a path that provably dirties neither heap — today just
-    /// the synchronous unwrapping-key import, which cannot `await` a scrub
-    /// and copies straight from `&'static` GSRAM into vault storage. Every
-    /// other admin path must go through
-    /// [`with_admin_io`](UnoHsmPal::with_admin_io), which wipes the slot on
-    /// completion. The name is deliberately blunt so a new call site has to
-    /// opt into the hazard explicitly.
+    /// Its only caller is [`with_admin_io`](UnoHsmPal::with_admin_io), which
+    /// wipes the slot on completion. The admin slot's `IO_META` is shared, so
+    /// it must only be written from the IPC task that runs admin sessions
+    /// sequentially; a host-IO path must use its own IO instead. The name is
+    /// deliberately blunt so a new call site has to opt into the hazard
+    /// explicitly.
     ///
     /// [`ADMIN_IO_INDEX`]: crate::alloc::ADMIN_IO_INDEX
     /// [`UnoScopedAlloc`]: crate::alloc::UnoScopedAlloc
@@ -221,12 +220,9 @@ impl UnoHsmPal {
     /// resident in the admin slot indefinitely.
     ///
     /// Binding the scrub to the session rather than to each caller means no
-    /// admin path that dirties the slot can forget it. The one deliberate
-    /// exception is [`UnoHsmIo::admin_no_scrub`], whose name states that it
-    /// opts out; it is reserved for paths that provably write nothing to
-    /// either bump heap. `f` also receives a [`UnoScopedAlloc`] rewound to
-    /// the slot's base, so every admin sequence starts from a clean bump
-    /// heap.
+    /// admin path that dirties the slot can forget it. `f` also receives a
+    /// [`UnoScopedAlloc`] rewound to the slot's base, so every admin sequence
+    /// starts from a clean bump heap.
     ///
     /// Sessions must not nest — [`UnoScopedAlloc::for_admin`] rewinds the
     /// slot's watermarks, so an inner session would alias an outer one's

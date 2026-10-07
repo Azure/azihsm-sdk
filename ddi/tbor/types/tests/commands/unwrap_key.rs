@@ -22,38 +22,12 @@
 
 #![cfg(feature = "emu")]
 
-use azihsm_crypto::AesKey;
-use azihsm_crypto::AesKeyWrapPadAlgo;
-use azihsm_crypto::EccPrivateKey;
-use azihsm_crypto::Encrypter;
-use azihsm_crypto::ExportableKey;
-use azihsm_crypto::HashAlgo;
-use azihsm_crypto::ImportableKey;
-use azihsm_crypto::KeyGenerationOp;
-use azihsm_crypto::RsaEncryptAlgo;
-use azihsm_crypto::RsaPrivateKey;
-use azihsm_crypto::RsaPublicKey;
+use azihsm_crypto::*;
 use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_types::TborGetUnwrappingKeyReq;
-use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::TborUnwrapKeyReq;
-use azihsm_ddi_tbor_types::TborUnwrapKeyResp;
-use azihsm_ddi_tbor_types::KEY_CLASS_AES;
-use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
-use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
-use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
-use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
-use azihsm_ddi_tbor_types::KEY_CLASS_RSA;
-use azihsm_ddi_tbor_types::KEY_CLASS_RSA_CRT;
-use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
-use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
-use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
-use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
+use azihsm_ddi_tbor_types::*;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
-/// OAEP hash discriminant (SHA-256) used for wrapping.
-const OAEP_SHA256: u8 = 1;
 /// `KeyScope::Local` discriminant — masks the recovered key under the
 /// partition-local masking key.
 const SCOPE_LOCAL: u8 = 0b011;
@@ -61,9 +35,9 @@ const SCOPE_LOCAL: u8 = 0b011;
 const KIND_HMAC_SHA256: u8 = 32;
 
 /// RSA-AES-wrap `data` against the HSM-format unwrapping public key
-/// (`n_le ‖ e_le`): RSA-OAEP(SHA-256) an ephemeral 32-byte KEK, then
+/// (`n_le ‖ e_le`): RSA-OAEP an ephemeral 32-byte KEK with `oaep_hash`, then
 /// AES-KWP the data under it, and concatenate.
-fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
+fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8], oaep_hash: HashAlgo) -> Vec<u8> {
     // `GetUnwrappingKey` returns the modulus / exponent little-endian
     // (`n_le(256) ‖ e_le(4)`), but `RsaPublicKey::from_hsm_bytes` parses
     // each component big-endian — reverse them per-component.
@@ -75,7 +49,7 @@ fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8]) -> Vec<u8> {
     let ephemeral_kek = [0xA7u8; 32];
     let pub_key = RsaPublicKey::from_hsm_bytes(&be).expect("from_hsm_bytes");
     let mut enc_kek = Encrypter::encrypt_vec(
-        &mut RsaEncryptAlgo::with_oaep_padding(HashAlgo::sha256(), None),
+        &mut RsaEncryptAlgo::with_oaep_padding(oaep_hash, None),
         &pub_key,
         &ephemeral_kek,
     )
@@ -128,13 +102,13 @@ pub(crate) fn unwrap_with_usage(
         .tbor(&TborGetUnwrappingKeyReq { session_id })
         .expect("GetUnwrappingKey")
         .pub_key;
-    let wrapped = rsa_aes_wrap(&hsm_pub, key);
+    let wrapped = rsa_aes_wrap(&hsm_pub, key, HashAlgo::sha256());
     ctx.tbor(&TborUnwrapKeyReq {
         session_id,
         scope: SCOPE_LOCAL,
         key_class: class,
         key_usage: usage,
-        oaep_hash_algo: OAEP_SHA256,
+        oaep_hash_algo: HASH_ALGO_SHA256,
         wrapped_blob: wrapped,
         key_label: b"imported-key".to_vec(),
     })
@@ -194,6 +168,92 @@ fn unwrap_key_aes_emu() {
         "masked AES key must not be all-zero",
     );
     assert!(resp.pub_key.is_empty(), "a symmetric key has no public key");
+}
+
+/// Verifies all OAEP hashes unwrap symmetric keys and preserve an ECC public key.
+#[test]
+fn unwrap_key_all_oaep_hashes_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let hsm_pub = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey")
+        .pub_key;
+    let ecc_key = EccPrivateKey::from_curve(EccCurve::P256).expect("generate ECC key");
+    let ecc_der = ecc_key.to_vec().expect("export ECC key");
+    let (x_be, y_be) = ecc_key.coord_vec().expect("export ECC public coordinates");
+    let expected_pub: Vec<u8> = x_be
+        .into_iter()
+        .rev()
+        .chain(y_be.into_iter().rev())
+        .collect();
+    let aes_key = [0x42u8; 32];
+
+    for (hash_id, hash) in [
+        (HASH_ALGO_SHA1, HashAlgo::sha1()),
+        (HASH_ALGO_SHA256, HashAlgo::sha256()),
+        (HASH_ALGO_SHA384, HashAlgo::sha384()),
+        (HASH_ALGO_SHA512, HashAlgo::sha512()),
+    ] {
+        for (class, key) in [
+            (KEY_CLASS_AES, aes_key.as_slice()),
+            (KEY_CLASS_ECC, ecc_der.as_slice()),
+        ] {
+            let wrapped_blob = rsa_aes_wrap(&hsm_pub, key, hash.clone());
+            let resp = ctx
+                .tbor(&TborUnwrapKeyReq {
+                    session_id: session.session_id,
+                    scope: SCOPE_LOCAL,
+                    key_class: class,
+                    key_usage: usage_for_class(class),
+                    oaep_hash_algo: hash_id,
+                    wrapped_blob,
+                    key_label: b"oaep-hash-test".to_vec(),
+                })
+                .expect("UnwrapKey must accept the selected OAEP hash");
+
+            assert!(
+                resp.masked_key.iter().any(|&byte| byte != 0),
+                "unwrapped key must be nonzero (hash {hash_id}, class {class})"
+            );
+            if class == KEY_CLASS_ECC {
+                assert_eq!(
+                    resp.pub_key, expected_pub,
+                    "ECC public key must match the wrapped key (hash {hash_id})"
+                );
+            } else {
+                assert!(resp.pub_key.is_empty(), "AES keys have no public key");
+            }
+        }
+    }
+}
+
+/// Verifies an unknown OAEP selector is rejected even for a valid wrapped key.
+#[test]
+fn unwrap_key_unknown_oaep_hash_rejected_emu() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+    let hsm_pub = ctx
+        .tbor(&TborGetUnwrappingKeyReq {
+            session_id: session.session_id,
+        })
+        .expect("GetUnwrappingKey")
+        .pub_key;
+    let wrapped_blob = rsa_aes_wrap(&hsm_pub, &[0x42u8; 32], HashAlgo::sha256());
+    ctx.expect_fw_reject(
+        &TborUnwrapKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            key_class: KEY_CLASS_AES,
+            key_usage: usage_for_class(KEY_CLASS_AES),
+            oaep_hash_algo: u8::MAX,
+            wrapped_blob,
+            key_label: Vec::new(),
+        },
+        TborStatus::InvalidArg,
+    );
 }
 
 #[test]
@@ -256,13 +316,13 @@ fn unwrap_key_rejects_invalid_usage_for_class_emu() {
         })
         .expect("GetUnwrappingKey")
         .pub_key;
-    let wrapped = rsa_aes_wrap(&hsm_pub, &aes_key);
+    let wrapped = rsa_aes_wrap(&hsm_pub, &aes_key, HashAlgo::sha256());
     let req = TborUnwrapKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         key_class: KEY_CLASS_AES,
         key_usage: KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
-        oaep_hash_algo: OAEP_SHA256,
+        oaep_hash_algo: HASH_ALGO_SHA256,
         wrapped_blob: wrapped,
         key_label: Vec::new(),
     };
