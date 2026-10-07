@@ -25,6 +25,16 @@ use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
+/// Clear the CU default-PSK gate without keeping a session slot occupied.
+fn rotate_cu_psk_and_close(ctx: &TestCtx) {
+    let bootstrap = ctx
+        .open_session(CU_PSK_ID, SessionType::PlainText)
+        .expect("open bootstrap CU session");
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
+        .expect("rotate CU PSK");
+    bootstrap.close().expect("close bootstrap CU session");
+}
+
 /// Hash `msg` on-device with `algo`, returning the digest.
 fn device_digest(ctx: &TestCtx, session_id: u16, algo: u8, msg: Vec<u8>) -> Vec<u8> {
     ctx.tbor(&TborHashReq {
@@ -108,16 +118,8 @@ fn hash_unknown_algo_rejected() {
 fn hash_invalid_session_id_rejected() {
     let ctx = TestCtx::new();
 
-    // Rotate the CU PSK first so the default-PSK dispatcher gate does not
-    // mask the invalid-session error we actually want to test.
-    let bootstrap = ctx
-        .open_session(CU_PSK_ID, SessionType::PlainText)
-        .expect("open bootstrap CU session");
-
-    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
-        .expect("rotate CU PSK");
-
-    bootstrap.close().expect("close bootstrap CU session");
+    // u16::MAX selects the CU role; clear its default-PSK gate first.
+    rotate_cu_psk_and_close(&ctx);
 
     ctx.expect_fw_reject(
         &TborHashReq {
@@ -135,13 +137,8 @@ fn hash_invalid_algos_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    // Valid algorithms are:
-    //   0 = SHA-1
-    //   1 = SHA-256
-    //   2 = SHA-384
-    //   3 = SHA-512
-    //
-    // Test values outside that supported range.
+    // Exported TBOR algorithms are 1, 2, and 3.
+    // Exercise out-of-range values without assuming how 0 is handled.
     for algo in [HASH_ALGO_SHA512.wrapping_add(1), 0x7f, u8::MAX] {
         ctx.expect_fw_reject(
             &TborHashReq {
@@ -237,17 +234,15 @@ fn hash_same_message_different_algos() {
     let session = finalized_co_session(&ctx);
     let msg = b"same message".to_vec();
 
-    let sha256 = device_digest(&ctx, session.session_id, HASH_ALGO_SHA256, msg.clone());
-    let sha384 = device_digest(&ctx, session.session_id, HASH_ALGO_SHA384, msg.clone());
-    let sha512 = device_digest(&ctx, session.session_id, HASH_ALGO_SHA512, msg.clone());
-
-    assert_eq!(sha256, host_digest(HASH_ALGO_SHA256, &msg));
-    assert_eq!(sha384, host_digest(HASH_ALGO_SHA384, &msg));
-    assert_eq!(sha512, host_digest(HASH_ALGO_SHA512, &msg));
-
-    assert_eq!(sha256.len(), 32);
-    assert_eq!(sha384.len(), 48);
-    assert_eq!(sha512.len(), 64);
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let digest = device_digest(&ctx, session.session_id, algo, msg.clone());
+        assert_eq!(
+            digest.len(),
+            digest_len(algo),
+            "digest length for algo {algo}"
+        );
+        assert_eq!(digest, host_digest(algo, &msg), "digest for algo {algo}");
+    }
 }
 
 /// Verifies a one-bit input change produces a different digest.
@@ -558,6 +553,8 @@ fn hash_matches_across_co_and_cu_sessions() {
 #[test]
 fn hash_valid_session_usable_after_invalid_session_request() {
     let ctx = TestCtx::new();
+    // Rotate and close CU before opening CO to avoid competing for a slot.
+    rotate_cu_psk_and_close(&ctx);
     let session = finalized_co_session(&ctx);
 
     ctx.expect_fw_reject(
@@ -656,14 +653,15 @@ fn hash_over_max_message_length_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    let result = ctx.tbor(&TborHashReq {
-        session_id: session.session_id,
-        algo: HASH_ALGO_SHA256,
-        msg: vec![0x5a; 2049],
-    });
-
-    assert!(
-        result.is_err(),
-        "2049-byte Hash message must be rejected by the TBOR/firmware path",
-    );
+    for algo in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
+        let result = ctx.tbor(&TborHashReq {
+            session_id: session.session_id,
+            algo,
+            msg: vec![0x5a; 2049],
+        });
+        assert!(
+            result.is_err(),
+            "2049-byte Hash message must be rejected for algo {algo}",
+        );
+    }
 }
