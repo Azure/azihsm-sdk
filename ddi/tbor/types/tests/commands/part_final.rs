@@ -1080,7 +1080,7 @@ fn part_final_policy_mismatch_preserves_state_and_allows_retry() {
     let last = wrong_policy.len() - 2;
     wrong_policy[last] ^= 0x01;
 
-    ctx.part_final(&session, &wrong_policy, &[], &[])
+    ctx.part_final(&session, &wrong_policy, &[], &chain.der_items())
         .expect_err("mismatched PartPolicy must be rejected");
 
     let after_reject = read_part_info(&ctx);
