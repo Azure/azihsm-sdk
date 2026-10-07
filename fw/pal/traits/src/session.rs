@@ -282,15 +282,12 @@ pub trait HsmSessionManager {
     ///
     /// Tears down the session in this order:
     ///
-    /// 1. Removes every vault key bound to the session's physical
-    ///    vault key ID (see module-level docs for the
-    ///    session→physical-ID binding).
-    /// 2. Deletes the session vault entry itself.
+    /// 1. Removes every session-scoped vault key.
+    /// 2. Releases PAL-owned session state, including any pending
+    ///    handshake state.
     /// 3. Frees the session table slot.
     ///
-    /// Idempotent only in the sense that a freed slot is safe to
-    /// reuse; calling `session_destroy` on an already-free slot is
-    /// reported as [`HsmError::InvalidArg`].
+    /// An unknown or already-free slot returns [`HsmError::SessionNotFound`].
     ///
     /// # Parameters
     ///
@@ -300,7 +297,7 @@ pub trait HsmSessionManager {
     /// # Returns
     ///
     /// - `Ok(())` on success.
-    /// - `Err(HsmError::InvalidArg)` — `id` does not refer to a live
+    /// - `Err(HsmError::SessionNotFound)` — `id` does not refer to an allocated
     ///   session in the caller's partition.
     async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()>;
 
