@@ -39,8 +39,6 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
-const SCOPE_LOCAL: u8 = 0b011;
-
 /// Each variant starts from a freshly provisioned, otherwise-valid
 /// partition and request. Mutations therefore reach distinct handler gates
 /// instead of spending most inputs on malformed TBOR framing.
@@ -188,7 +186,7 @@ fn build_fixture(
     let sealing_key = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id: session.session_id,
-            scope: SCOPE_LOCAL,
+            scope: common::KEY_SCOPE_LOCAL,
         })
         .expect("SdSealingKeyGen");
     let masked_sealing_key = sealing_key.masked_key.to_vec();

@@ -38,8 +38,6 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
-const SCOPE_LOCAL: u8 = 0b011;
-
 /// Every case starts with real keys, evidence, policy, and a source backup.
 /// Mutations therefore exercise handler validation and crypto paths rather
 /// than spending most fuzz iterations on undecodable request bytes.
@@ -205,7 +203,7 @@ fn sealing_key_report_and_pub(
     let seal = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id,
-            scope: SCOPE_LOCAL,
+            scope: common::KEY_SCOPE_LOCAL,
         })
         .expect("SdSealingKeyGen");
     let masked_key: [u8; MASKED_SEALING_KEY_LEN] = seal

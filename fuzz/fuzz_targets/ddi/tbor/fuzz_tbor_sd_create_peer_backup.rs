@@ -41,8 +41,6 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
-const LOCAL_SCOPE: u8 = 0b011;
-
 #[derive(Debug, Clone, Copy, Arbitrary)]
 enum Fault {
     ValidSelfPeer,
@@ -256,7 +254,7 @@ fuzz_target!(|input: FuzzInput| {
         let recipient = ctx
             .tbor(&TborSdSealingKeyGenReq {
                 session_id: session.session_id,
-                scope: LOCAL_SCOPE,
+                scope: common::KEY_SCOPE_LOCAL,
             })
             .expect("recipient SdSealingKeyGen should succeed");
         let report = ctx
@@ -275,7 +273,7 @@ fuzz_target!(|input: FuzzInput| {
         } else {
             ctx.tbor(&TborSdSealingKeyGenReq {
                 session_id: session.session_id,
-                scope: LOCAL_SCOPE,
+                scope: common::KEY_SCOPE_LOCAL,
             })
             .expect("sender SdSealingKeyGen should succeed")
             .masked_key
@@ -394,7 +392,7 @@ fuzz_target!(|input: FuzzInput| {
                 req.pok_local_backup = ctx
                     .tbor(&TborSdSealingKeyGenReq {
                         session_id: session.session_id,
-                        scope: LOCAL_SCOPE,
+                        scope: common::KEY_SCOPE_LOCAL,
                     })
                     .expect("wrong-kind envelope fixture should be valid")
                     .masked_key;

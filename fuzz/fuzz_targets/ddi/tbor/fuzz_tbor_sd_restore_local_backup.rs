@@ -34,7 +34,6 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
-const SCOPE_LOCAL: u8 = 0b011;
 const ENVELOPE_CIPHERTEXT_OFFSET: usize = 8 + 12 + 192;
 
 #[derive(Arbitrary, Clone, Copy, Debug)]
@@ -147,7 +146,7 @@ fn build_source_backups(ctx: &TestCtx) -> SourceBackups {
     let sealing_key = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id: session.session_id,
-            scope: SCOPE_LOCAL,
+            scope: common::KEY_SCOPE_LOCAL,
         })
         .expect("SdSealingKeyGen");
     let receiver_pub = raw_pub_from_wire(&sealing_key.pub_key);

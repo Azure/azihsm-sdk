@@ -38,6 +38,14 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 
 pub type DdiTest = AzihsmDdi;
 
+/// Wire discriminants for the TBOR `KeyScope` enum.
+pub const KEY_SCOPE_UNSPECIFIED: u8 = 0b000;
+pub const KEY_SCOPE_SESSION: u8 = 0b001;
+pub const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
+pub const KEY_SCOPE_LOCAL: u8 = 0b011;
+pub const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
+pub const KEY_SCOPE_INTERNAL: u8 = 0b101;
+
 /// Fuzz operations corresponding to the TOC builder methods on
 /// [`Encoder`].
 #[derive(Arbitrary, Debug)]
