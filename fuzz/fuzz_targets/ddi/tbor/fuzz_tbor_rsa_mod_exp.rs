@@ -280,7 +280,10 @@ fuzz_target!(|input: FuzzInput| {
             || known_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT);
         let import_expected_success = matches!(
             input.key_scope,
-            KeyScope::Session | KeyScope::Ephemeral | KeyScope::Local
+            KeyScope::Session
+                | KeyScope::Ephemeral
+                | KeyScope::Local
+                | KeyScope::SecurityDomain
         ) && valid_rsa_usage
             && input.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
         if generate_valid_key && import_succeeded != import_expected_success {
