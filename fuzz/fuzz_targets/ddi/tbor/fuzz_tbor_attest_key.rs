@@ -85,8 +85,8 @@ enum MaskingScope {
 impl MaskingScope {
     fn to_tbor(&self) -> u8 {
         match self {
-            Self::Ephemeral => 0b010,
-            Self::Local => 0b011,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
         }
     }
 }

@@ -29,10 +29,10 @@ enum KeyScope {
 impl KeyScope {
     fn to_tbor(self) -> u8 {
         match self {
-            Self::Session => KEY_SCOPE_SESSION,
-            Self::Ephemeral => KEY_SCOPE_EPHEMERAL,
-            Self::Local => KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Session => common::KEY_SCOPE_SESSION,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
         }
     }
 }
@@ -66,11 +66,6 @@ struct FuzzInput {
     cmdreq_data: FuzzHkdfDeriveReq,
 }
 
-const KEY_SCOPE_SESSION: u8 = 0b001;
-const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
-const KEY_SCOPE_LOCAL: u8 = 0b011;
-const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
-
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
@@ -79,7 +74,7 @@ fuzz_target!(|input: FuzzInput| {
             let key_a = ctx
                 .tbor(&TborEccGenerateKeyReq {
                     session_id: session.session_id,
-                    scope: KEY_SCOPE_SESSION,
+                    scope: common::KEY_SCOPE_SESSION,
                     curve: input.key_curve.to_tbor(),
                     key_usage: KEY_USAGE_DERIVE,
                     key_label: Vec::new(),
@@ -88,7 +83,7 @@ fuzz_target!(|input: FuzzInput| {
             let key_b = ctx
                 .tbor(&TborEccGenerateKeyReq {
                     session_id: session.session_id,
-                    scope: KEY_SCOPE_SESSION,
+                    scope: common::KEY_SCOPE_SESSION,
                     curve: input.key_curve.to_tbor(),
                     key_usage: KEY_USAGE_DERIVE,
                     key_label: Vec::new(),
@@ -96,7 +91,7 @@ fuzz_target!(|input: FuzzInput| {
                 .expect("session-scoped ECC peer key generation should succeed");
             ctx.tbor(&TborEcdhDeriveReq {
                 session_id: session.session_id,
-                scope: KEY_SCOPE_SESSION,
+                scope: common::KEY_SCOPE_SESSION,
                 masked_key: key_a.masked_key,
                 peer_pub_key: key_b.pub_key,
                 key_label: Vec::new(),

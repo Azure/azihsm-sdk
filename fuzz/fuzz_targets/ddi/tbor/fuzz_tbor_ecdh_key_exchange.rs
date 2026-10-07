@@ -28,10 +28,10 @@ enum KeyScope {
 impl KeyScope {
     fn to_tbor(self) -> u8 {
         match self {
-            Self::Session => KEY_SCOPE_SESSION,
-            Self::Ephemeral => KEY_SCOPE_EPHEMERAL,
-            Self::Local => KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Session => common::KEY_SCOPE_SESSION,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
         }
     }
 }
@@ -68,11 +68,6 @@ struct FuzzInput {
     cmdreq_data: FuzzEcdhDeriveReq,
 }
 
-const KEY_SCOPE_SESSION: u8 = 0b001;
-const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
-const KEY_SCOPE_LOCAL: u8 = 0b011;
-const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
-
 /// Deterministically fill a buffer of `len` bytes from `seed` using a
 /// small splitmix64-style generator (no external `rand` dependency).
 fn seeded_bytes(seed: u64, len: usize) -> Vec<u8> {
@@ -96,7 +91,7 @@ fuzz_target!(|input: FuzzInput| {
         let (masked_key, peer_pub_key) = if input.use_valid_masked_key {
             let key_req = TborEccGenerateKeyReq {
                 session_id: session.session_id,
-                scope: KEY_SCOPE_SESSION,
+                scope: common::KEY_SCOPE_SESSION,
                 curve: input.curve.to_tbor(),
                 key_usage: KEY_USAGE_DERIVE,
                 key_label: Vec::new(),
@@ -109,7 +104,7 @@ fuzz_target!(|input: FuzzInput| {
             let peer_pub_key = if input.use_valid_peer_pub_key {
                 let peer_key_req = TborEccGenerateKeyReq {
                     session_id: session.session_id,
-                    scope: KEY_SCOPE_SESSION,
+                    scope: common::KEY_SCOPE_SESSION,
                     curve: input.curve.to_tbor(),
                     key_usage: KEY_USAGE_DERIVE,
                     key_label: Vec::new(),

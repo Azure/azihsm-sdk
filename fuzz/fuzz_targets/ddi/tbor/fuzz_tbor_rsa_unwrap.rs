@@ -45,10 +45,10 @@ enum KeyScope {
 impl KeyScope {
     fn to_tbor(self) -> u8 {
         match self {
-            Self::Session => KEY_SCOPE_SESSION,
-            Self::Ephemeral => KEY_SCOPE_EPHEMERAL,
-            Self::Local => KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Session => common::KEY_SCOPE_SESSION,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
         }
     }
 }
@@ -235,14 +235,6 @@ struct FuzzUnwrapKeyReq {
     key_label: Vec<u8>,
 }
 
-/// `KeyScope::Session` wire discriminant.
-const KEY_SCOPE_SESSION: u8 = 0b001;
-/// `KeyScope::Ephemeral` wire discriminant.
-const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
-/// `KeyScope::Local` wire discriminant.
-const KEY_SCOPE_LOCAL: u8 = 0b011;
-/// `KeyScope::SecurityDomain` wire discriminant.
-const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 /// `HashAlgo::Sha256` OAEP wire discriminant — the only hash `rsa_aes_wrap`
 /// wraps with below.
 const OAEP_SHA256: u8 = 1;

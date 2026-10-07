@@ -111,7 +111,6 @@ struct FuzzInput {
 
 /// `KeyScope::Session` discriminant — masked keys generated here only need
 /// to outlive the fuzzed `RsaModExp` call.
-const KEY_SCOPE_SESSION: u8 = 0b001;
 /// `HashAlgo::Sha256` discriminant used to OAEP-wrap the KEK in `UnwrapKey`.
 const RSA_OAEP_SHA256: u8 = 1;
 
@@ -203,7 +202,7 @@ fn import_rsa_key(
 
     ctx.tbor(&TborUnwrapKeyReq {
         session_id,
-        scope: KEY_SCOPE_SESSION,
+        scope: common::KEY_SCOPE_SESSION,
         key_class,
         key_usage,
         oaep_hash_algo: RSA_OAEP_SHA256,

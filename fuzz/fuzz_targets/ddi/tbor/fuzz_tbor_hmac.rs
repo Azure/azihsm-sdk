@@ -86,12 +86,12 @@ enum KeyScope {
 impl KeyScope {
     fn to_tbor(self) -> u8 {
         match self {
-            Self::Unspecified => 0b000,
-            Self::Session => KEY_SCOPE_SESSION,
-            Self::Ephemeral => KEY_SCOPE_EPHEMERAL,
-            Self::Local => KEY_SCOPE_LOCAL,
-            Self::SecurityDomain => KEY_SCOPE_SECURITY_DOMAIN,
-            Self::Internal => KEY_SCOPE_INTERNAL,
+            Self::Unspecified => common::KEY_SCOPE_UNSPECIFIED,
+            Self::Session => common::KEY_SCOPE_SESSION,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Internal => common::KEY_SCOPE_INTERNAL,
         }
     }
 }
@@ -144,12 +144,6 @@ struct FuzzHmacReq {
 }
 
 /// `KeyScope::Session` discriminant.
-const KEY_SCOPE_SESSION: u8 = 0b001;
-const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
-const KEY_SCOPE_LOCAL: u8 = 0b011;
-const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
-const KEY_SCOPE_INTERNAL: u8 = 0b101;
-
 fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
     let index = u8::try_from(oob_items.len()).expect("evidence count fits descriptor index");
     let length = u16::try_from(der.len()).expect("evidence item length fits descriptor");
@@ -226,7 +220,7 @@ fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     let sealing_key = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id: session.session_id,
-            scope: KEY_SCOPE_LOCAL,
+            scope: common::KEY_SCOPE_LOCAL,
         })
         .expect("local SD sealing-key generation should succeed");
     let report = ctx
