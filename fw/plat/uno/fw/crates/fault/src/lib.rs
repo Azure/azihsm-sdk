@@ -332,9 +332,9 @@ unsafe fn HardFault(ef: &ExceptionFrame) -> ! {
     Nvic::disable(Interrupt::TCON_WAKEUP1);
     Tcon::fire_wakeup_timer1();
 
-    let context = if forced && mstkerr {
-        // Exception stacking hit the MPU guard: the pushed frame is garbage,
-        // so record MSP (the approximate stack location at fault) instead.
+    let context = if forced && (mstkerr || stkerr) {
+        // Exception stacking failed: the pushed frame is unreliable, so record
+        // MSP (the approximate stack location at fault) instead.
         CpuRegisterContext {
             sp: msp,
             ..Default::default()
