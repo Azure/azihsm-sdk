@@ -89,6 +89,20 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_sd_restore_peer_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_peer_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_restore_remote_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_remote_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_aes_encrypt_decrypt"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_encrypt_decrypt.rs"
 test = false
@@ -119,4 +133,11 @@ bench = false
 doc = false
 name = "fuzz_tbor_ecdh_key_exchange"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecdh_key_exchange.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_sealing_key_gen"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_sealing_key_gen.rs"
 test = false
