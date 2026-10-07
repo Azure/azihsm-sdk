@@ -108,6 +108,17 @@ fn hash_unknown_algo_rejected() {
 fn hash_invalid_session_id_rejected() {
     let ctx = TestCtx::new();
 
+    // Rotate the CU PSK first so the default-PSK dispatcher gate does not
+    // mask the invalid-session error we actually want to test.
+    let bootstrap = ctx
+        .open_session(CU_PSK_ID, SessionType::PlainText)
+        .expect("open bootstrap CU session");
+
+    ctx.psk_change(bootstrap.handshake(), &ROTATED_CU_PSK)
+        .expect("rotate CU PSK");
+
+    bootstrap.close().expect("close bootstrap CU session");
+
     ctx.expect_fw_reject(
         &TborHashReq {
             session_id: u16::MAX,
