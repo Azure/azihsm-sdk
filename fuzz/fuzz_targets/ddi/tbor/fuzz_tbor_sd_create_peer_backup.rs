@@ -69,6 +69,7 @@ enum Fault {
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     fault: Fault,
+    key_scope: common::KeyScope,
     policy_info: [u8; 64],
     report_data: [u8; KEY_REPORT_DATA_LEN],
     mutation_mask: u8,
@@ -208,6 +209,17 @@ fn setup_unfinalized(ctx: &TestCtx) {
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
+        if !matches!(
+            input.key_scope,
+            common::KeyScope::Ephemeral | common::KeyScope::Local
+        ) {
+            let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+            common::exercise_non_partition_key_scope(ctx, &session, input.key_scope);
+            ctx.session_close(session.session_id)
+                .expect("close key-scope CO session");
+            return;
+        }
+
         if matches!(input.fault, Fault::NotFinalized) {
             setup_unfinalized(ctx);
             return;
@@ -254,7 +266,7 @@ fuzz_target!(|input: FuzzInput| {
         let recipient = ctx
             .tbor(&TborSdSealingKeyGenReq {
                 session_id: session.session_id,
-                scope: common::KEY_SCOPE_LOCAL,
+                scope: input.key_scope.to_tbor(),
             })
             .expect("recipient SdSealingKeyGen should succeed");
         let report = ctx
@@ -273,7 +285,7 @@ fuzz_target!(|input: FuzzInput| {
         } else {
             ctx.tbor(&TborSdSealingKeyGenReq {
                 session_id: session.session_id,
-                scope: common::KEY_SCOPE_LOCAL,
+                scope: input.key_scope.to_tbor(),
             })
             .expect("sender SdSealingKeyGen should succeed")
             .masked_key
@@ -392,7 +404,7 @@ fuzz_target!(|input: FuzzInput| {
                 req.pok_local_backup = ctx
                     .tbor(&TborSdSealingKeyGenReq {
                         session_id: session.session_id,
-                        scope: common::KEY_SCOPE_LOCAL,
+                        scope: input.key_scope.to_tbor(),
                     })
                     .expect("wrong-kind envelope fixture should be valid")
                     .masked_key;

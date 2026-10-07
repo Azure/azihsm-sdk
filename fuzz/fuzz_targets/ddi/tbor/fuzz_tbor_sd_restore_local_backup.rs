@@ -48,12 +48,14 @@ enum Mutation {
 #[derive(Arbitrary, Clone, Copy, Debug)]
 struct FuzzInput {
     mutation: Mutation,
+    key_scope: common::KeyScope,
 }
 
 impl Default for FuzzInput {
     fn default() -> Self {
         Self {
             mutation: Mutation::Valid,
+            key_scope: common::KeyScope::Local,
         }
     }
 }
@@ -104,7 +106,7 @@ fn raw_pub_from_wire(pub_key: &[u8]) -> [u8; POLICY_MAX_KEY_LEN] {
     raw
 }
 
-fn build_source_backups(ctx: &TestCtx) -> SourceBackups {
+fn build_source_backups(ctx: &TestCtx, key_scope: common::KeyScope) -> SourceBackups {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx.tbor(&TborPartInfoReq::new()).expect("PartInfo");
 
@@ -146,7 +148,7 @@ fn build_source_backups(ctx: &TestCtx) -> SourceBackups {
     let sealing_key = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id: session.session_id,
-            scope: common::KEY_SCOPE_LOCAL,
+            scope: key_scope.to_tbor(),
         })
         .expect("SdSealingKeyGen");
     let receiver_pub = raw_pub_from_wire(&sealing_key.pub_key);
@@ -265,7 +267,18 @@ fn restore_after_reboot(ctx: &TestCtx, backups: &SourceBackups, mutation: Mutati
         .expect("close restore CO session");
 }
 
-fn run_case(ctx: &TestCtx, mutation: Mutation) {
+fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
+    if !matches!(
+        key_scope,
+        common::KeyScope::Ephemeral | common::KeyScope::Local
+    ) {
+        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+        common::exercise_non_partition_key_scope(ctx, &session, key_scope);
+        ctx.session_close(session.session_id)
+            .expect("close key-scope CO session");
+        return;
+    }
+
     match mutation {
         Mutation::NotFinalized => {
             let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
@@ -281,7 +294,7 @@ fn run_case(ctx: &TestCtx, mutation: Mutation) {
                 .expect("close not-finalized CO session");
         }
         Mutation::OneShot => {
-            let backups = build_source_backups(ctx);
+            let backups = build_source_backups(ctx, key_scope);
             ctx.expect_fw_reject(
                 &TborSdRestoreLocalBackupReq {
                     session_id: backups.session_id,
@@ -294,7 +307,7 @@ fn run_case(ctx: &TestCtx, mutation: Mutation) {
                 .expect("close one-shot CO session");
         }
         Mutation::Valid | Mutation::TamperPok { .. } | Mutation::TamperSdMk { .. } => {
-            let backups = build_source_backups(ctx);
+            let backups = build_source_backups(ctx, key_scope);
             restore_after_reboot(ctx, &backups, mutation);
         }
     }
@@ -305,6 +318,6 @@ fuzz_target!(|data: &[u8]| {
     let input = FuzzInput::arbitrary(&mut unstructured).unwrap_or_default();
 
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        run_case(ctx, input.mutation);
+        run_case(ctx, input.mutation, input.key_scope);
     });
 });

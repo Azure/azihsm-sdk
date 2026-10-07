@@ -62,12 +62,14 @@ enum Mutation {
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     mutation: Mutation,
+    key_scope: common::KeyScope,
 }
 
 impl Default for FuzzInput {
     fn default() -> Self {
         Self {
             mutation: Mutation::Valid,
+            key_scope: common::KeyScope::Local,
         }
     }
 }
@@ -155,6 +157,7 @@ fn build_fixture(
     trusted_sa: bool,
     bind_backing_partition: bool,
     mutation: &Mutation,
+    key_scope: common::KeyScope,
 ) -> Fixture {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx.tbor(&TborPartInfoReq::new()).expect("PartInfo");
@@ -186,7 +189,7 @@ fn build_fixture(
     let sealing_key = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id: session.session_id,
-            scope: common::KEY_SCOPE_LOCAL,
+            scope: key_scope.to_tbor(),
         })
         .expect("SdSealingKeyGen");
     let masked_sealing_key = sealing_key.masked_key.to_vec();
@@ -311,7 +314,18 @@ fn flip_byte(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
     true
 }
 
-fn run_case(ctx: &TestCtx, mutation: Mutation) {
+fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
+    if !matches!(
+        key_scope,
+        common::KeyScope::Ephemeral | common::KeyScope::Local
+    ) {
+        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+        common::exercise_non_partition_key_scope(ctx, &session, key_scope);
+        ctx.session_close(session.session_id)
+            .expect("close key-scope CO session");
+        return;
+    }
+
     let trusted_sa = matches!(
         mutation,
         Mutation::ValidTrustedSa
@@ -320,7 +334,13 @@ fn run_case(ctx: &TestCtx, mutation: Mutation) {
             | Mutation::TrustedEvidenceLeafMismatch
     );
     let bind_backing_partition = !matches!(mutation, Mutation::WrongBackingPartition);
-    let mut fixture = build_fixture(ctx, trusted_sa, bind_backing_partition, &mutation);
+    let mut fixture = build_fixture(
+        ctx,
+        trusted_sa,
+        bind_backing_partition,
+        &mutation,
+        key_scope,
+    );
 
     match mutation {
         Mutation::Valid | Mutation::ValidTrustedSa => {
@@ -406,6 +426,6 @@ fn run_case(ctx: &TestCtx, mutation: Mutation) {
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        run_case(ctx, input.mutation);
+        run_case(ctx, input.mutation, input.key_scope);
     });
 });

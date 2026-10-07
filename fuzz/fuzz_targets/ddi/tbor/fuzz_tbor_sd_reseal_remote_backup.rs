@@ -60,12 +60,14 @@ enum Mutation {
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     mutation: Mutation,
+    key_scope: common::KeyScope,
 }
 
 impl Default for FuzzInput {
     fn default() -> Self {
         Self {
             mutation: Mutation::Valid,
+            key_scope: common::KeyScope::Local,
         }
     }
 }
@@ -199,11 +201,12 @@ fn public_key_from_wire(pub_key: &[u8]) -> [u8; RAW_PUB_LEN] {
 fn sealing_key_report_and_pub(
     ctx: &TestCtx,
     session_id: u16,
+    key_scope: common::KeyScope,
 ) -> ([u8; MASKED_SEALING_KEY_LEN], Vec<u8>, [u8; RAW_PUB_LEN]) {
     let seal = ctx
         .tbor(&TborSdSealingKeyGenReq {
             session_id,
-            scope: common::KEY_SCOPE_LOCAL,
+            scope: key_scope.to_tbor(),
         })
         .expect("SdSealingKeyGen");
     let masked_key: [u8; MASKED_SEALING_KEY_LEN] = seal
@@ -302,18 +305,19 @@ fn build_source_backup(
     response.pok_remote_backup
 }
 
-fn build_fixture(ctx: &TestCtx, wrong_receiver_key: bool) -> Fixture {
+fn build_fixture(ctx: &TestCtx, wrong_receiver_key: bool, key_scope: common::KeyScope) -> Fixture {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let sata_key = CaKey::generate();
     let (policy, pid_pub) = build_policy_and_finalize(ctx, &session, &sata_key);
 
     let (masked_receiver, receiver_report, receiver_pub) =
-        sealing_key_report_and_pub(ctx, session.session_id);
-    let (masked_sender, sender_report, _) = sealing_key_report_and_pub(ctx, session.session_id);
+        sealing_key_report_and_pub(ctx, session.session_id, key_scope);
+    let (masked_sender, sender_report, _) =
+        sealing_key_report_and_pub(ctx, session.session_id, key_scope);
     let (_masked_destination, destination_report, _) =
-        sealing_key_report_and_pub(ctx, session.session_id);
-    let wrong_receiver_key =
-        wrong_receiver_key.then(|| sealing_key_report_and_pub(ctx, session.session_id).0);
+        sealing_key_report_and_pub(ctx, session.session_id, key_scope);
+    let wrong_receiver_key = wrong_receiver_key
+        .then(|| sealing_key_report_and_pub(ctx, session.session_id, key_scope).0);
 
     let src_remote_backup = build_source_backup(
         ctx,
@@ -385,9 +389,20 @@ fn flip_last_byte(bytes: &mut [u8], mask: u8) -> bool {
     true
 }
 
-fn run_case(ctx: &TestCtx, mutation: Mutation) {
+fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
+    if !matches!(
+        key_scope,
+        common::KeyScope::Ephemeral | common::KeyScope::Local
+    ) {
+        let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
+        common::exercise_non_partition_key_scope(ctx, &session, key_scope);
+        ctx.session_close(session.session_id)
+            .expect("close key-scope CO session");
+        return;
+    }
+
     let needs_wrong_receiver = matches!(mutation, Mutation::WrongReceiverKey);
-    let mut fixture = build_fixture(ctx, needs_wrong_receiver);
+    let mut fixture = build_fixture(ctx, needs_wrong_receiver, key_scope);
 
     match mutation {
         Mutation::Valid => {
@@ -477,6 +492,6 @@ fn run_case(ctx: &TestCtx, mutation: Mutation) {
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        run_case(ctx, input.mutation);
+        run_case(ctx, input.mutation, input.key_scope);
     });
 });
