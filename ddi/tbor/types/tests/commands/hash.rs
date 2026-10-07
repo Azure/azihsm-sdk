@@ -93,11 +93,10 @@ fn hash_unknown_algo_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    // Mode discriminant `0` is not one of SHA-256 / 384 / 512.
     ctx.expect_fw_reject(
         &TborHashReq {
             session_id: session.session_id,
-            algo: 0,
+            algo: u8::MAX,
             msg: b"abc".to_vec(),
         },
         TborStatus::InvalidArg,
@@ -125,16 +124,14 @@ fn hash_invalid_algos_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    for algo in [
-        0,
-        HASH_ALGO_SHA256.wrapping_sub(1),
-        HASH_ALGO_SHA512.wrapping_add(1),
-        u8::MAX,
-    ] {
-        if [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512].contains(&algo) {
-            continue;
-        }
-
+    // Valid algorithms are:
+    //   0 = SHA-1
+    //   1 = SHA-256
+    //   2 = SHA-384
+    //   3 = SHA-512
+    //
+    // Test values outside that supported range.
+    for algo in [HASH_ALGO_SHA512.wrapping_add(1), 0x7f, u8::MAX] {
         ctx.expect_fw_reject(
             &TborHashReq {
                 session_id: session.session_id,
