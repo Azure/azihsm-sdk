@@ -137,13 +137,11 @@ impl<'a> CrashDumpManager<'a> {
         self.base[0..size_of::<u32>()].copy_from_slice(DUMP_HEADER_MAGIC_DIRTY.as_bytes());
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_crashdump(&self) -> &CrashDumpBlock {
-        // SAFETY: `base` is at least `size_of::<CrashDumpBlock>()` bytes and was
-        // populated by `create_dump`. `CrashDumpBlock` is `#[repr(C)]` and
-        // `FromBytes`, so any byte pattern is a valid instance, making the
-        // reinterpreting cast sound.
-        unsafe { &*(self.base.as_ptr() as *const CrashDumpBlock) }
+    #[cfg(test)]
+    pub(crate) fn get_crashdump(&self) -> CrashDumpBlock {
+        zerocopy::FromBytes::read_from_prefix(self.base)
+            .expect("crash dump buffer must contain a complete block")
+            .0
     }
 }
 
