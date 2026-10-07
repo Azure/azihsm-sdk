@@ -1201,9 +1201,15 @@ fn test_rsa_crt_unmask_roundtrip_4096(session: HsmSession) {
     run_rsa_unmask_roundtrip_test(&session, RsaPrivateKeyKind::RsaCrt, 4096, 512, 16);
 }
 
-/// Helper to verify key report generation for an imported RSA private-key representation.
-fn run_rsa_imported_key_report_test(session: &HsmSession, private_kind: RsaPrivateKeyKind) {
-    let priv_key = crypto::RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+/// Verifies key report generation for the requested RSA size and representation.
+fn run_rsa_imported_key_report_test(
+    session: &HsmSession,
+    private_kind: RsaPrivateKeyKind,
+    bits: u32,
+) {
+    let modulus_len = usize::try_from(bits / u8::BITS).expect("RSA key size must fit usize");
+    let priv_key =
+        crypto::RsaPrivateKey::generate(modulus_len).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
 
     let (unwrapping_priv_key, unwrapping_pub_key) = get_rsa_unwrapping_key_pair(session);
@@ -1215,7 +1221,7 @@ fn run_rsa_imported_key_report_test(session: &HsmSession, private_kind: RsaPriva
     let priv_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(private_kind.hsm_kind())
-        .bits(2048)
+        .bits(bits)
         .can_decrypt(true)
         .is_session(true)
         .build()
@@ -1224,7 +1230,7 @@ fn run_rsa_imported_key_report_test(session: &HsmSession, private_kind: RsaPriva
     let pub_key_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
+        .bits(bits)
         .can_encrypt(true)
         .is_session(true)
         .build()
@@ -1562,13 +1568,25 @@ fn run_rsa_invalid_der_test(session: &HsmSession, private_kind: RsaPrivateKeyKin
 /// Ensure key report generation works for imported RSA key.
 #[session_test]
 fn test_rsa_2048_imported_key_report(session: HsmSession) {
-    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::Rsa);
+    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::Rsa, 2048);
 }
 
 /// Ensure key report generation works for imported RSA CRT key.
 #[session_test]
 fn test_rsa_crt_2048_imported_key_report(session: HsmSession) {
-    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::RsaCrt);
+    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::RsaCrt, 2048);
+}
+
+/// Verifies key reports for the largest supported non-CRT RSA key.
+#[session_test]
+fn test_rsa_4096_imported_key_report(session: HsmSession) {
+    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::Rsa, 4096);
+}
+
+/// Verifies key reports for the largest supported RSA-CRT key fit the DMA budget.
+#[session_test]
+fn test_rsa_crt_4096_imported_key_report(session: HsmSession) {
+    run_rsa_imported_key_report_test(&session, RsaPrivateKeyKind::RsaCrt, 4096);
 }
 
 /// Ensure RSA unwrap fails when bits do not match actual key size.

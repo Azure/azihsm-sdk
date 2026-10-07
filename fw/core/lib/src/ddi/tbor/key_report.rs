@@ -173,14 +173,15 @@ async fn attested_pub_key<'a, P: HsmPal>(
 /// component, and returns a signed report.  It makes no observable state
 /// change, so a concurrently-dispatched command (IOs run in a task pool
 /// and interleave at await points) can neither observe it half-done nor
-/// require its rollback on failure.
+/// require its rollback on failure. The masked key is unmasked in place
+/// in the request buffer and wiped after public-key derivation.
 pub(crate) async fn handle<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
-    req_buf: &DmaBuf,
+    req_buf: &mut DmaBuf,
 ) -> HsmResult<&'p DmaBuf> {
-    let req = TborKeyReportReq::decode(req_buf)?;
-    let sess_id = HsmSessId::from(u16::from(req.session_id()));
+    let req = TborKeyReportReq::decode_mut(req_buf)?;
+    let sess_id = HsmSessId::from(u16::from(req.session_id));
 
     validate_crypto_officer_active_session(pal, io, sess_id)?;
 
@@ -192,8 +193,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
     // Peek the masked-key metadata (cleartext, tag-bound) to route to the
     // right masking key before unmasking.
-    let masked_key = req.masked_key();
-    let report_data = req.report_data();
+    let masked_key = req.masked_key;
+    let report_data = req.report_data;
     let scope = peek_metadata(masked_key)?.usage_flags().scope();
     let masking_key = resolve_masking_key(pal, io, scope, sess_id)?;
 
@@ -222,30 +223,23 @@ async fn build_key_report<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
     alloc: &'a impl HsmScopedAlloc,
-    masked_key: &DmaBuf,
+    masked_key: &mut DmaBuf,
     masking_key: &DmaBuf,
     sess_id: HsmSessId,
     report_data: &DmaBuf,
 ) -> HsmResult<(&'a mut DmaBuf, usize)> {
-    // Copy the masked blob into a scratch buffer for in-place unmask.
-    let blob = alloc.dma_alloc(masked_key.len())?;
-    blob.copy_from_slice(masked_key);
-
-    // Derive the public component before wiping the unmasked key, so no
-    // second private-key allocation is needed.
+    // Derive the public component directly from the request, then wipe
+    // the recovered private key before propagating any error.
     let key_res = async {
-        let view = unmask(pal, io, masking_key, blob).await?;
+        let view = unmask(pal, io, masking_key, masked_key).await?;
         let key = attested_pub_key(pal, io, alloc, view.key_kind, view.target_key).await?;
         Ok::<_, HsmError>((key, view.key_attrs))
     }
     .await;
 
-    // `unmask` decrypts the private key in place into `blob`; on tag
-    // mismatch it can leave partial plaintext there.  Scope rewind does not
-    // clear DMA memory, so wipe it on every path — whether unmask succeeded
-    // or failed — before proceeding or propagating, so no key material
-    // lingers in, and leaks through, a later per-IO allocation.
-    blob.zeroize();
+    // Failed unmasking can leave partial plaintext, so clear the request
+    // field on both success and failure before it can be reused.
+    masked_key.zeroize();
     let (key, key_attrs) = key_res?;
     let flags: u32 = key_flags_from_attrs(key_attrs).into();
 
