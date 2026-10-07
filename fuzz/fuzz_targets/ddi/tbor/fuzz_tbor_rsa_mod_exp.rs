@@ -17,9 +17,9 @@ use azihsm_crypto::RsaEncryptAlgo;
 use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_ddi_interface::DdiError;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -32,6 +32,30 @@ use libfuzzer_sys::fuzz_target;
 enum KeyAvailability {
     App,
     Session,
+}
+
+/// Scope requested for the imported RSA key.
+#[derive(Arbitrary, Debug, Clone, Copy)]
+enum KeyScope {
+    Unspecified,
+    Session,
+    Ephemeral,
+    Local,
+    SecurityDomain,
+    Internal,
+}
+
+impl KeyScope {
+    fn to_tbor(self) -> u8 {
+        match self {
+            Self::Unspecified => common::KEY_SCOPE_UNSPECIFIED,
+            Self::Session => common::KEY_SCOPE_SESSION,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => common::KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Internal => common::KEY_SCOPE_INTERNAL,
+        }
+    }
 }
 
 /// RSA modulus size for host-generated keys, mirroring the MBOR
@@ -98,6 +122,12 @@ struct FuzzInput {
     key_availability: KeyAvailability,
     /// Size of the RSA key to generate.
     key_size: RsaKeySize,
+    /// Scope requested for the imported RSA key.
+    key_scope: KeyScope,
+    /// Usage permissions requested for the imported RSA key.
+    key_usage: u64,
+    /// Caller-supplied label for the imported RSA key.
+    key_label: Vec<u8>,
     /// Selects the CRT vs non-CRT `KeyClass` used to import the generated
     /// key through `UnwrapKey`.
     crt: bool,
@@ -136,8 +166,10 @@ fn import_rsa_key(
     session_id: u16,
     modulus_bytes: usize,
     crt: bool,
+    scope: u8,
     key_usage: u64,
-) -> Vec<u8> {
+    key_label: &[u8],
+) -> Result<Vec<u8>, DdiError> {
     let key = RsaPrivateKey::generate(modulus_bytes).expect("generate host RSA key");
     let private_der = key.to_vec().expect("export host RSA private key");
     let unwrapping_key = ctx
@@ -175,19 +207,23 @@ fn import_rsa_key(
     let mut wrapped_blob = encrypted_kek;
     wrapped_blob.extend(encrypted_private_key);
 
-    let key_class = if crt { KEY_CLASS_RSA_CRT } else { KEY_CLASS_RSA };
+    let key_class = if crt {
+        KEY_CLASS_RSA_CRT
+    } else {
+        KEY_CLASS_RSA
+    };
 
-    ctx.tbor(&TborUnwrapKeyReq {
-        session_id,
-        scope: common::KEY_SCOPE_SESSION,
-        key_class,
-        key_usage,
-        oaep_hash_algo: RSA_OAEP_SHA256,
-        wrapped_blob,
-        key_label: Vec::new(),
-    })
-    .expect("import host RSA key through UnwrapKey")
-    .masked_key
+    Ok(ctx
+        .tbor(&TborUnwrapKeyReq {
+            session_id,
+            scope,
+            key_class,
+            key_usage,
+            oaep_hash_algo: RSA_OAEP_SHA256,
+            wrapped_blob,
+            key_label: key_label.to_vec(),
+        })
+        .map(|resp| resp.masked_key)?)
 }
 
 fuzz_target!(|input: FuzzInput| {
@@ -198,21 +234,31 @@ fuzz_target!(|input: FuzzInput| {
             input.use_valid_key_id && matches!(input.key_availability, KeyAvailability::Session);
 
         let op_type = input.cmdreq_data.op_type.to_tbor();
-        // `UnwrapKey` requires exactly one matched usage-group pair
-        // (sign+verify xor encrypt+decrypt); an unknown op still needs a
-        // valid key imported so the fuzzed `RsaModExp` call can reach the
-        // op-type check, so it reuses the sign+verify pair.
-        let key_usage = match op_type {
-            RSA_OP_DECRYPT => KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
-            _ => KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
-        };
-
+        let scope = input.key_scope.to_tbor();
+        let mut import_succeeded = false;
         let (masked_key, modulus_len) = if generate_valid_key {
-            common::finalize_partition(ctx, &session);
+            match input.key_scope {
+                KeyScope::Ephemeral | KeyScope::Local => common::finalize_partition(ctx, &session),
+                KeyScope::SecurityDomain => common::create_test_security_domain(ctx, &session),
+                _ => {}
+            }
             let modulus_len = input.key_size.modulus_bytes();
-            let masked_key =
-                import_rsa_key(ctx, session.session_id, modulus_len, input.crt, key_usage);
-            (masked_key, Some(modulus_len))
+            match import_rsa_key(
+                ctx,
+                session.session_id,
+                modulus_len,
+                input.crt,
+                scope,
+                input.key_usage,
+                &input.key_label,
+            ) {
+                Ok(masked_key) => {
+                    import_succeeded = true;
+                    (masked_key, Some(modulus_len))
+                }
+                Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
+                Err(_) => (input.cmdreq_data.masked_key.clone(), None),
+            }
         } else {
             (input.cmdreq_data.masked_key.clone(), None)
         };
@@ -222,7 +268,35 @@ fuzz_target!(|input: FuzzInput| {
 
         // Only a generated key and a known Sign/Decrypt op can succeed;
         // aliases carried by `Unknown` are classified by their encoded value.
+        let known_usage = input.key_usage
+            & (KEY_USAGE_ENCRYPT
+                | KEY_USAGE_DECRYPT
+                | KEY_USAGE_SIGN
+                | KEY_USAGE_VERIFY
+                | KEY_USAGE_DERIVE
+                | KEY_USAGE_WRAP
+                | KEY_USAGE_UNWRAP);
+        let valid_rsa_usage = known_usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY)
+            || known_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT);
+        let import_expected_success = matches!(
+            input.key_scope,
+            KeyScope::Session | KeyScope::Ephemeral | KeyScope::Local
+        ) && valid_rsa_usage
+            && input.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
+        if generate_valid_key && import_succeeded != import_expected_success {
+            panic!(
+                "UnwrapKey import success mismatch: expected {import_expected_success}, got {import_succeeded}"
+            );
+        }
+
+        let op_usage_matches = match op_type {
+            RSA_OP_SIGN => known_usage == (KEY_USAGE_SIGN | KEY_USAGE_VERIFY),
+            RSA_OP_DECRYPT => known_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT),
+            _ => false,
+        };
         let expect_success = generate_valid_key
+            && import_succeeded
+            && op_usage_matches
             && matches!(op_type, RSA_OP_SIGN | RSA_OP_DECRYPT)
             && modulus_len == Some(y.len());
 

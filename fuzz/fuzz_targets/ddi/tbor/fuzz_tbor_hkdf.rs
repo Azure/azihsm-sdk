@@ -16,8 +16,7 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-/// TBOR key scopes. `bootstrap_rotated_co` guarantees a session masking key;
-/// it does not provision the partition or security-domain scopes.
+/// TBOR key scopes used for ECC key generation, ECDH derivation, and HKDF.
 #[derive(Arbitrary, Debug, Clone, Copy)]
 enum KeyScope {
     Session,
@@ -58,11 +57,15 @@ struct FuzzHkdfDeriveReq {
 struct FuzzInput {
     /// Generate a valid masked ECDH secret instead of using fuzzed bytes.
     use_valid_key_id: bool,
-    /// Output scope, serving as TBOR's scope-level counterpart to MBOR key
-    /// availability.
-    key_availability: KeyScope,
+    /// Scope for the generated ECC key pair, ECDH shared secret, and HKDF
+    /// output.
+    key_scope: KeyScope,
     /// Selects the curve for the generated ECDH secret.
     key_curve: EccCurve,
+    /// Usage permissions requested for both generated ECC keys.
+    key_usage: u64,
+    /// Label requested for both generated ECC keys and the ECDH secret.
+    key_label: Vec<u8>,
     cmdreq_data: FuzzHkdfDeriveReq,
 }
 
@@ -70,39 +73,63 @@ fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
 
-        let masked_secret = if input.use_valid_key_id {
-            let key_a = ctx
-                .tbor(&TborEccGenerateKeyReq {
+        let generated_secret = if input.use_valid_key_id {
+            match input.key_scope {
+                KeyScope::Session => {}
+                KeyScope::Ephemeral | KeyScope::Local => {
+                    common::finalize_partition(ctx, &session)
+                }
+                KeyScope::SecurityDomain => {
+                    common::create_test_security_domain(ctx, &session)
+                }
+            }
+
+            let scope = input.key_scope.to_tbor();
+            let result: Result<Vec<u8>, DdiError> = (|| {
+                let key_a = ctx
+                    .tbor(&TborEccGenerateKeyReq {
+                        session_id: session.session_id,
+                        scope,
+                        curve: input.key_curve.to_tbor(),
+                        key_usage: input.key_usage,
+                        key_label: input.key_label.clone(),
+                    })?;
+                let key_b = ctx
+                    .tbor(&TborEccGenerateKeyReq {
+                        session_id: session.session_id,
+                        scope,
+                        curve: input.key_curve.to_tbor(),
+                        key_usage: input.key_usage,
+                        key_label: input.key_label.clone(),
+                    })?;
+                let secret = ctx.tbor(&TborEcdhDeriveReq {
                     session_id: session.session_id,
-                    scope: common::KEY_SCOPE_SESSION,
-                    curve: input.key_curve.to_tbor(),
-                    key_usage: KEY_USAGE_DERIVE,
-                    key_label: Vec::new(),
-                })
-                .expect("session-scoped ECC key generation should succeed");
-            let key_b = ctx
-                .tbor(&TborEccGenerateKeyReq {
-                    session_id: session.session_id,
-                    scope: common::KEY_SCOPE_SESSION,
-                    curve: input.key_curve.to_tbor(),
-                    key_usage: KEY_USAGE_DERIVE,
-                    key_label: Vec::new(),
-                })
-                .expect("session-scoped ECC peer key generation should succeed");
-            ctx.tbor(&TborEcdhDeriveReq {
-                session_id: session.session_id,
-                scope: common::KEY_SCOPE_SESSION,
-                masked_key: key_a.masked_key,
-                peer_pub_key: key_b.pub_key,
-                key_label: Vec::new(),
-            })
-            .expect("session-scoped ECDH derive should succeed")
-            .masked_secret
+                    scope,
+                    masked_key: key_a.masked_key,
+                    peer_pub_key: key_b.pub_key,
+                    key_label: input.key_label.clone(),
+                })?;
+                Ok(secret.masked_secret)
+            })();
+            match result {
+                Ok(secret) => Some(secret),
+                Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
+                Err(_)
+                    if input.key_usage != KEY_USAGE_DERIVE
+                        || input.key_label.len() > TBOR_KEY_LABEL_MAX_LEN =>
+                {
+                    None
+                }
+                Err(err) => panic!("valid scoped ECDH derivation failed: {err}"),
+            }
         } else {
-            input.cmdreq_data.masked_secret.clone()
+            None
         };
 
-        let scope = input.key_availability.to_tbor();
+        let have_valid_secret = generated_secret.is_some();
+        let masked_secret = generated_secret
+            .unwrap_or_else(|| input.cmdreq_data.masked_secret.clone());
+        let scope = input.key_scope.to_tbor();
         let req = TborHkdfDeriveReq {
             session_id: session.session_id,
             scope,
@@ -116,8 +143,9 @@ fuzz_target!(|input: FuzzInput| {
         };
         let result = ctx.tbor(&req);
 
-        let expect_success = input.use_valid_key_id
-            && matches!(input.key_availability, KeyScope::Session)
+        let expect_success = have_valid_secret
+            && input.key_usage == KEY_USAGE_DERIVE
+            && input.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN
             && matches!(input.cmdreq_data.hash_algo, 1..=3)
             && valid_key_length(input.cmdreq_data.key_type, input.cmdreq_data.key_length)
             && input.cmdreq_data.salt.len() <= HKDF_SALT_MAX_LEN

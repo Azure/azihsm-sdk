@@ -17,8 +17,10 @@ use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
@@ -27,6 +29,7 @@ use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
+use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
@@ -37,8 +40,15 @@ use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::PolicyVer;
 use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::CertDescriptor;
+use azihsm_ddi_tbor_types::ReportDescriptor;
+use azihsm_ddi_tbor_types::TborKeyReportReq;
+use azihsm_ddi_tbor_types::TborPartInfoReq;
+use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
+use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
+use zerocopy::TryFromBytes;
 
 pub type DdiTest = AzihsmDdi;
 
@@ -444,4 +454,111 @@ pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
     let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
     ctx.part_final(session, &policy, &[], &chain.der_items())
         .expect("PartFinal should succeed");
+}
+
+fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
+    let index = u8::try_from(oob_items.len()).expect("evidence count fits descriptor index");
+    let length = u16::try_from(der.len()).expect("evidence item length fits descriptor");
+    oob_items.push(der.to_vec());
+    CertDescriptor {
+        index,
+        length: length.into(),
+    }
+}
+
+/// Initialize a partition and create a test security domain so its
+/// masking key is available to a fuzz target.
+pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
+    use zerocopy::IntoBytes;
+
+    let info = ctx
+        .tbor(&TborPartInfoReq::new())
+        .expect("PartInfo should succeed");
+    let pid_pub: [u8; RAW_PUB_LEN] = info
+        .pid_pub_key
+        .as_slice()
+        .try_into()
+        .expect("PartInfo PID public key should have the expected length");
+    let pota = CaKey::generate();
+    let sata = CaKey::generate();
+    let mut policy = <PartPolicy as TryFromBytes>::try_read_from_bytes(
+        &known_good_part_policy(pota.raw_pub()),
+    )
+    .expect("known-good partition policy should decode");
+    policy.sata_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        sata.raw_pub(),
+    );
+    policy.backup_part_id.copy_from_slice(&info.pid);
+    let mut backup_part_pub = [0u8; POLICY_MAX_KEY_LEN];
+    backup_part_pub.copy_from_slice(&info.pid_pub_key);
+    policy.backup_part_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        backup_part_pub,
+    );
+    let mut policy_bytes = [0u8; PART_POLICY_LEN];
+    policy_bytes.copy_from_slice(policy.as_bytes());
+
+    let init = ctx
+        .part_init(
+            session,
+            &mach_seed(),
+            &policy_bytes,
+            &pota_thumbprint(),
+        )
+        .expect("PartInit should succeed");
+    let pta_chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(session, &policy_bytes, &[], &pta_chain.der_items())
+        .expect("PartFinal should succeed");
+
+    let sealing_key = ctx
+        .tbor(&TborSdSealingKeyGenReq {
+            session_id: session.session_id,
+            scope: KEY_SCOPE_LOCAL,
+        })
+        .expect("local SD sealing-key generation should succeed");
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: sealing_key.masked_key.to_vec(),
+            report_data: [0u8; KEY_REPORT_DATA_LEN],
+        })
+        .expect("sealing-key report generation should succeed");
+
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(&sata, &pid_pub);
+    let mut oob_items = Vec::new();
+    let mfgr_chain = vec![
+        add_evidence_item(&mut oob_items, &mfgr.root_der),
+        add_evidence_item(&mut oob_items, &mfgr.leaf_der),
+    ];
+    let owner_chain = vec![
+        add_evidence_item(&mut oob_items, &owner.root_der),
+        add_evidence_item(&mut oob_items, &owner.leaf_der),
+    ];
+    let part_owner_chain = vec![
+        add_evidence_item(&mut oob_items, &part_owner.root_der),
+        add_evidence_item(&mut oob_items, &part_owner.leaf_der),
+    ];
+    let report_descriptor = add_evidence_item(&mut oob_items, &report.report);
+
+    let req = TborSdCreateRemoteBackupReq {
+        session_id: session.session_id,
+        masked_sealing_key: sealing_key.masked_key,
+        receiver_mfgr_cert_chain: mfgr_chain,
+        receiver_owner_cert_chain: owner_chain,
+        receiver_part_owner_cert_chain: part_owner_chain,
+        receiver_report: ReportDescriptor {
+            index: report_descriptor.index,
+            length: report_descriptor.length,
+        },
+        policy: <PartPolicy as TryFromBytes>::try_read_from_bytes(&policy_bytes)
+            .expect("security-domain policy should decode"),
+    };
+    let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    ctx.tbor_oob(&req, &oob)
+        .expect("test security-domain creation should succeed");
 }
