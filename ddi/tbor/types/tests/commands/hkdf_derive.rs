@@ -128,28 +128,30 @@ fn hkdf_derive_all_key_types() {
         (KDF_KEY_TYPE_VAR_HMAC512, 128, 128),
     ];
 
-    for &(key_type, key_length, okm_len) in cases {
-        let ikm = fresh_masked_secret(&ctx, session.session_id);
-        let masked = hkdf(
-            &ctx,
-            session.session_id,
-            SCOPE_LOCAL,
-            HASH_SHA384,
-            key_type,
-            key_length,
-            ikm,
-            b"salt".to_vec(),
-            b"info".to_vec(),
-        );
-        assert_eq!(
-            masked.len(),
-            MASK_OVERHEAD + okm_len,
-            "masked derived-key envelope length must match the output type (type {key_type})",
-        );
-        assert!(
-            masked.iter().any(|&b| b != 0),
-            "masked derived key must not be all-zero (type {key_type})",
-        );
+    for hash in [HASH_ALGO_SHA1, HASH_SHA256, HASH_SHA384, HASH_SHA512] {
+        for &(key_type, key_length, okm_len) in cases {
+            let ikm = fresh_masked_secret(&ctx, session.session_id);
+            let masked = hkdf(
+                &ctx,
+                session.session_id,
+                SCOPE_LOCAL,
+                hash,
+                key_type,
+                key_length,
+                ikm,
+                b"salt".to_vec(),
+                b"info".to_vec(),
+            );
+            assert_eq!(
+                masked.len(),
+                MASK_OVERHEAD + okm_len,
+                "masked derived-key envelope length must match the output type (type {key_type})",
+            );
+            assert!(
+                masked.iter().any(|&b| b != 0),
+                "masked derived key must not be all-zero (type {key_type})",
+            );
+        }
     }
 }
 

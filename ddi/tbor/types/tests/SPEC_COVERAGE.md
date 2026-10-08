@@ -385,7 +385,7 @@ scopes, salt/info handling, deterministic derivation, and invalid requests.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| All supported fixed and variable-length AES/HMAC key types derive successfully | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_key_types` | Covers AES-128/192/256, HMAC-SHA256/384/512, and variable-length HMAC outputs |
+| All supported fixed and variable-length AES/HMAC key types derive successfully | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_key_types` | Tests all 12 key-type/length cases with SHA-1, SHA-256, SHA-384, and SHA-512 (48 combinations) |
 | ECDH secrets from all supported curves can be used as HKDF input | ✅ 🔁 | `hkdf_derive::hkdf_derive_accepts_all_ecdh_secret_sizes` | Covers P-256, P-384, and P-521 |
 | All supported hash algorithms and provisioned output scopes succeed | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_hashes_and_scopes` | SHA-1/256/384/512 across Session, Ephemeral, and Local scopes |
 | Empty and non-empty salt/info combinations are accepted | ✅ 🔁 | `hkdf_derive::hkdf_derive_optional_salt_info` | Covers all four combinations using SHA-1 and SHA-256 |
