@@ -16,9 +16,6 @@
 //!   records the handler's SP/PC, not source-location or message pointers).
 //! - [`RegisterBlockContext`] — the SCB fault registers (`CFSR`/`MMFAR`/`BFAR`).
 
-// Only required by the (currently disabled) Debug impl below.
-// use core::fmt;
-
 use cortex_m::peripheral::scb;
 use cortex_m_rt::ExceptionFrame;
 use zerocopy::FromBytes;

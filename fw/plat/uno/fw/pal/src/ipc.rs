@@ -947,8 +947,8 @@ impl IpcMessageType for IpcMessageTriggerCrash {
 /// Encode a `TriggerCrash` request targeting `cpu_id`.
 ///
 /// `tag` is echoed by the responder, matching the reference request/response
-/// tagging convention. No reply is expected in practice — the target core
-/// crashes instead of answering.
+/// tagging convention. A responder may acknowledge before crashing; the
+/// requester does not wait for or depend on that acknowledgement.
 pub fn encode_trigger_crash(
     tag: u8,
     cpu_id: SocCpuId,

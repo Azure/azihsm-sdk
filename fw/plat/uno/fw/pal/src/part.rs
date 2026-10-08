@@ -452,16 +452,15 @@ impl UnoHsmPal {
     }
 
     /// Clears partition `pid`'s per-tenant state — deletes every
-    /// enable-time and provisioning vault key plus every session-blob
-    /// vault key, then zeroizes all cached public keys, caller-presented
+    /// enable-time and provisioning vault key plus the mapped Active/Pending
+    /// session blobs, then zeroizes cached public keys, caller-presented
     /// secrets, write-once provisioning fields, the nonce, VM launch GUID,
-    /// BK3 incarnation flag, and the session table (see [`PartStore`]'s
-    /// `clear_enabled_state`).
+    /// and BK3 incarnation flag. Established logical session slots remain
+    /// reserved as NeedsRenegotiation; pending slots are released.
     ///
-    /// The partition identity and `Masked_BK_BOOT` are preserved — they
-    /// are torn down only on free. Best-effort and idempotent: keys are
-    /// deleted only if present, so it is safe to call regardless of the
-    /// current lifecycle state.
+    /// This helper preserves the partition identity and `Masked_BK_BOOT`.
+    /// Best-effort and idempotent: keys are deleted only if present, so it is
+    /// safe to call regardless of the current lifecycle state.
     async fn clear_enabled_state(&self, admin_io: &UnoHsmIo, pid: HsmPartId) {
         let Ok(part) = PartStore::partition(pid) else {
             return;
@@ -483,16 +482,16 @@ impl UnoHsmPal {
         {
             self.delete_key(admin_io, key_id).await;
         }
-        // Delete every session-blob vault key (Active, NeedsRenegotiation,
-        // or Pending) mapped by the session table, so none are orphaned in
-        // the vault when the indirection is dropped below.
+        // Delete the mapped Active/Pending session blobs before dropping
+        // their indirection. Renegotiating slots have no live vault mapping
+        // and are excluded by occupied_physical_ids().
         if let Ok(mut sessions) = SessionStore::partition(pid) {
             for key_id in sessions.occupied_physical_ids().into_iter().flatten() {
                 self.delete_key(admin_io, key_id).await;
             }
-            // Keep each logical session id reserved but flag it for
-            // renegotiation: the host may still close sessions it opened
-            // before the disable (the DDI admits `Close` on a renegotiating
+            // Keep established logical session IDs reserved for renegotiation
+            // and release pending handshakes. The host may still close its
+            // established sessions (the DDI admits `Close` on a renegotiating
             // slot), and an NVMe Level-2 abort reaches us here as
             // `PfnEnableDisable(Disable)`. `part_free` releases the slots
             // afterwards, for the deallocation case.
@@ -595,21 +594,15 @@ impl UnoHsmPal {
     ///
     /// The session slots are **released** (`SessionTable::clear_all`), a
     /// second deliberate divergence from `state.migrate()`, which preserves
-    /// them for renegotiation via `restore(backup())`. Preserving them only
-    /// makes sense when the partition identity survives, because a
-    /// renegotiating slot is reopened with material bound to that identity —
-    /// and uno regenerates the identity above, so those sessions could never
-    /// be reopened. The host has also lost their ids across the NSSR, so
-    /// nothing could ever close them; holding the slots reserved would strand
-    /// them until [`HsmError::VaultSessionLimitReached`]. This preserves the
-    /// behaviour of the original `clear_state(PartResetKind::Migrate)`, which
+    /// them for renegotiation via `restore(backup())`. Uno regenerates the
+    /// identity and does not preserve the pre-reset session context. This
+    /// preserves the behaviour of the original `clear_state(PartResetKind::Migrate)`, which
     /// zeroized the session table itself before that policy moved here.
     ///
-    /// The net effect matches the reference: the partition keeps its
-    /// provisioning across the reset — with a freshly regenerated identity —
-    /// and only needs its credential re-established, preserving the
-    /// impactless-update guarantee — unlike a full [`part_disable`], which
-    /// additionally tears down the provisioning material.
+    /// Provisioning survives NSSR with a freshly regenerated identity, and
+    /// credentials can be re-established. A full [`part_disable`] additionally
+    /// tears down the provisioning material. This does not implement IDFU
+    /// queue quiesce/resume.
     ///
     /// # Accepted states
     ///
@@ -678,11 +671,9 @@ impl UnoHsmPal {
         })
         .await?;
         // Clear the per-tenant persistent state, preserving the partition's
-        // provisioning material. Every session slot is released outright —
-        // see this function's doc comment: the identity is regenerated below,
-        // so a preserved slot could never be reopened, and the host has lost
-        // its session ids across the NSSR, so it could never close one
-        // either. The vault clear above already deleted the backing
+        // provisioning material. Every session slot is released outright;
+        // the identity is regenerated below rather than preserving pre-reset
+        // session context. The vault clear above already deleted the backing
         // session-blob keys.
         part.clear_state(PartResetKind::Migrate);
         if let Ok(mut sessions) = SessionStore::partition(pid) {

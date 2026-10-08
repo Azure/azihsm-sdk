@@ -240,9 +240,8 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
 /// directly; it reads fixed architectural SCB registers and the
 /// hardware-supplied exception frame, then halts.
 //
-// The captured registers are consumed only by `error!`, which compiles out
-// when no trace level is enabled (production builds); allow keeps that build
-// warning-free.
+// Some register values below are used only by tracing; allow keeps
+// trace-disabled builds warning-free. Persistent crash capture remains active.
 #[allow(unused_variables)]
 #[exception]
 unsafe fn HardFault(ef: &ExceptionFrame) -> ! {

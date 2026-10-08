@@ -34,7 +34,7 @@ use crate::pal::UnoHsmPal;
 enum DdiTestActionCrashType {
     /// Trigger a HardFault.
     HardFault = 1,
-    /// Trigger the explicit-crash panic path.
+    /// Trigger the explicit-crash path, distinct from a panic.
     ExplicitCrash = 2,
     /// Trigger a panic.
     Panic = 3,

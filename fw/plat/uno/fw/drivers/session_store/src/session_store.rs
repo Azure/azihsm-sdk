@@ -55,9 +55,10 @@ impl SessionStore {
 ///
 /// Obtained only via [`SessionStore::partition`], so holding one is proof
 /// that the partition index is in range. Logical session IDs are slot
-/// indices (`0..MAX_SESSIONS`); each occupied slot maps to a physical
-/// vault key ID. Only the persistent fields live here — see the crate docs
-/// for the volatile state that is managed elsewhere. Mirrors the
+/// indices (`0..MAX_SESSIONS`). Active and Pending slots map to physical
+/// vault key IDs; NeedsRenegotiation slots retain only their logical
+/// reservation, without a live vault mapping. Only the persistent fields
+/// live here — see the crate docs for the volatile state. Mirrors the
 /// [`Partition`](azihsm_fw_uno_drivers_part_store::Partition) handle.
 #[derive(Debug, Clone, Copy)]
 pub struct SessionTable(Partition);
@@ -260,14 +261,10 @@ impl SessionTable {
     /// instead: both regenerate or discard the partition identity that a
     /// renegotiating slot would have to be reopened against.
     ///
-    /// [`Pending`](HsmSessionState::Pending) slots are *released* rather than
-    /// preserved: a handshake that had not completed carries no reopenable
-    /// credential state, and the host never received its session id, so
-    /// nothing could ever close it. Keeping such a slot allocated would
-    /// strand it permanently — [`create_pending`](Self::create_pending) only
-    /// evicts other Pending slots, never renegotiating ones, so a partition
-    /// that faults mid-handshake repeatedly would exhaust every slot and
-    /// start failing with `VaultSessionLimitReached`.
+    /// [`Pending`](HsmSessionState::Pending) slots are released because the
+    /// reset invalidates their handshake state. The host may already have
+    /// received a pending ID from `SessionOpenInit`, but an incomplete
+    /// handshake cannot resume as a renegotiating session.
     ///
     /// Mirrors the reference firmware's
     /// `session_table().restore(session_table().backup())` in
@@ -288,14 +285,12 @@ impl SessionTable {
     /// the physical-id indirection, and the volatile pending / PSK-change
     /// masks.
     ///
-    /// Used when the partition is freed, and on an NSSR (`Migrate`), which
-    /// regenerates the partition identity — a renegotiating slot is reopened
-    /// with material bound to that identity, so preserving one across an NSSR
-    /// would reserve a slot that can never be reopened *or* closed. A plain
-    /// disable must use [`mark_all_needs_renego`](Self::mark_all_needs_renego)
-    /// instead, or the host loses the ability to close sessions it still
-    /// owns. Mirrors the reference firmware's `session_table().restore(0)` in
-    /// `PartState::clear_partition_info`.
+    /// Used on partition free and NSSR (`Migrate`), which discard or regenerate
+    /// the partition identity and release the prior session context. A plain
+    /// disable uses [`mark_all_needs_renego`](Self::mark_all_needs_renego)
+    /// instead, retaining established logical IDs so the host can still close
+    /// its sessions. Mirrors the reference firmware's
+    /// `session_table().restore(0)` in `PartState::clear_partition_info`.
     #[inline(never)]
     pub fn clear_all(&mut self) {
         self.region_mut().fill(0);

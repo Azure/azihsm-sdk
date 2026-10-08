@@ -880,9 +880,9 @@ impl HsmPal for UnoHsmPal {
         }
 
         self.ipc.enable(IpcChannel::AdminRequest as u8);
-        // Ensure the cross-core crash-notify wakeup timer starts disarmed. It
-        // is (re)enabled only after the Admin bootstrap handshake completes
-        // (see `on_boot_complete`).
+        // Start the crash-notify wakeup timer disarmed. `on_boot_complete`
+        // enables the NVIC receiver after the Admin handshake; the timer
+        // itself is armed only when sending a crash notification.
         Tcon::disable_wakeup_timer1();
         // Recovery boot: only a cold (power-on) boot wipes the partition
         // store. On a warm / fw-update reset the GSRAM-resident store survived,

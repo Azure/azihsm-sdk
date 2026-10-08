@@ -162,7 +162,7 @@ impl HsmSessionManager for UnoHsmPal {
         let mut table = SessionStore::partition(io.pid())?;
 
         // A renegotiating slot has no live vault state: the partition reset
-        // that flagged it (disable / migrate — e.g. the `CC.EN` clear an NVMe
+        // that flagged it (disable — e.g. the `CC.EN` clear an NVMe
         // Level-2 abort or firmware-crash recovery drives) already deleted
         // every session-blob key and dropped the physical-id indirection, so
         // resolving it would yield a stale id and the vault deletes below
