@@ -267,7 +267,14 @@ pub(crate) fn generate_key_report(
     report_data: &[u8],
     report: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
-    if report_data.len() != DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
+    // Only reject report_data that is too large to encode locally. A short
+    // (but non-oversized) payload is intentionally allowed through to the
+    // device/dispatcher, which already enforces the exact
+    // `MAX_REPORT_DATA_SIZE` requirement (see `dispatch_attest_key`) and
+    // reports it as a device-command failure. This also keeps the
+    // size-query pass (`report: None`) working regardless of whether the
+    // caller has assembled a valid `report_data` payload yet.
+    if report_data.len() > DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
         return Err(HsmError::InvalidArgument);
     }
 
