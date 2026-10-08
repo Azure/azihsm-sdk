@@ -455,11 +455,17 @@ fuzz_target!(|input: FuzzInput| {
         let result = ctx.tbor_oob(&req, &oob);
 
         if changed || input.key_scope != common::KeyScope::Local {
-            assert!(
-                result.is_err(),
-                "the selected mutation should make SdRestoreRemoteBackup fail: {:?}",
-                input.target
-            );
+            match result {
+                Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
+                    panic!("SdRestoreRemoteBackup transport/driver failure: {err:?}");
+                }
+                Err(_) => {}
+                Ok(_response) => panic!(
+                    "the selected mutation should make SdRestoreRemoteBackup fail: \
+                     target={:?}",
+                    input.target
+                ),
+            }
         } else {
             let response = result.expect("the unmodified valid remote restore should succeed");
             assert_eq!(response.pok_local_backup.len(), MASKED_SD_LEN);
