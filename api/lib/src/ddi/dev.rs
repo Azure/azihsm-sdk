@@ -7,9 +7,12 @@
 //! through the DDI layer. It manages device enumeration, device handle wrapping,
 //! and device access operations.
 
+use std::cell::Cell;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::sync::LazyLock;
+
+use parking_lot::Mutex;
 
 use super::*;
 use crate::resiliency::HsmDdi;
@@ -81,6 +84,67 @@ impl From<HsmApiRev> for DdiApiRev {
 /// underlying device.
 #[derive(Debug)]
 pub(crate) struct HsmDev(AzishmDev);
+
+/// Thread-local scope for a session's backend cookie.
+///
+/// `Inactive` means no [`with_session_cookie`] scope is active on this
+/// thread. `Active` carries the scoped cookie value, which is itself an
+/// `Option<DdiCookie>` (the backend may have no cookie yet) — using
+/// `Option<Option<DdiCookie>>` here would conflate "no scope" with "scope
+/// active but cookie absent", so this distinguishes the two explicitly.
+#[derive(Clone, Copy)]
+enum SessionCookieScope {
+    Inactive,
+    Active(Option<DdiCookie>),
+}
+
+// Session-bound API operations traditionally pass `&mut None` through the
+// DDI layer. Scope the handle's backend cookie around those calls without
+// sharing it between concurrent sessions.
+thread_local! {
+    static ACTIVE_SESSION_COOKIE: Cell<SessionCookieScope> =
+        const { Cell::new(SessionCookieScope::Inactive) };
+}
+
+pub(crate) fn with_session_cookie<R>(
+    cookie: &Mutex<Option<DdiCookie>>,
+    f: impl FnOnce() -> R,
+) -> R {
+    let previous = ACTIVE_SESSION_COOKIE
+        .with(|active| active.replace(SessionCookieScope::Active(*cookie.lock())));
+    struct RestoreCookie<'a> {
+        cookie: &'a Mutex<Option<DdiCookie>>,
+        previous: SessionCookieScope,
+    }
+    impl Drop for RestoreCookie<'_> {
+        fn drop(&mut self) {
+            let current = ACTIVE_SESSION_COOKIE.with(Cell::get);
+            if let SessionCookieScope::Active(current) = current {
+                *self.cookie.lock() = current;
+            }
+            ACTIVE_SESSION_COOKIE.with(|active| active.set(self.previous));
+        }
+    }
+    let _restore = RestoreCookie { cookie, previous };
+    f()
+}
+
+impl HsmDev {
+    pub(crate) fn exec_op_mbor<T: DdiOpReq>(
+        &self,
+        req: &T,
+        cookie: &mut Option<DdiCookie>,
+    ) -> DdiResult<T::OpResp> {
+        let SessionCookieScope::Active(mut active_cookie) = ACTIVE_SESSION_COOKIE.with(Cell::get)
+        else {
+            return self.0.exec_op_mbor(req, cookie);
+        };
+
+        let result = self.0.exec_op_mbor(req, &mut active_cookie);
+        ACTIVE_SESSION_COOKIE.with(|active| active.set(SessionCookieScope::Active(active_cookie)));
+        result
+    }
+}
 
 impl Deref for HsmDev {
     type Target = AzishmDev;

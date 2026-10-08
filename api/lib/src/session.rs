@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use azihsm_crypto::AesKey;
 use azihsm_ddi_tbor_types::SessionType;
+use parking_lot::Mutex;
 use parking_lot::RwLock;
 use tracing::*;
 use zerocopy::IntoBytes;
@@ -34,6 +35,7 @@ impl HsmSession {
         app_id: u8,
         rev: HsmApiRev,
         partition: HsmPartition,
+        ddi_cookie: Option<u64>,
         seed: [u8; 48],
         bmk_session: Vec<u8>,
     ) -> Self {
@@ -43,6 +45,7 @@ impl HsmSession {
                 app_id,
                 rev,
                 partition,
+                ddi_cookie,
                 seed,
                 bmk_session,
             ))),
@@ -77,6 +80,10 @@ impl HsmSession {
     /// was last reopened.
     pub(crate) fn last_restore_epoch(&self) -> u64 {
         self.inner.read().last_restore_epoch()
+    }
+
+    pub(crate) fn ddi_cookie(&self) -> Option<u64> {
+        *self.inner.read().ddi_cookie.lock()
     }
 
     /// Serializes session-reopen attempts for a given epoch.
@@ -505,6 +512,7 @@ struct HsmSessionInner {
     id: u16,
     rev: HsmApiRev,
     partition: HsmPartition,
+    ddi_cookie: Mutex<Option<u64>>,
     /// The partition restore epoch at which this session was last reopened.
     /// Compared against `ResiliencyState::restore_epoch` to decide whether
     /// a `reopen_session` call is needed before retrying a key operation.
@@ -568,6 +576,7 @@ impl HsmSessionInner {
         app_id: u8,
         rev: HsmApiRev,
         partition: HsmPartition,
+        ddi_cookie: Option<u64>,
         seed: [u8; 48],
         bmk_session: Vec<u8>,
     ) -> Self {
@@ -576,6 +585,7 @@ impl HsmSessionInner {
             id,
             rev,
             partition,
+            ddi_cookie: Mutex::new(ddi_cookie),
             last_restore_epoch: epoch,
             kind: SessionKind::Ver1 {
                 app_id,
@@ -598,6 +608,7 @@ impl HsmSessionInner {
             id: result.session_id,
             rev,
             partition,
+            ddi_cookie: Mutex::new(None),
             last_restore_epoch: epoch,
             kind: SessionKind::Ver2 {
                 psk_id: result.psk_id,
@@ -701,7 +712,7 @@ impl HsmSessionInner {
     {
         let part = self.partition().inner().read();
         let dev = part.dev();
-        f(dev)
+        ddi::with_session_cookie(&self.ddi_cookie, || f(dev))
     }
 
     /// Returns the partition restore epoch at which this session was last

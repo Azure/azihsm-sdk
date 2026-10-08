@@ -5,6 +5,13 @@
 # file (saved to target/nextest/<profile>/<path>) during the rust.yml workflow.
 
 # profile for running all mock tests
+# `vsocksrv_integration` spawns the separately-built `vsocksrv` binary
+# (see `tools/vsocksrv/README.md`), which this profile's `--workspace`
+# invocation does not build; it is only exercised by the dedicated
+# `ci-sock-ddi` profile, which builds `vsocksrv` first.
+[profile.ci-mock]
+default-filter = "not binary_id(azihsm_ddi_sock::vsocksrv_integration)"
+
 # Resiliency stress tests are timing-sensitive; reserve the whole runner so
 # they do not run in parallel with any other test or each other.
 [[profile.ci-mock.overrides]]
@@ -50,4 +57,13 @@ path = "junit.xml"
 
 # profile for running emu ddi tests
 [profile.ci-emu-ddi.junit]
+path = "junit.xml"
+
+# profile for running socket DDI tests against a live vsocksrv process
+[profile.ci-sock-ddi.junit]
+path = "junit.xml"
+
+# profile for running azihsm_api_tests's vsocksrv session regression test
+# against a live vsocksrv process
+[profile.ci-api-sock.junit]
 path = "junit.xml"

@@ -17,6 +17,8 @@ mod resiliency_tests;
 #[cfg(not(feature = "session-ex-tests"))]
 mod session_tests;
 mod utils;
+#[cfg(feature = "sock")]
+mod vsocksrv_session_tests;
 
 #[cfg(all(feature = "session-ex-tests", not(feature = "mock")))]
 mod partition_ex_tests;

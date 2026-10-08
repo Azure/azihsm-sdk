@@ -37,6 +37,7 @@ members = [
   "ddi/tbor/codec",
   "ddi/tbor/derive",
   "ddi/tbor/types",
+  "ddi/vsock",
   "ddi/win",
   "fw/core/crypto/aead-envelope",
   "fw/core/crypto/aes-cbc-pad",
@@ -79,6 +80,7 @@ members = [
   "plugins/ossl_prov/integration-tests/openssl-capi",
   "plugins/ossl_prov/integration-tests/openssl-cli",
   "tools/resiliency_stress",
+  "tools/vsocksrv",
   "xtask",
 
 ]
@@ -114,6 +116,7 @@ azihsm_ddi_tbor_codec = { path = "ddi/tbor/codec" }
 azihsm_ddi_tbor_derive = { path = "ddi/tbor/derive" }
 azihsm_ddi_tbor_test_harness = { path = "crates/tbor_test_harness" }
 azihsm_ddi_tbor_types = { path = "ddi/tbor/types" }
+azihsm_ddi_vsock = { path = "ddi/vsock" }
 azihsm_ddi_win = { path = "ddi/win" }
 azihsm_ossl_engine_core = { path = "plugins/ossl_engine/azihsm_ossl_engine_core" }
 azihsm_ossl_engine_resiliency = { path = "plugins/ossl_engine/azihsm_ossl_engine_resiliency" }

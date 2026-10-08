@@ -15,6 +15,7 @@ azihsm_ddi_emu = { optional = true, workspace = true }
 azihsm_ddi_interface.workspace = true
 azihsm_ddi_mock = { optional = true, workspace = true }
 azihsm_ddi_sock = { optional = true, workspace = true }
+azihsm_ddi_vsock = { optional = true, workspace = true }
 cfg-if.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -30,6 +31,7 @@ mock = ["azihsm_ddi_mock"]
 sock = ["azihsm_ddi_sock"]
 table-4 = ["azihsm_ddi_mock/table-4"]
 table-64 = ["azihsm_ddi_mock/table-64"]
+vsock = ["azihsm_ddi_vsock"]
 
 [lints]
 workspace = true
