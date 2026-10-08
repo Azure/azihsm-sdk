@@ -13,6 +13,7 @@
 use azihsm_fw_core_crypto_key_masking::cbc::mask;
 use azihsm_fw_ddi_mbor_types::ecc_generate_key_pair::DdiEccGenerateKeyPairReq;
 use azihsm_fw_ddi_mbor_types::ecc_generate_key_pair::DdiEccGenerateKeyPairResp;
+use azihsm_fw_hsm_key_decode::ecc_pct_for;
 
 use super::*;
 
@@ -55,7 +56,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
     // keygen's internal PKA-style scratch.
     let (priv_size, pub_size) = pal
         .alloc_scoped_async(io, async |a| {
-            pal.ecc_gen_keypair(io, a, pal_curve, None, HsmEccPct::SignVerify)
+            pal.ecc_gen_keypair(io, a, pal_curve, None, ecc_pct_for(attrs))
                 .await
         })
         .await?;
@@ -68,7 +69,7 @@ pub(crate) async fn ecc_generate_key_pair<'p, P: HsmPal>(
                 a,
                 pal_curve,
                 Some((&mut *priv_key, &mut *pub_key)),
-                HsmEccPct::SignVerify,
+                ecc_pct_for(attrs),
             )
             .await
         })

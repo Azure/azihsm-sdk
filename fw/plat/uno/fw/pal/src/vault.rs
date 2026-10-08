@@ -17,6 +17,10 @@
 //! PAL-resident state is the fast-path bulk-key slot bitmap and the lock
 //! that serializes bulk-key registration against teardown.
 //!
+//! [`HsmVault::vault_key_create`] runs the pairwise consistency test of the
+//! partition's unwrapping key when `EstablishCredential` restores it from its
+//! masked backup (see [`crate::unwrapping_key`]).
+//!
 //! Following the reference firmware, the SDK `meta` (key label) is not
 //! stored (see the [`KeyVault`] crate docs).
 
@@ -97,6 +101,14 @@ impl HsmVault for UnoHsmPal {
         // stored directly.
         if is_bulk_kind(kind) {
             return fp_bulk_create(self, io, key, kind, session_id, attrs).await;
+        }
+        // The partition's unwrapping key, restored from its masked backup,
+        // gets its pairwise consistency test before it's stored. A key that
+        // fails sends the module to the FIPS error state.
+        if crate::unwrapping_key::is_unwrapping_key(kind, attrs)
+            && !self.unwrapping_key_pct(io, key).await?
+        {
+            azihsm_fw_uno_fault::enter_error_state(HsmError::PctValidationUnwrappingKeyFailed);
         }
         let app_id = u8::from(io.pid());
         let session = session_id.map(u16::from);

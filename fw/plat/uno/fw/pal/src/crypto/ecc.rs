@@ -16,9 +16,13 @@
 //!    layer splits that scratch and copies the two halves into the
 //!    caller's separate output buffers.
 //!
-//! Pairwise Consistency Test (PCT) execution is currently a no-op — the
-//! `_pct` parameter is accepted for API parity with the trait but no
-//! self-test is run.
+//! Key generation runs the pairwise consistency test (PCT) that the caller
+//! selects, using the Uno PCT crate ([`azihsm_fw_uno_pct`]). A key pair that
+//! fails its PCT enters the FIPS error state
+//! ([`azihsm_fw_uno_fault::enter_error_state`]). [`HsmEcc::ecc_priv_der_to_vault`]
+//! checks the key it converts: the public key that the key carries must match
+//! its private key, and the key pair must pass the PCT that the caller
+//! selects. A key that fails either check is rejected with an error.
 
 use core::cmp::Ordering;
 
@@ -35,12 +39,14 @@ use azihsm_fw_uno_drivers_upka::UpkaEccCurve;
 use azihsm_fw_uno_drivers_upka::hash_size;
 use azihsm_fw_uno_drivers_upka::hsm_point_size;
 use azihsm_fw_uno_drivers_upka::mont_operand_size;
+use azihsm_fw_uno_pct::ecc_pct;
 
 use super::ecc_det::ORDER384_BE;
 use super::ecc_det::ct_in_range;
 use super::ecc_det::ct_in_range_le;
 use super::reverse_copy;
 use crate::UnoHsmPal;
+use crate::asn1::DecodedEcKey;
 use crate::asn1::parse_ec_private_key;
 
 // =============================================================================
@@ -261,6 +267,119 @@ fn pub_key_in_valid_range(pub_key: &[u8], curve: UpkaEccCurve) -> bool {
 }
 
 // =============================================================================
+// Pairwise consistency test at key generation
+// =============================================================================
+
+impl UnoHsmPal {
+    /// Runs the PCT that `pct` selects on a key pair this PAL just generated.
+    ///
+    /// A key pair that fails the test enters the FIPS error state. An
+    /// operation that fails returns its error, and the caller discards the
+    /// key.
+    async fn generation_pct(
+        &self,
+        io: &impl HsmIo,
+        alloc: &impl HsmScopedAlloc,
+        curve: HsmEccCurve,
+        pct: &HsmEccPct,
+        priv_key: &DmaBuf,
+        pub_key: &DmaBuf,
+    ) -> HsmResult<()> {
+        if !ecc_pct(self, io, alloc, curve, pct, priv_key, pub_key).await? {
+            azihsm_fw_uno_fault::enter_error_state(HsmError::PctValidationEccGenKeyFailed);
+        }
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Imported-key assurance
+// =============================================================================
+
+/// SEC1 marker byte for an uncompressed point.
+const UNCOMPRESSED_POINT: u8 = 0x04;
+
+/// Returns the public key that an imported ECC key carries, as big-endian
+/// `x ‖ y`.
+///
+/// The key must carry its public key in the SEC1 `[1] publicKey` field,
+/// right after the private key, as an uncompressed point on the key's curve.
+/// So a key that carries `[0] parameters` is rejected; the curve comes from
+/// the PKCS#8 algorithm.
+///
+/// # Errors
+/// * [`HsmError::KeyStructuralValidationFailed`] — the key carries no public
+///   key, carries `[0] parameters`, or its public key isn't an uncompressed
+///   point of the curve's size.
+fn embedded_public_key<'a>(key: &DecodedEcKey<'a>) -> HsmResult<&'a [u8]> {
+    let point = match key.public_key {
+        Some(bits) if !key.has_parameters && bits.unused_bits() == 0 => bits.raw_bytes(),
+        _ => return Err(HsmError::KeyStructuralValidationFailed),
+    };
+    match point.split_first() {
+        Some((&UNCOMPRESSED_POINT, xy)) if xy.len() == 2 * key.curve.priv_key_len() => Ok(xy),
+        _ => Err(HsmError::KeyStructuralValidationFailed),
+    }
+}
+
+/// Returns `true` if `wire_pub`, a public key in the PAL's wire format, is
+/// the point `xy`.
+///
+/// `xy` is big-endian `x ‖ y`, each coordinate [`HsmEccCurve::priv_key_len`]
+/// bytes. Each wire coordinate is little-endian and
+/// [`HsmEccCurve::wire_coord_len`] bytes, so the two padding bytes of a P-521
+/// wire coordinate must be zero.
+fn is_wire_point(curve: HsmEccCurve, xy: &[u8], wire_pub: &[u8]) -> bool {
+    let raw = curve.priv_key_len();
+    let coord = curve.wire_coord_len();
+    xy.len() == 2 * raw
+        && wire_pub.len() == 2 * coord
+        && xy
+            .chunks_exact(raw)
+            .zip(wire_pub.chunks_exact(coord))
+            .all(|(be, le)| be.iter().rev().eq(&le[..raw]) && le[raw..].iter().all(|&b| b == 0))
+}
+
+impl UnoHsmPal {
+    /// Checks an imported ECC key pair after its conversion to the vault
+    /// format.
+    ///
+    /// The public key derived from `priv_key` must equal `embedded`, the
+    /// big-endian `x ‖ y` that the key carries. Then the key pair must pass
+    /// the PCT that `pct` selects, which runs on the derived public key.
+    ///
+    /// # Errors
+    /// * [`HsmError::KeyStructuralValidationFailed`] — the public keys
+    ///   differ.
+    /// * [`HsmError::PctValidationRsaUnwrapEccKeyFailed`] — the key pair
+    ///   failed its PCT.
+    /// * Any [`HsmError`] from the public-key derivation, the scoped
+    ///   allocator, or an operation that the PCT runs.
+    async fn check_ecc_import(
+        &self,
+        io: &impl HsmIo,
+        curve: HsmEccCurve,
+        pct: HsmEccPct,
+        priv_key: &DmaBuf,
+        embedded: &[u8],
+    ) -> HsmResult<()> {
+        self.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
+            let pub_key = alloc.dma_alloc(curve.wire_pub_key_len())?;
+            self.ecc_priv_pub_key(io, priv_key, Some(&mut *pub_key))
+                .await?;
+            if !is_wire_point(curve, embedded, pub_key) {
+                return Err(HsmError::KeyStructuralValidationFailed);
+            }
+            if !ecc_pct(self, io, alloc, curve, &pct, priv_key, pub_key).await? {
+                return Err(HsmError::PctValidationRsaUnwrapEccKeyFailed);
+            }
+            Ok(())
+        })
+        .await
+    }
+}
+
+// =============================================================================
 // HsmEcc trait impl
 // =============================================================================
 //
@@ -291,8 +410,8 @@ impl HsmEcc for UnoHsmPal {
     /// * `out` — `None` to query required buffer sizes, or
     ///   `Some((priv_key, pub_key))` to generate into caller-provided
     ///   output buffers.
-    /// * `_pct` — pairwise consistency test mode. Accepted for API
-    ///   parity with the trait; no self-test is currently executed.
+    /// * `pct` — pairwise consistency test to run on the new key pair
+    ///   before it's returned. A failing pair enters the FIPS error state.
     ///
     /// # Returns
     /// * `Ok((priv_len, pub_len))` — the private and public key lengths.
@@ -301,15 +420,15 @@ impl HsmEcc for UnoHsmPal {
     /// * [`HsmError::InvalidArg`] if the supplied curve is not one of
     ///   P-256/P-384/P-521, or `out` is `Some` and either output buffer
     ///   is shorter than required.
-    /// * Any [`HsmError`] surfaced by [`UnoHsmPal::pka.ecc_gen_keypair`]
-    ///   or the scoped allocator.
+    /// * Any [`HsmError`] surfaced by [`UnoHsmPal::pka.ecc_gen_keypair`],
+    ///   the scoped allocator, or an operation that the PCT runs.
     async fn ecc_gen_keypair(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
-        _pct: HsmEccPct,
+        pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)> {
         let pka_curve = map_ecc_curve(curve)?;
         let priv_len = hsm_point_size(pka_curve);
@@ -337,6 +456,16 @@ impl HsmEcc for UnoHsmPal {
 
         priv_out[..priv_len].copy_from_slice(priv_key);
         pub_out[..pub_len].copy_from_slice(pub_key);
+
+        self.generation_pct(
+            io,
+            alloc,
+            curve,
+            &pct,
+            &priv_out[..priv_len],
+            &pub_out[..pub_len],
+        )
+        .await?;
 
         Ok((priv_len, pub_len))
     }
@@ -370,8 +499,8 @@ impl HsmEcc for UnoHsmPal {
     ///   PRK for the per-attempt candidate derivation.
     /// * `out` — `None` to query the required `(priv_len, pub_len)`, or
     ///   `Some((priv_key, pub_key))` to derive into caller buffers.
-    /// * `_pct` — accepted for trait parity; no pairwise-consistency
-    ///   self-test is currently executed.
+    /// * `pct` — pairwise consistency test to run on the derived key pair
+    ///   before it's returned. A failing pair enters the FIPS error state.
     ///
     /// # Returns
     /// * `Ok((priv_len, pub_len))` — the private and public key lengths.
@@ -380,15 +509,16 @@ impl HsmEcc for UnoHsmPal {
     /// * [`HsmError::UnsupportedCmd`] if `curve` is not P-384.
     /// * [`HsmError::InvalidArg`] if `out` is `Some` and either output
     ///   buffer is shorter than required, or `root` is not 48 bytes.
-    /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers.
+    /// * Any [`HsmError`] surfaced by the HKDF / SHA / PKA drivers, or by an
+    ///   operation that the PCT runs.
     async fn ecc_gen_keypair_from_root(
         &self,
         io: &impl HsmIo,
-        _alloc: &impl HsmScopedAlloc,
+        alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
         root: &DmaBuf,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
-        _pct: HsmEccPct,
+        pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)> {
         let pka_curve = map_ecc_curve(curve)?;
         // Only P-384 (the PTA / alias identity curve) is supported. Reject
@@ -419,6 +549,16 @@ impl HsmEcc for UnoHsmPal {
 
         self.ecc_gen_keypair_deterministic(io, pka_curve, root, priv_out, pub_out)
             .await?;
+
+        self.generation_pct(
+            io,
+            alloc,
+            curve,
+            &pct,
+            &priv_out[..priv_len],
+            &pub_out[..pub_len],
+        )
+        .await?;
 
         Ok((priv_len, pub_len))
     }
@@ -614,15 +754,26 @@ impl HsmEcc for UnoHsmPal {
         .await
     }
 
-    fn ecc_priv_der_to_vault(
+    /// Converts an imported PKCS#8 ECC private key into the vault format, and
+    /// checks it.
+    ///
+    /// Both modes check the form of the public key that the key carries (see
+    /// `embedded_public_key`). In use mode, the public key derived from the
+    /// converted key must also match it, and the key pair must pass the PCT
+    /// that `pct` selects.
+    async fn ecc_priv_der_to_vault(
         &self,
-        _io: &impl HsmIo,
+        io: &impl HsmIo,
         der: &DmaBuf,
         out: Option<&mut DmaBuf>,
+        pct: HsmEccPct,
     ) -> HsmResult<(usize, HsmEccCurve)> {
         // Parse the recovered PKCS#8 ECC private key (curve from its `namedCurve`
-        // OID, plus the raw big-endian scalar `d`).
-        let (curve, scalar) = parse_ec_private_key(der).ok_or(HsmError::InvalidArg)?;
+        // OID, the raw big-endian scalar `d`, and the SEC1 optional fields).
+        let key = parse_ec_private_key(der).ok_or(HsmError::InvalidArg)?;
+        // The key must carry a well-formed public key, whatever `pct` selects.
+        let embedded = embedded_public_key(&key)?;
+        let (curve, scalar) = (key.curve, key.scalar);
         let vault_len = curve.wire_coord_len();
         // SEC1 / RFC 5915 encodes the scalar as a fixed-width octet string for
         // the curve (P-256 32, P-384 48, P-521 66 bytes). Require exactly that
@@ -638,16 +789,19 @@ impl HsmEcc for UnoHsmPal {
         if !ct_in_range(scalar, curve_order_be(curve)) {
             return Err(HsmError::InvalidArg);
         }
-        if let Some(out) = out {
-            if out.len() < vault_len {
-                return Err(HsmError::InvalidArg);
-            }
-            // The vault stores the scalar little-endian (PKA-native),
-            // zero-padded to the wire coordinate length. `reverse_copy` only
-            // writes `scalar.len()` bytes, so clear the high remainder.
-            reverse_copy(&mut out[..vault_len], scalar);
-            out[scalar.len()..vault_len].fill(0);
+        let Some(out) = out else {
+            return Ok((vault_len, curve));
+        };
+        if out.len() < vault_len {
+            return Err(HsmError::InvalidArg);
         }
+        // The vault stores the scalar little-endian (PKA-native),
+        // zero-padded to the wire coordinate length. `reverse_copy` only
+        // writes `scalar.len()` bytes, so clear the high remainder.
+        reverse_copy(&mut out[..vault_len], scalar);
+        out[scalar.len()..vault_len].fill(0);
+        self.check_ecc_import(io, curve, pct, &out[..vault_len], embedded)
+            .await?;
         Ok((vault_len, curve))
     }
 

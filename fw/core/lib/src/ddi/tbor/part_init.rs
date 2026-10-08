@@ -1051,14 +1051,15 @@ pub(crate) mod kdf {
 
         // Hand the raw PartRoot to the PAL; each platform owns its
         // FIPS 186-5 §A.2 derivation (a domain-separated HKDF-Expand
-        // followed by its A.2.x scalar generation) from it.
+        // followed by its A.2.x scalar generation) from it.  The PTA
+        // signs, so its first derivation gets a sign/verify PCT.
         pal.ecc_gen_keypair_from_root(
             io,
             alloc,
             curve,
             root,
             Some((priv_out, pub_out)),
-            HsmEccPct::None,
+            HsmEccPct::SignVerify,
         )
         .await
     }

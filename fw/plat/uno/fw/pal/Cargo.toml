@@ -41,8 +41,10 @@ azihsm_fw_uno_drivers_systick = { workspace = true }
 azihsm_fw_uno_drivers_upka = { workspace = true }
 azihsm_fw_uno_drivers_vault = { workspace = true }
 azihsm_fw_uno_error = { workspace = true }
+azihsm_fw_uno_fault = { workspace = true }
 azihsm_fw_uno_key_vault = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
+azihsm_fw_uno_pct = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }
 
@@ -62,8 +64,12 @@ default = []
 # Optional host-poll path: also signal SYS_READY via ARM semihosting in
 # addition to the silicon boot_handshake::set_boot_status(Run). Hosts
 # that cannot snoop semihosting (e.g. production) should disable this
-# feature — boot_handshake alone is sufficient.
-semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
+# feature — boot_handshake alone is sufficient. The FIPS error state then
+# also exits through semihosting instead of signalling the SP.
+semihosting = [
+  "azihsm_fw_uno_fault/semihosting",
+  "dep:azihsm_fw_uno_drivers_semihosting",
+]
 
 # Test-only DDI commands, routed through the `HsmCustomDispatch` PAL hook
 # rather than the core opcode tables. Never enable either feature in a

@@ -96,9 +96,22 @@ Byte order also governs the digest and the ECDH secret:
 - `ecc_sign` / `ecc_verify` take the message `hash` in PKA **little-endian** — a *full byte reversal* of the natural big-endian digest, which is exactly what `HsmHash::hash(.., big_endian = false)` produces. Callers either hash with `big_endian = false`, or hash big-endian and then reverse the digest.
 - `ecdh_derive` writes `secret` as the shared x-coordinate in **little-endian**. Consumers that need big-endian — e.g. an openssl-matching HKDF, or HPKE/DHKEM per RFC 9180 — must reverse it to big-endian themselves.
 
-**PCT (Pairwise Consistency Test):** After key generation, a self-test is performed:
-- `SignVerify` — sign + verify a test message
-- `KeyAgreement` — ECDH with a test peer
+**PCT (Pairwise Consistency Test):** A PCT checks that a private key and its public key belong together. `ecc_gen_keypair` and `ecc_gen_keypair_from_root` run the PCT that `pct` selects before they return a key; `HsmEccPct::None` runs none. Callers choose the PCT from the key's use: `SignVerify` for a signing key and `KeyAgreement` for any other ECC key.
+
+- `SignVerify` — hash a fixed message, sign the digest with the private key, and verify the signature with the public key.
+- `KeyAgreement` — run ECDH in both directions with a fixed test key pair: the new private key with the test public key, and the test private key with the new public key. Both must produce the same shared secret (the X coordinate).
+
+`HsmRsaPct` selects an RSA PCT the same way:
+
+- `SignVerify` — hash a fixed message, raise the digest to the private exponent (`mod_exp_priv`), raise the result to the public exponent (`mod_exp_pub`), and compare the result with the digest.
+- `EncryptDecrypt` — raise a fixed value to the public exponent, raise the result to the private exponent, and compare the result with the value.
+
+The Uno PAL runs every PCT with its PCT crate, `azihsm_fw_uno_pct` (`fw/plat/uno/fw/crates/pct`):
+
+- The Uno PAL runs the generation PCTs, and `EncryptDecrypt` on the partition's unwrapping key. When one of these PCTs fails, the PAL doesn't return an error; the module enters the [FIPS error state](../error_model.md#fips-error-state).
+- `ecc_priv_der_to_vault` and `rsa_priv_der_to_vault`, which convert an imported key, also take a `pct`. The import handlers pick it from the imported key's use with `ecc_pct_for` and `rsa_pct_for` (`azihsm_fw_hsm_key_decode`), and the Uno PAL runs it on the converted key. A failed PCT rejects the import with an error.
+- Before an imported ECC key's PCT, the Uno PAL checks the key's structure, whatever `pct` selects: its PKCS#8 encoding must carry an uncompressed public key, right after the private key, that matches the private key.
+- The std PAL runs no PCTs and no structure checks. It ignores `pct`.
 
 ### HsmAes — AES Encrypt/Decrypt
 

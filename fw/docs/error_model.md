@@ -80,4 +80,32 @@ SQE validation ────► OpError → CQE host status (no body)
    DDI dispatch ────► DdiErrResp → CQE Success + error in body
         │
    Handler success ─► DdiResp → CQE Success + response in body
+
+   PCT failure ─────► FIPS error state → no CQE; the SP resets the device
 ```
+
+## FIPS Error State
+
+A PCT failure on a key pair that the module generated, or on the partition's unwrapping key, is fatal: the module stops in the FIPS 140-3 error state instead of returning an error. On Uno, these PCTs can enter it:
+
+| Key | Where its PCT runs |
+|-----|--------------------|
+| A key pair that the PAL generates or derives | `ecc_gen_keypair` and `ecc_gen_keypair_from_root` |
+| The unwrapping key, after the SP publishes it | `UnoHsmPal::certify_pending_unwrapping_key`, which the Uno app calls for each host IO before the core handles it |
+| The unwrapping key, restored from its masked backup | The Uno PAL's `vault_key_create` |
+
+Each calls `azihsm_fw_uno_fault::enter_error_state(reason)` (`fw/plat/uno/fw/crates/fault/src/lib.rs`), which:
+
+1. Traces `reason`, for example `PctValidationEccGenKeyFailed`. Production builds compile tracing out.
+2. Sets `S2H_MBX_INSTS.ERR_BIT` in SP Mailbox0.
+3. Halts.
+
+The in-flight IO never completes, so the host driver aborts it. The SP routes the mailbox error to its own error state, which soft-resets the device. Emulator builds with the `semihosting` feature skip the mailbox write and exit through semihosting instead.
+
+A rejected import isn't fatal. On Uno, every RSA or ECC import runs one of the DER conversions, `ecc_priv_der_to_vault` or `rsa_priv_der_to_vault`, which checks the key before core stores it. A failed check returns a Tier 2 `DdiErrResp`, and nothing is stored. The std PAL runs none of these checks:
+
+| Check | Error |
+|-------|-------|
+| An ECC key's embedded public key is missing, malformed, or doesn't match its private key, or the key carries `[0]` curve parameters | `KeyStructuralValidationFailed` |
+| The ECC PCT for the key's use | `PctValidationRsaUnwrapEccKeyFailed` |
+| The RSA PCT for the key's use | `PctValidationRsaUnwrapRsaKeyFailed` |
