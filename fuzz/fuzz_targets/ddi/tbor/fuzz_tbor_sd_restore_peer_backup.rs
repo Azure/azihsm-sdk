@@ -446,12 +446,8 @@ fuzz_target!(|input: FuzzInput| {
                     panic!("SdRestorePeerBackup transport/driver failure: {err:?}");
                 }
                 Err(_) => {}
-                Ok(response) => panic!(
-                    "the selected mutation should make SdRestorePeerBackup fail: \
-                     target={:?}, pok_local_backup_len={}, sd_mk_backup_len={}",
-                    input.target,
-                    response.pok_local_backup.len(),
-                    response.sd_mk_backup.len()
+                Ok(_) => panic!(
+                    "the selected mutation should make SdRestorePeerBackup fail"
                 ),
             }
         } else {
