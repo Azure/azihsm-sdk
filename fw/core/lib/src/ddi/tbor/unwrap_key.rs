@@ -255,9 +255,10 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             // so the `decoded` borrow of `material` ends before the wipe;
             // then scrub the recovered plaintext from the DMA arena on every
             // path — scope exit only resets the bump watermark, it does not
-            // wipe freed memory.
+            // wipe freed memory.  `attrs` selects the PCT passed to the PAL
+            // for an RSA / ECC key.
             let created = async {
-                let decoded = decode(pal, io, &mut *material, dclass).await?;
+                let decoded = decode(pal, io, &mut *material, dclass, attrs).await?;
                 // Transient, partition-scoped (`None` session): deleted below.
                 pal.vault_key_create(io, decoded.material, decoded.kind, None, attrs)
                     .await

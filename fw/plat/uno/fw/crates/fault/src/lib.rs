@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Panic and CPU-exception handlers for the Uno HSM firmware.
+//! Panic and CPU-exception handlers, and the FIPS error state, for the Uno
+//! HSM firmware.
 //!
 //! Installs the firmware's single `#[panic_handler]` plus overrides for the
 //! ARMv7-M `HardFault` and `DefaultHandler` exceptions. The goal is fault
@@ -31,6 +32,17 @@
 //! and exception type. The `trace-uart` / `trace-semihosting` features select
 //! `level-info`, which compiles `error!` in.
 //!
+//! # FIPS error state
+//!
+//! The PAL calls [`enter_error_state`] when a key pair that the module
+//! generated, or the partition's unwrapping key, fails its pairwise
+//! consistency test. It sets Mailbox0's error bit and halts through the same
+//! `halt` as the handlers. Unlike the panic and HardFault handlers, it doesn't
+//! save a crash dump or notify the peer core itself. The SP does both when it
+//! enters its own FIPS error state: it fires TCON wakeup1 at every core, so
+//! this core saves an `OtherCore` dump through the `tcon_wakeup1` receiver,
+//! and then the SP resets the device.
+//!
 //! # Linking
 //!
 //! The panic and exception symbols only take effect if this crate is part
@@ -43,7 +55,7 @@
 //! reporting the fault, they capture a persistent crash dump (into the
 //! reserved HSM DTCM slot via [`azihsm_fw_uno_crashdump`]) and notify the
 //! peer core over TCON wakeup1. The same sequence is exposed deliberately as
-//! [`explicit_crash`], the crate's one public entry point, which the DDI
+//! [`explicit_crash`], a public entry point, which the DDI
 //! `TriggerCrash` test hook uses to inject a crash that stays
 //! distinguishable from a real panic in the dump. This crate also installs
 //! the **`tcon_wakeup1` receiver** — a real NVIC-vectored assembly
@@ -61,23 +73,36 @@ mod decode;
 use core::arch::global_asm;
 
 use azihsm_fw_hsm_core_tracing::error;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_crashdump::crash_format::CpuRegisterContext;
 use azihsm_fw_uno_crashdump::crashdump_save;
 use azihsm_fw_uno_crashdump::failure_code::FailureCode;
 use azihsm_fw_uno_drivers_nvic::Nvic;
 use azihsm_fw_uno_drivers_tcon::Tcon;
-// `HsmError` is referenced only inside `error!`, which compiles out when no
-// trace level is enabled (production); the import is then unused.
-#[allow(unused_imports)]
 use azihsm_fw_uno_error::HsmError;
 use azihsm_fw_uno_pac::Interrupt;
 use azihsm_fw_uno_reg_cortex_m::scb::regs::ScbRegs;
 use azihsm_fw_uno_reg_cortex_m::scb::CFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::HFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::SCB_BASE;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_uno_reg_soc::sys_mbx::regs::SysMbxRegs;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_uno_reg_soc::sys_mbx::S2H_MBX_INSTS;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_uno_reg_soc::sys_mbx::SYS_MBX_BASE;
 use cortex_m_rt::exception;
 use cortex_m_rt::ExceptionFrame;
+#[cfg(not(feature = "semihosting"))]
+use tock_registers::interfaces::ReadWriteable;
 use tock_registers::interfaces::Readable;
+
+/// Mailbox0, which the SP watches for this core's error interrupt.
+#[cfg(not(feature = "semihosting"))]
+// SAFETY: `SYS_MBX_BASE` is the fixed MMIO address of Mailbox0, which is
+// always mapped on Uno silicon.
+const SYS_MBX: StaticRef<SysMbxRegs> = unsafe { StaticRef::new(SYS_MBX_BASE as *const SysMbxRegs) };
 
 /// Borrow the System Control Block MMIO register block.
 ///
@@ -91,7 +116,8 @@ fn scb() -> &'static ScbRegs {
     unsafe { &*(SCB_BASE as *const ScbRegs) }
 }
 
-/// Terminate the firmware after a fault has been reported.
+/// Terminate the firmware after a fault has been reported or the FIPS error
+/// state entered.
 ///
 /// On emulator builds (`semihosting`) this issues `SYS_EXIT(-1)` so the
 /// host stops; on silicon it spins forever (the core is already wedged).
@@ -168,6 +194,27 @@ pub fn explicit_crash(additional_info: Option<&str>) -> ! {
         additional_info,
     );
 
+    halt();
+}
+
+/// Enters the FIPS error state. Never returns.
+///
+/// Called when a key pair that the module generated, or the partition's
+/// unwrapping key, fails its pairwise consistency test (PCT). Sets `ERR_BIT`
+/// in Mailbox0's `S2H_MBX_INSTS` register, then halts. The SP turns that
+/// interrupt into its own FIPS error state, which stops SP output, saves
+/// crash dumps, and resets the device. Emulator builds (`semihosting`) skip
+/// the mailbox write and exit through semihosting instead.
+///
+/// `reason` names the check that failed; only trace builds report it.
+//
+// `reason` is consumed only by `error!`, which compiles out when no trace
+// level is enabled (production builds); allow keeps that build warning-free.
+#[allow(unused_variables)]
+pub fn enter_error_state(reason: HsmError) -> ! {
+    error!("fips", reason, "#### FIPS error state ####");
+    #[cfg(not(feature = "semihosting"))]
+    SYS_MBX.s2h_mbx_insts.modify(S2H_MBX_INSTS::ERR_BIT::SET);
     halt();
 }
 

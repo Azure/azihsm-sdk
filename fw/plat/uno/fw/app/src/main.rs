@@ -106,8 +106,10 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// Processes a single IO to completion.
 ///
 /// Takes ownership of the [`UnoHsmIo`], keeping the underlying
-/// IO_SQ slot reserved until the completion DMA finishes. Delegates
-/// SQE parsing, inbound/outbound DMA, DDI dispatch, and CQE
+/// IO_SQ slot reserved until the completion DMA finishes. First lets the
+/// PAL certify the partition's SP-published unwrapping key (a FIPS 140-3
+/// pairwise consistency test that runs once per published key), then
+/// delegates SQE parsing, inbound/outbound DMA, DDI dispatch, and CQE
 /// population to [`Hsm::handle_io`].
 ///
 /// # Parameters
@@ -117,11 +119,14 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// Returns `()` after this IO has been fully processed and completed.
 ///
 /// # Side Effects
+/// - May run the unwrapping key's pairwise consistency test.
 /// - Advances the HSM request pipeline for one IO.
 /// - Triggers DMA activity and CQE completion for that IO.
 #[embassy_executor::task(pool_size = 32)]
 async fn handle_io(io: UnoHsmIo) {
-    HSM.get().await.handle_io(io).await;
+    let hsm = HSM.get().await;
+    hsm.pal().certify_pending_unwrapping_key(&io).await;
+    hsm.handle_io(io).await;
 }
 
 /// Dedicated core-liveliness heartbeat task.
