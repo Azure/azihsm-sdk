@@ -448,8 +448,10 @@ fuzz_target!(|input: FuzzInput| {
                 Err(_) => {}
                 Ok(response) => panic!(
                     "the selected mutation should make SdRestorePeerBackup fail: \
-                     target={:?}, response={response:?}",
-                    input.target
+                     target={:?}, pok_local_backup_len={}, sd_mk_backup_len={}",
+                    input.target,
+                    response.pok_local_backup.len(),
+                    response.sd_mk_backup.len()
                 ),
             }
         } else {

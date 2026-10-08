@@ -121,8 +121,7 @@ fuzz_target!(|input: FuzzInput| {
             Ok(resp) => {
                 assert!(
                     matches!(expected, Expected::Success),
-                    "invalid SdSealingKeyGen request unexpectedly succeeded: \
-                     session_id={session_id}, scope={scope:#04x}"
+                    "invalid SdSealingKeyGen request unexpectedly succeeded"
                 );
                 assert_eq!(
                     resp.masked_key.len(),
