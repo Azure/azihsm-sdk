@@ -23,12 +23,16 @@ use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_interface::DdiResult;
 use azihsm_ddi_mbor_codec::MborDecode;
 use azihsm_ddi_mbor_codec::MborDecoder;
+use azihsm_ddi_mbor_codec::MborEncode;
 use azihsm_ddi_mbor_codec::MborEncoder;
 use azihsm_ddi_mbor_types::DdiAesOp;
+use azihsm_ddi_mbor_types::DdiCloseSessionCmdReq;
+use azihsm_ddi_mbor_types::DdiCloseSessionReq;
 use azihsm_ddi_mbor_types::DdiDecoder;
 use azihsm_ddi_mbor_types::DdiDeviceKind;
 use azihsm_ddi_mbor_types::DdiOp;
 use azihsm_ddi_mbor_types::DdiOpReq;
+use azihsm_ddi_mbor_types::DdiReqHdr;
 use azihsm_ddi_mbor_types::DdiRespHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_mbor_types::MborError;
@@ -455,6 +459,54 @@ impl DdiVsockDev {
         payload.truncate(dst_len);
         Ok(payload)
     }
+
+    /// Best-effort cleanup for a session the firmware reports opening
+    /// (header `status == Success`, carrying the new id) whose response
+    /// body then fails to decode. Issues a raw `CloseSession` for
+    /// `leaked_id` over the already-locked `stream`, so the firmware-side
+    /// slot isn't left live and untracked — nothing local ever recorded
+    /// it (see the call site in [`exec_op_mbor`](DdiDev::exec_op_mbor)),
+    /// so nothing local would otherwise ever close it either.
+    ///
+    /// Errors are intentionally discarded by the caller: this is a
+    /// best-effort reclaim on top of an already-failing exchange, and the
+    /// original decode error is what should surface to the caller either
+    /// way.
+    fn close_leaked_session_locked(
+        stream: &mut VsockStream,
+        cmd_id: u16,
+        pre_encode: bool,
+        leaked_id: u16,
+    ) -> DdiResult<()> {
+        let req = DdiCloseSessionCmdReq {
+            hdr: DdiReqHdr {
+                op: DdiOp::CloseSession,
+                sess_id: Some(leaked_id),
+                rev: None,
+            },
+            data: DdiCloseSessionReq {},
+            ext: None,
+        };
+
+        let mut buf = vec![0u8; DST_CAP as usize];
+        let req_len = {
+            let mut enc = MborEncoder::new(buf.as_mut_slice(), pre_encode);
+            req.mbor_encode(&mut enc)
+                .map_err(|_| DdiError::MborError(MborError::EncodeError))?;
+            enc.position()
+        };
+        buf.truncate(req_len);
+
+        Self::submit_locked(
+            stream,
+            cmd_id,
+            OP_MBOR,
+            u8::from(SessionControlKind::Close),
+            Some(leaked_id),
+            buf,
+        )?;
+        Ok(())
+    }
 }
 
 impl DdiDev for DdiVsockDev {
@@ -540,8 +592,52 @@ impl DdiDev for DdiVsockDev {
             //    before any bookkeeping update, so no session is recorded
             //    unless the full typed response actually decoded.
             let mut body_dec = MborDecoder::new(&resp_buf, post_decode);
-            let typed_resp = <T::OpResp>::mbor_decode(&mut body_dec)
-                .map_err(|_| DdiError::MborError(MborError::DecodeError))?;
+            let typed_resp = match <T::OpResp>::mbor_decode(&mut body_dec) {
+                Ok(resp) => resp,
+                Err(_) => {
+                    // The header alone already told the firmware to open
+                    // a live session (it carries the assigned id), but
+                    // this call is about to return an error, so the
+                    // caller never receives a handle able to close it.
+                    // `sessions.record` never ran (we're still above
+                    // that call), so nothing locally would ever close
+                    // it either — left alone, repeated malformed
+                    // responses could exhaust the partition's session
+                    // slots. Best-effort close it now, still under this
+                    // same stream lock, before surfacing the decode
+                    // error.
+                    if session_ctrl == SessionControlKind::Open {
+                        if let Some(leaked_id) = hdr.sess_id {
+                            let _ = Self::close_leaked_session_locked(
+                                &mut stream,
+                                self.next_cmd_id(),
+                                pre_encode,
+                                leaked_id,
+                            );
+                        }
+                    }
+                    return Err(DdiError::MborError(MborError::DecodeError));
+                }
+            };
+
+            // For `ReopenSession`, the request already names the id
+            // being reopened (`session_id`); a conforming peer's header
+            // echoes that same id back. The full identity check (which
+            // also covers the response body's own `sess_id` field) runs
+            // one layer up, after this call returns — but promoting the
+            // generation here unconditionally would let `check()` start
+            // trusting this handle on the replacement connection before
+            // that identity check ever runs. A peer that reports a
+            // *different* header id must not be trusted: reject before
+            // recording, leaving the old entry stale so `check()`
+            // continues to reject it (see `SessionGenerationTracker`).
+            if opcode == DdiOp::ReopenSession {
+                if let (Some(requested), Some(reported)) = (session_id, hdr.sess_id) {
+                    if requested != reported {
+                        return Err(DdiError::DdiStatus(DdiStatus::SessionNotFound));
+                    }
+                }
+            }
 
             // `Open` responses carry the firmware-assigned session id in
             // the header; `Close` requests already know the id being

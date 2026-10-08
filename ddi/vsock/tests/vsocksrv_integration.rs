@@ -44,6 +44,7 @@ use std::time::Instant;
 
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
+use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_mbor_types::DdiApiRev;
 use azihsm_ddi_mbor_types::DdiCloseSessionCmdReq;
 use azihsm_ddi_mbor_types::DdiCloseSessionReq;
@@ -51,6 +52,7 @@ use azihsm_ddi_mbor_types::DdiGetApiRevCmdReq;
 use azihsm_ddi_mbor_types::DdiGetApiRevReq;
 use azihsm_ddi_mbor_types::DdiOp;
 use azihsm_ddi_mbor_types::DdiReqHdr;
+use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_vsock::DdiVsock;
 use nix::sys::socket::connect;
 use nix::sys::socket::socket;
@@ -468,7 +470,11 @@ fn get_api_rev_round_trips_through_vsocksrv_over_real_vsock() {
 /// This doesn't reproduce the exact numeric-id-reuse scenario from the
 /// original report (that would require driving a real credentialed
 /// `OpenSession` handshake through `vsocksrv`'s `StdHsm`, which is out of
-/// scope for this transport-level test), but it exercises the same
+/// scope for this transport-level test — the generation/token behavior
+/// for a session actually opened before the reset, including after its
+/// numeric id is reused, is already exhaustively covered by the
+/// in-memory `stale_session_after_reset_is_rejected_even_if_id_is_reused`
+/// unit test in `src/dev.rs`), but it exercises the same
 /// `SessionGenerationTracker::check` rejection path: any session id not
 /// recorded under the *current* generation — whether never opened at all
 /// or opened under a since-reset generation — is rejected identically.
@@ -498,11 +504,27 @@ fn unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock() 
     });
 
     dev.erase().expect("erase should succeed");
-    let _replacement = replacement_client
+    let mut replacement = replacement_client
         .join()
         .expect("replacement-connect thread panicked")
         .expect("failed to connect the replacement client")
         .expect("AF_VSOCK loopback vanished mid-test");
+
+    // Prove the rejection below happens locally in
+    // `SessionGenerationTracker::check` — before any bytes reach the
+    // replacement connection — rather than merely surfacing as *some*
+    // I/O error against a peer that doesn't speak the wire protocol
+    // (which would pass `is_err()` even with the guard removed, as long
+    // as the stale request happened to fail for any reason once
+    // forwarded). A background reader blocks on the replacement socket;
+    // if the guard were bypassed and the stale close were forwarded to
+    // the transport, this would observe the request's bytes arriving.
+    let (reached_tx, reached_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        let reached = matches!(replacement.read(&mut byte), Ok(n) if n > 0);
+        let _ = reached_tx.send(reached);
+    });
 
     // Use a real `CloseSession` request (not `GetApiRev`): `GetApiRev`
     // maps to `SessionControlKind::NoSession`, which `record` never acts
@@ -522,8 +544,21 @@ fn unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock() 
     let mut cookie = None;
     let result = dev.exec_op_mbor(&close_req, &mut cookie);
     assert!(
-        result.is_err(),
+        matches!(result, Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))),
         "a session id unrecognized by the post-erase generation must be \
-         rejected, not forwarded to the (torn-down) stream",
+         rejected with SessionNotFound, not forwarded to the (torn-down) \
+         stream: {result:?}",
+    );
+
+    // No bytes should ever have reached the replacement connection: the
+    // rejection above must come from the local guard, not from sending
+    // the request and getting back some unrelated failure.
+    let reached = reached_rx
+        .recv_timeout(Duration::from_millis(500))
+        .unwrap_or(false);
+    assert!(
+        !reached,
+        "the stale close must be rejected before reaching the transport, \
+         but bytes arrived at the replacement connection",
     );
 }
