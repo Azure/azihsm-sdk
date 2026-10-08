@@ -32,14 +32,13 @@ use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
 use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
 use azihsm_ddi_tbor_types::TborSdRestorePeerBackupReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
-
-const SCOPE_LOCAL: u8 = 0b011;
 
 #[derive(Arbitrary, Debug)]
 enum ByteMutation {
@@ -140,6 +139,7 @@ struct FuzzInput {
     bytes: ByteMutation,
     descriptors: DescriptorMutation,
     report: ReportMutation,
+    key_scope: common::KeyScope,
 }
 
 struct Evidence {
@@ -232,7 +232,7 @@ struct PeerBackup {
     session_id: u16,
 }
 
-fn create_peer_backup(ctx: &TestCtx) -> PeerBackup {
+fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<PeerBackup> {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx
         .tbor(&TborPartInfoReq::new())
@@ -276,12 +276,23 @@ fn create_peer_backup(ctx: &TestCtx) -> PeerBackup {
         .expect("PartFinal should succeed")
         .local_mk_backup;
 
-    let sealing_key = ctx
-        .tbor(&TborSdSealingKeyGenReq {
-            session_id: session.session_id,
-            scope: SCOPE_LOCAL,
-        })
-        .expect("SdSealingKeyGen should succeed");
+    let bootstrap_scope = if key_scope == common::KeyScope::SecurityDomain {
+        common::KeyScope::Local
+    } else {
+        key_scope
+    };
+    let sealing_key = match ctx.tbor(&TborSdSealingKeyGenReq {
+        session_id: session.session_id,
+        scope: bootstrap_scope.to_tbor(),
+    }) {
+        Ok(key) => key,
+        Err(DdiError::TborStatus(status)) if status == TborStatus::UnsupportedKeyScope => {
+            ctx.session_close(session.session_id)
+                .expect("session close after unsupported key scope should succeed");
+            return None;
+        }
+        Err(err) => panic!("bootstrap SD sealing-key generation failed: {err}"),
+    };
     let mut sealing_pub = [0u8; RAW_PUB_LEN];
     for (dst, src) in sealing_pub[..48]
         .iter_mut()
@@ -320,18 +331,54 @@ fn create_peer_backup(ctx: &TestCtx) -> PeerBackup {
         .tbor_oob(&create_remote, &evidence.oob())
         .expect("SdCreateRemoteBackup should succeed");
 
+    let (peer_sealing_key, peer_evidence) = if key_scope == common::KeyScope::SecurityDomain {
+        let sealing_key = ctx
+            .tbor(&TborSdSealingKeyGenReq {
+                session_id: session.session_id,
+                scope: key_scope.to_tbor(),
+            })
+            .expect("SecurityDomain-scope key generation should succeed after SD creation");
+        let report = ctx
+            .tbor(&TborKeyReportReq {
+                session_id: session.session_id,
+                masked_key: sealing_key.masked_key.to_vec(),
+                report_data: [0u8; KEY_REPORT_DATA_LEN],
+            })
+            .expect("SecurityDomain-scope KeyReport should succeed")
+            .report;
+        let mut public_key = [0u8; RAW_PUB_LEN];
+        for (dst, src) in public_key[..48]
+            .iter_mut()
+            .zip(sealing_key.pub_key[..48].iter().rev())
+        {
+            *dst = *src;
+        }
+        for (dst, src) in public_key[48..]
+            .iter_mut()
+            .zip(sealing_key.pub_key[48..].iter().rev())
+        {
+            *dst = *src;
+        }
+        (
+            sealing_key,
+            build_evidence(&pid_pub, &public_key, &sata, &report),
+        )
+    } else {
+        (sealing_key, evidence)
+    };
+
     let create_peer = TborSdCreatePeerBackupReq {
         session_id: session.session_id,
-        masked_sealing_key: sealing_key.masked_key,
+        masked_sealing_key: peer_sealing_key.masked_key,
         policy: policy.clone(),
-        dst_mfgr_cert_chain: evidence.manufacturer.clone(),
-        dst_owner_cert_chain: evidence.owner.clone(),
-        dst_part_owner_cert_chain: evidence.partition_owner.clone(),
-        dst_report: evidence.report,
+        dst_mfgr_cert_chain: peer_evidence.manufacturer.clone(),
+        dst_owner_cert_chain: peer_evidence.owner.clone(),
+        dst_part_owner_cert_chain: peer_evidence.partition_owner.clone(),
+        dst_report: peer_evidence.report,
         pok_local_backup: create_remote_response.pok_local_backup,
     };
     let create_peer_response = ctx
-        .tbor_oob(&create_peer, &evidence.oob())
+        .tbor_oob(&create_peer, &peer_evidence.oob())
         .expect("SdCreatePeerBackup should succeed");
 
     ctx.session_close(session.session_id)
@@ -356,14 +403,14 @@ fn create_peer_backup(ctx: &TestCtx) -> PeerBackup {
     )
     .expect("PartFinal should restore the prior local masking key");
 
-    PeerBackup {
-        masked_sealing_key: sealing_key.masked_key,
+    Some(PeerBackup {
+        masked_sealing_key: peer_sealing_key.masked_key,
         policy,
-        evidence,
+        evidence: peer_evidence,
         peer_backup: create_peer_response.pok_peer_backup,
         previous_sd_mk_backup: create_remote_response.sd_mk_backup,
         session_id: restore_session.session_id,
-    }
+    })
 }
 
 fn mutate_request(
@@ -415,7 +462,9 @@ fn mutate_request(
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        let backup = create_peer_backup(ctx);
+        let Some(backup) = create_peer_backup(ctx, input.key_scope) else {
+            return;
+        };
 
         let mut evidence = Evidence {
             items: backup.evidence.items.clone(),
@@ -440,7 +489,7 @@ fuzz_target!(|input: FuzzInput| {
         let oob = evidence.oob();
         let result = ctx.tbor_oob(&req, &oob);
 
-        if changed {
+        if changed || input.key_scope != common::KeyScope::Local {
             match result {
                 Err(err @ DdiError::DriverError(_)) => {
                     panic!("SdRestorePeerBackup transport/driver failure: {err:?}");

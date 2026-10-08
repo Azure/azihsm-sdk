@@ -38,6 +38,38 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 
 pub type DdiTest = AzihsmDdi;
 
+/// Wire discriminants for the TBOR `KeyScope` enum.
+pub const KEY_SCOPE_UNSPECIFIED: u8 = 0b000;
+pub const KEY_SCOPE_SESSION: u8 = 0b001;
+pub const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
+pub const KEY_SCOPE_LOCAL: u8 = 0b011;
+pub const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
+pub const KEY_SCOPE_INTERNAL: u8 = 0b101;
+
+/// TBOR key scopes (wire `KeyScope` discriminants) used by fuzz targets.
+#[derive(Arbitrary, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyScope {
+    Unspecified,
+    Session,
+    Ephemeral,
+    Local,
+    SecurityDomain,
+    Internal,
+}
+
+impl KeyScope {
+    pub fn to_tbor(self) -> u8 {
+        match self {
+            Self::Unspecified => KEY_SCOPE_UNSPECIFIED,
+            Self::Session => KEY_SCOPE_SESSION,
+            Self::Ephemeral => KEY_SCOPE_EPHEMERAL,
+            Self::Local => KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Internal => KEY_SCOPE_INTERNAL,
+        }
+    }
+}
+
 /// Fuzz operations corresponding to the TOC builder methods on
 /// [`Encoder`].
 #[derive(Arbitrary, Debug)]

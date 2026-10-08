@@ -6,6 +6,7 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
@@ -28,14 +29,13 @@ use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
 use azihsm_ddi_tbor_types::TborSdRestoreRemoteBackupReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
+use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
-
-const SCOPE_LOCAL: u8 = 0b011;
 
 #[derive(Arbitrary, Debug, Clone, Copy)]
 enum MutationTarget {
@@ -62,6 +62,7 @@ struct FuzzInput {
     target: MutationTarget,
     offset: u16,
     mask: u8,
+    key_scope: common::KeyScope,
 }
 
 #[derive(Clone)]
@@ -162,7 +163,7 @@ fn build_policy(
     policy_bytes.copy_from_slice(policy.as_bytes());
 }
 
-fn create_restore_fixture(ctx: &TestCtx) -> RestoreFixture {
+fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<RestoreFixture> {
     let source_session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx
         .tbor(&TborPartInfoReq::new())
@@ -203,12 +204,23 @@ fn create_restore_fixture(ctx: &TestCtx) -> RestoreFixture {
         .expect("PartFinal should succeed")
         .local_mk_backup;
 
-    let sealing_key = ctx
-        .tbor(&TborSdSealingKeyGenReq {
-            session_id: source_session.session_id,
-            scope: SCOPE_LOCAL,
-        })
-        .expect("SdSealingKeyGen should succeed");
+    let bootstrap_scope = if key_scope == common::KeyScope::SecurityDomain {
+        common::KeyScope::Local
+    } else {
+        key_scope
+    };
+    let sealing_key = match ctx.tbor(&TborSdSealingKeyGenReq {
+        session_id: source_session.session_id,
+        scope: bootstrap_scope.to_tbor(),
+    }) {
+        Ok(key) => key,
+        Err(DdiError::TborStatus(status)) if status == TborStatus::UnsupportedKeyScope => {
+            ctx.session_close(source_session.session_id)
+                .expect("session close after unsupported key scope should succeed");
+            return None;
+        }
+        Err(err) => panic!("bootstrap SD sealing-key generation failed: {err}"),
+    };
     let mut sealing_pub = [0u8; RAW_PUB_LEN];
     for (dst, src) in sealing_pub[..48]
         .iter_mut()
@@ -247,6 +259,42 @@ fn create_restore_fixture(ctx: &TestCtx) -> RestoreFixture {
         .tbor_oob(&create_req, &evidence.oob())
         .expect("SdCreateRemoteBackup should succeed");
 
+    let (restore_sealing_key, restore_evidence) = if key_scope == common::KeyScope::SecurityDomain {
+        let sealing_key = ctx
+            .tbor(&TborSdSealingKeyGenReq {
+                session_id: source_session.session_id,
+                scope: key_scope.to_tbor(),
+            })
+            .expect("SecurityDomain-scope key generation should succeed after SD creation");
+        let report = ctx
+            .tbor(&TborKeyReportReq {
+                session_id: source_session.session_id,
+                masked_key: sealing_key.masked_key.to_vec(),
+                report_data: [0u8; KEY_REPORT_DATA_LEN],
+            })
+            .expect("SecurityDomain-scope KeyReport should succeed")
+            .report;
+        let mut public_key = [0u8; RAW_PUB_LEN];
+        for (dst, src) in public_key[..48]
+            .iter_mut()
+            .zip(sealing_key.pub_key[..48].iter().rev())
+        {
+            *dst = *src;
+        }
+        for (dst, src) in public_key[48..]
+            .iter_mut()
+            .zip(sealing_key.pub_key[48..].iter().rev())
+        {
+            *dst = *src;
+        }
+        (
+            sealing_key,
+            build_sender_evidence(&pid_pub, &public_key, &sata, &sapota, &report),
+        )
+    } else {
+        (sealing_key, evidence)
+    };
+
     ctx.session_close(source_session.session_id)
         .expect("source session close should succeed");
     ctx.erase().expect("partition reset should succeed");
@@ -269,14 +317,14 @@ fn create_restore_fixture(ctx: &TestCtx) -> RestoreFixture {
     )
     .expect("PartFinal should restore the prior local masking key");
 
-    RestoreFixture {
+    Some(RestoreFixture {
         session_id: restore_session.session_id,
-        masked_sealing_key: sealing_key.masked_key,
+        masked_sealing_key: restore_sealing_key.masked_key,
         policy,
-        evidence,
+        evidence: restore_evidence,
         src_remote_backup: created.pok_remote_backup,
         prev_sd_mk_backup: created.sd_mk_backup,
-    }
+    })
 }
 
 fn flip(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
@@ -385,7 +433,9 @@ fn mutate_request(
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        let fixture = create_restore_fixture(ctx);
+        let Some(fixture) = create_restore_fixture(ctx, input.key_scope) else {
+            return;
+        };
         let mut evidence = fixture.evidence.clone();
         let mut req = TborSdRestoreRemoteBackupReq {
             session_id: fixture.session_id,
@@ -404,7 +454,7 @@ fuzz_target!(|input: FuzzInput| {
         let oob = evidence.oob();
         let result = ctx.tbor_oob(&req, &oob);
 
-        if changed {
+        if changed || input.key_scope != common::KeyScope::Local {
             assert!(
                 result.is_err(),
                 "the selected mutation should make SdRestoreRemoteBackup fail: {:?}",
