@@ -4,7 +4,7 @@
 //! Host-side wrapper for the TBOR `Hash` command.
 //!
 //! `Hash` is an **in-session** command (Crypto-Officer or
-//! Crypto-User) that computes a SHA-256 / 384 / 512 digest of a
+//! Crypto-User) that computes a SHA-1 / 256 / 384 / 512 digest of a
 //! host-supplied message and returns it.  It carries no key and touches no
 //! partition state — a pure hashing utility.
 //!
@@ -24,6 +24,8 @@ pub const HASH_MSG_MAX_LEN: usize = 2048;
 /// Maximum digest length (bytes) — the SHA-512 digest.
 pub const HASH_DIGEST_MAX_LEN: usize = 64;
 
+/// `HashAlgo` discriminant for SHA-1 (20-byte digest).
+pub const HASH_ALGO_SHA1: u8 = 0;
 /// `HashAlgo` discriminant for SHA-256 (32-byte digest).
 pub const HASH_ALGO_SHA256: u8 = 1;
 /// `HashAlgo` discriminant for SHA-384 (48-byte digest).
@@ -52,7 +54,7 @@ pub struct TborHashReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborHashResp {
     /// The natural (big-endian) digest, exactly the algorithm's length
-    /// (32 / 48 / 64 B for SHA-256 / 384 / 512).
+    /// (20 / 32 / 48 / 64 B for SHA-1 / 256 / 384 / 512).
     #[tbor(max_len = 64)]
     pub digest: Vec<u8>,
 }

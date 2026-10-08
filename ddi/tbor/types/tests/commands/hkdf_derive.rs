@@ -20,33 +20,14 @@
 
 #![cfg(feature = "emu")]
 
-use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
-use azihsm_ddi_tbor_types::TborEcdhDeriveReq;
-use azihsm_ddi_tbor_types::TborHkdfDeriveReq;
-use azihsm_ddi_tbor_types::TborHmacReq;
-use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-use azihsm_ddi_tbor_types::HKDF_INFO_MAX_LEN;
-use azihsm_ddi_tbor_types::HKDF_SALT_MAX_LEN;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_AES128;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_AES192;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_AES256;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA256;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA384;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_HMAC_SHA512;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC256;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC384;
-use azihsm_ddi_tbor_types::KDF_KEY_TYPE_VAR_HMAC512;
-use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_types::*;
 
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::TestCtx;
 
 /// `HashAlgo::Sha256` discriminant.
 const HASH_SHA256: u8 = 1;
@@ -205,7 +186,12 @@ fn hkdf_derive_all_hashes_and_scopes() {
 
     // Every hash PRF works, and the derived key can be masked under any
     // provisioned scope.
-    for hash in [HASH_SHA256, HASH_SHA384, HASH_SHA512] {
+    for hash in [
+        HASH_ALGO_SHA1,
+        HASH_ALGO_SHA256,
+        HASH_ALGO_SHA384,
+        HASH_ALGO_SHA512,
+    ] {
         for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
             let ikm = fresh_masked_secret(&ctx, session.session_id);
             let masked = hkdf(
@@ -233,26 +219,28 @@ fn hkdf_derive_optional_salt_info() {
 
     // All four combinations of present / absent (empty) salt and info are
     // accepted and produce a well-formed masked key.
-    for (salt, info) in [
-        (Vec::new(), Vec::new()),
-        (b"only-salt".to_vec(), Vec::new()),
-        (Vec::new(), b"only-info".to_vec()),
-        (b"salt".to_vec(), b"info".to_vec()),
-    ] {
-        let ikm = fresh_masked_secret(&ctx, session.session_id);
-        let masked = hkdf(
-            &ctx,
-            session.session_id,
-            SCOPE_LOCAL,
-            HASH_SHA256,
-            KDF_KEY_TYPE_HMAC_SHA256,
-            0,
-            ikm,
-            salt,
-            info,
-        );
-        assert_eq!(masked.len(), MASK_OVERHEAD + 32);
-        assert!(masked.iter().any(|&b| b != 0));
+    for hash in [HASH_ALGO_SHA1, HASH_ALGO_SHA256] {
+        for (salt, info) in [
+            (Vec::new(), Vec::new()),
+            (b"only-salt".to_vec(), Vec::new()),
+            (Vec::new(), b"only-info".to_vec()),
+            (b"salt".to_vec(), b"info".to_vec()),
+        ] {
+            let ikm = fresh_masked_secret(&ctx, session.session_id);
+            let masked = hkdf(
+                &ctx,
+                session.session_id,
+                SCOPE_LOCAL,
+                hash,
+                KDF_KEY_TYPE_HMAC_SHA256,
+                0,
+                ikm,
+                salt,
+                info,
+            );
+            assert_eq!(masked.len(), MASK_OVERHEAD + 32);
+            assert!(masked.iter().any(|&byte| byte != 0));
+        }
     }
 }
 
@@ -284,59 +272,62 @@ fn hkdf_derive_is_stable_and_salt_info_separate_outputs() {
     let session = finalized_co_session(&ctx);
     let ikm = fresh_masked_secret(&ctx, session.session_id);
 
-    let derive = |salt: &[u8], info: &[u8]| {
-        hkdf(
-            &ctx,
-            session.session_id,
-            SCOPE_LOCAL,
-            HASH_SHA256,
-            KDF_KEY_TYPE_HMAC_SHA256,
-            0,
-            ikm.clone(),
-            salt.to_vec(),
-            info.to_vec(),
-        )
-    };
-    let tag = |masked_key: Vec<u8>| {
-        ctx.tbor(&TborHmacReq {
-            session_id: session.session_id,
-            masked_key,
-            msg: b"derived-key probe".to_vec(),
-        })
-        .expect("Hmac with HKDF-derived key")
-        .tag
-    };
+    for hash in [HASH_ALGO_SHA1, HASH_SHA256] {
+        let derive = |salt: &[u8], info: &[u8]| {
+            hkdf(
+                &ctx,
+                session.session_id,
+                SCOPE_LOCAL,
+                hash,
+                KDF_KEY_TYPE_HMAC_SHA256,
+                0,
+                ikm.clone(),
+                salt.to_vec(),
+                info.to_vec(),
+            )
+        };
 
-    let baseline = tag(derive(b"salt", b"info"));
-    assert_eq!(
-        baseline,
-        tag(derive(b"salt", b"info")),
-        "identical HKDF inputs must derive identical key material",
-    );
-    assert_ne!(
-        baseline,
-        tag(derive(b"different salt", b"info")),
-        "salt must affect the derived key",
-    );
-    assert_ne!(
-        baseline,
-        tag(derive(b"salt", b"different info")),
-        "info must affect the derived key",
-    );
+        let tag = |masked_key: Vec<u8>| {
+            ctx.tbor(&TborHmacReq {
+                session_id: session.session_id,
+                masked_key,
+                msg: b"derived-key probe".to_vec(),
+            })
+            .expect("Hmac with HKDF-derived key")
+            .tag
+        };
+
+        let baseline = tag(derive(b"salt", b"info"));
+        assert_eq!(
+            baseline,
+            tag(derive(b"salt", b"info")),
+            "identical HKDF inputs must derive identical key material (hash {hash})",
+        );
+        assert_ne!(
+            baseline,
+            tag(derive(b"different salt", b"info")),
+            "salt must affect the derived key (hash {hash})",
+        );
+        assert_ne!(
+            baseline,
+            tag(derive(b"salt", b"different info")),
+            "info must affect the derived key (hash {hash})",
+        );
+    }
 }
 
+/// Rejects an unsupported HKDF hash algorithm.
 #[test]
 fn hkdf_derive_unknown_hash_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let ikm = fresh_masked_secret(&ctx, session.session_id);
 
-    // Hash discriminant `0` is not one of SHA-256 / 384 / 512.
     ctx.expect_fw_reject(
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: 0,
+            hash_algo: u8::MAX,
             key_type: KDF_KEY_TYPE_AES256,
             key_length: 0,
             masked_secret: ikm,
@@ -360,7 +351,7 @@ fn hkdf_derive_unknown_key_type_rejected() {
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA384,
+            hash_algo: HASH_ALGO_SHA384,
             key_type: 99,
             key_length: 0,
             masked_secret: ikm,
@@ -409,7 +400,7 @@ fn hkdf_derive_var_hmac_missing_length_rejected() {
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA256,
+            hash_algo: HASH_ALGO_SHA256,
             key_type: KDF_KEY_TYPE_VAR_HMAC256,
             key_length: 0,
             masked_secret: ikm,
@@ -433,7 +424,7 @@ fn hkdf_derive_var_hmac_out_of_range_length_rejected() {
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA256,
+            hash_algo: HASH_ALGO_SHA256,
             key_type: KDF_KEY_TYPE_VAR_HMAC256,
             key_length: 16,
             masked_secret: ikm,
@@ -467,7 +458,7 @@ fn hkdf_derive_non_secret_ikm_rejected() {
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA384,
+            hash_algo: HASH_ALGO_SHA384,
             key_type: KDF_KEY_TYPE_AES256,
             key_length: 0,
             masked_secret: ecc.masked_key,
@@ -584,10 +575,14 @@ fn hkdf_derive_different_hashes_produce_different_keys() {
         .tag
     };
 
+    let sha1 = derive_tag(HASH_ALGO_SHA1);
     let sha256 = derive_tag(HASH_SHA256);
     let sha384 = derive_tag(HASH_SHA384);
     let sha512 = derive_tag(HASH_SHA512);
 
+    assert_ne!(sha1, sha256);
+    assert_ne!(sha1, sha384);
+    assert_ne!(sha1, sha512);
     assert_ne!(sha256, sha384);
     assert_ne!(sha256, sha512);
     assert_ne!(sha384, sha512);

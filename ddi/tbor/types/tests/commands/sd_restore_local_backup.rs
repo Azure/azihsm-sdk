@@ -22,6 +22,13 @@
 //! * Restore before finalize → `InvalidArg`.
 //! * A tampered `pok_local_backup` is rejected (AEAD tag mismatch).
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -33,14 +40,7 @@ use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
-use crate::commands::sd_create_remote_backup::masked_key_and_report;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::x509_fixture::make_pta_chain;
-use crate::harness::x509_fixture::pta_pub_from_csr;
-use crate::harness::x509_fixture::CaKey;
-use crate::harness::x509_fixture::RAW_PUB_LEN;
-use crate::harness::TestCtx;
-use crate::harness::ROTATED_CO_PSK;
+use crate::commands::sd_create_remote_backup::masked_key_report_and_pub;
 
 /// Material captured from the first device's `CreateSD`, replayed on the
 /// second (rebooted) device to restore the security domain.
@@ -83,8 +83,8 @@ fn create_sd_on_first_device(seed: &[u8], sata: &CaKey, pota: &CaKey) -> Created
         .expect("PartFinal")
         .local_mk_backup;
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, sata, &report);
     let req = backup_request(session.session_id, masked, &evidence, &policy);
     let resp = ctx
         .tbor_oob(&req, &evidence.oob())
@@ -105,7 +105,7 @@ fn reboot_and_restore_part_local_mk(
     seed: &[u8],
     pota: &CaKey,
     created: &CreatedSd,
-) -> crate::harness::SessionHandshake {
+) -> azihsm_ddi_tbor_test_harness::SessionHandshake {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let init = ctx
         .part_init(&session, seed, &created.policy, &pota_thumbprint())
@@ -183,8 +183,8 @@ fn sd_restore_local_backup_is_one_shot() {
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let req = backup_request(session.session_id, masked, &evidence, &policy);
     let created = ctx
         .tbor_oob(&req, &evidence.oob())

@@ -44,16 +44,19 @@ pub enum KeyScope {
 ///
 /// The 1-byte discriminants mirror the firmware
 /// [`HsmHashAlgo`](azihsm_fw_hsm_pal_traits::HsmHashAlgo) values
-/// (`Sha256 = 1`, `Sha384 = 2`, `Sha512 = 3`) so the two convert
-/// losslessly.  Shared across the key-property schemas: it selects both
-/// the HMAC SHA variant (`HmacGenerateKey`) and the OAEP hash
-/// (`UnwrapKey`).  Kept as an [`open_enum`] so an unrecognized
+/// (`Sha1 = 0`, `Sha256 = 1`, `Sha384 = 2`, `Sha512 = 3`) so the two convert
+/// losslessly. Shared by hashing, KDF, HMAC key generation, and OAEP
+/// unwrapping schemas. Kept as an [`open_enum`] so an unrecognized
 /// discriminant round-trips as `HashAlgo(x)` and is rejected on-device
-/// rather than failing to decode.  SHA-1 is intentionally absent.
+/// rather than failing to decode. Each command restricts which algorithms
+/// it accepts; SHA-1 is supported by `Hash`, `HkdfDerive`, and `UnwrapKey`.
 #[repr(u8)]
 #[open_enum]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashAlgo {
+    /// SHA-1 (20-byte digest).
+    Sha1 = 0,
+
     /// SHA-256 (32-byte digest; 32-byte HMAC key / tag).
     Sha256 = 1,
 

@@ -50,9 +50,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     // fixed-length SHA-2 digests, so the hash algorithm is implied by the
     // digest length (there is no SHAKE/XOF variant); reject any length that
     // is not a supported SHA-2 digest length rather than carrying a
-    // redundant algorithm selector on the wire.  The PAL consumes the digest
-    // as-is (wire little-endian) and flips endianness internally if its
-    // primitive is big-endian native.
+    // redundant algorithm selector on the wire. The digest stays in wire
+    // little-endian order when normalized to the signing operand below.
     if ![
         HsmHashAlgo::Sha256,
         HsmHashAlgo::Sha384,
@@ -83,19 +82,20 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
         // The PKA DMA-reads the full curve operand width for the digest
         // (`wire_coord_len` = 32 / 48 / 68), which exceeds the ECDSA digest
-        // width for P-521 (68 vs 64).  The host sends only the exact SHA
-        // digest, so copy it into a zeroed operand-width buffer: the signed
-        // slice is `ecdsa_digest_len`, while the backing buffer covers the
-        // full operand width so the engine's over-read stays in bounds over
-        // zero pad (mirrors the MBOR `EccSign` handler).  A digest longer
-        // than the curve's ECDSA field can't be zero-extended — reject it.
+        // width for P-521 (68 vs 64). ECDSA keeps the most significant bits
+        // of longer digests: the trailing bytes of the wire-LE digest.
+        // Zero-pad shorter digests and the backing operand so the engine's
+        // full-width reads stay in bounds.
         let sign_len = curve.ecdsa_digest_len();
-        let digest_len = req.digest.len();
-        if digest_len > sign_len {
-            return Err(HsmError::InvalidArg);
-        }
+        let digest = req
+            .digest
+            .get(req.digest.len().saturating_sub(sign_len)..)
+            .ok_or(HsmError::InvalidArg)?;
         let operand = pal.dma_alloc_zeroed(io, curve.wire_coord_len())?;
-        operand[..digest_len].copy_from_slice(&req.digest[..digest_len]);
+        operand
+            .get_mut(..digest.len())
+            .ok_or(HsmError::InvalidArg)?
+            .copy_from_slice(digest);
 
         // Reserve the wire-format signature slot (`r ‖ s`, curve-sized) and
         // have the PAL sign straight into it — no scratch, no copy.

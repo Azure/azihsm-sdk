@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-09-16):
-* emu: 97 tests
+Test counts:
+* emu: 186 tests
 * mock: 6 tests
 
 ## Legend
@@ -176,6 +176,129 @@ role's partition PSK still matches the compiled-in default.
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 
+## 'Hash' (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `Hash` command. These tests exercise
+SHA-1, SHA-256, SHA-384, and SHA-512 through `TestCtx::tbor` and validate successful
+responses byte-for-byte against `azihsm_crypto`. Supported discriminants are
+`0` = SHA-1, `1` = SHA-256, `2` = SHA-384, and `3` = SHA-512.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| SHA-1, SHA-256, SHA-384, and SHA-512 match the host implementation for empty, short, and longer messages | ✅ 🔁 | `hash::hash_matches_host_all_algos` | Loops over all four algorithms via `HASH_ALGOS` and varied message sizes |
+| Unsupported hash algorithm is rejected with `InvalidArg` | ✅ | `hash::hash_unknown_algo_rejected` | Uses unsupported discriminant `255` (`u8::MAX`) |
+| Unknown session id is rejected with `SessionNotFound` | ✅ | `hash::hash_invalid_session_id_rejected` | Rotates the CU PSK and closes the bootstrap session before sending `u16::MAX` with no active session |
+| Multiple invalid algorithm discriminants are rejected with `InvalidArg` | ✅ 🔁 | `hash::hash_invalid_algos_rejected` | Rejects unsupported discriminants `4`, `127`, and `255`; `0` is SHA-1 |
+| Arbitrary binary input hashes correctly | ✅ 🔁 | `hash::hash_binary_message_matches_host` | Includes `0x00`, `0x80`, and `0xff` bytes |
+| Different messages produce different digests | ✅ 🔁 | `hash::hash_different_messages_produce_different_digests` | Exercises all four supported algorithms |
+| SHA padding and compression-block boundaries match the host | ✅ 🔁 | `hash::hash_block_boundary_lengths_match_host` | Covers 55/56, 63/64/65, 111/112, and 127/128/129-byte boundaries |
+| Closed session is rejected with `SessionNotFound` | ✅ | `hash::hash_closed_session_rejected` | Hash request is sent after closing the CO session |
+| Same message hashes correctly under each supported algorithm | ✅ 🔁 | `hash::hash_same_message_different_algos` | Also verifies 20/32/48/64-byte digest lengths |
+| One-bit input change produces a different digest | ✅ 🔁 | `hash::hash_one_bit_message_change_changes_digest` | Both results are independently checked against the host |
+| Rotated Crypto-User session may execute Hash | ✅ 🔁 | `hash::hash_crypto_user_session_matches_host` | Exercises SHA-1, SHA-256, SHA-384, and SHA-512 |
+| SHA-1, SHA-256, SHA-384, and SHA-512 known-answer vectors match | ✅ | `hash::hash_known_answer_vectors` | Uses the standard `"abc"` vectors |
+| Crypto-User session using the default PSK is rejected with `DefaultPskMustRotate` | ✅ | `hash::hash_default_psk_cu_rejected` | Verifies the dispatcher default-PSK gate |
+| Repeated identical requests are deterministic | ✅ 🔁 | `hash::hash_same_request_is_deterministic` | Same session, message, and algorithm return identical digests |
+| Full `0x00..=0xff` byte range hashes correctly | ✅ 🔁 | `hash::hash_all_byte_values_matches_host` | Exercises every possible byte value |
+| Rejected invalid-algorithm request does not poison the active session | ✅ 🔁 | `hash::hash_session_usable_after_invalid_algo` | Valid requests succeed after `InvalidArg` |
+| Consecutive messages of different lengths do not retain prior Hash state | ✅ 🔁 | `hash::hash_consecutive_different_length_messages_match_host` | Includes 1, 17, 513, 1000, and 0-byte messages |
+| Switching algorithms on one active session does not leak Hash state | ✅ 🔁 | `hash::hash_alternating_algorithms_match_host` | Switches among all four algorithms using an explicit repeated sequence |
+| Leading, embedded, trailing, and repeated zero bytes are preserved as message data | ✅ 🔁 | `hash::hash_zero_byte_positions_match_host` | Guards against accidental zero-termination/truncation behavior |
+| CO and rotated-CU sessions produce identical digests for identical requests | ✅ 🔁 | `hash::hash_matches_across_co_and_cu_sessions` | Sessions are exercised sequentially because the fixture may not permit concurrent authenticated CO/CU sessions |
+| Invalid-session request does not affect a separate valid session | ✅ 🔁 | `hash::hash_valid_session_usable_after_invalid_session_request` | Rotates and closes the CU bootstrap session before CO setup; `u16::MAX` returns `FileHandleSessionIdDoesNotMatch`, and the active CO session remains usable |
+| Closing a CO session releases it and a subsequently opened CU session can Hash normally | ✅ 🔁 | `hash::hash_new_session_works_after_previous_session_closed` | Also confirms the closed session id is rejected |
+| Maximum 2048-byte Hash message succeeds | ✅ 🔁 | `hash::hash_max_message_length_matches_host` | Exercises the protocol maximum for all four supported algorithms |
+| 2049-byte Hash message is rejected | ✅ 🔁 | `hash::hash_over_max_message_length_rejected` | Exercises all four algorithms; accepts rejection at the TBOR/firmware boundary without pinning where length validation occurs |
+
+
+## `GetCertChainInfo` (opcode out-of-session)
+
+Integration and host-side response-codec coverage for the TBOR
+`GetCertChainInfo` command. The command reports the certificate count
+and leaf-certificate SHA-256 thumbprint for a certificate-chain slot
+without requiring an active session.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Valid slot returns a non-empty certificate chain and a populated SHA-256 thumbprint | ✅ | `get_cert_chain_info::round_trip` | Exercises provisioned slot 0 and verifies `num_certs > 0`, fixed thumbprint length, and non-zero thumbprint data |
+| `TborGetCertChainInfoReq::new` preserves `slot_id` across representative boundary values | ✅ 🔁 | `get_cert_chain_info::request_constructor_preserves_slot_id` | Covers `0`, `1`, `2`, `127`, `254`, and `u8::MAX` |
+| Default request targets slot 0 | ✅ | `get_cert_chain_info::default_request_targets_slot_zero` | Verifies the derived `Default` request value |
+| Default request is equivalent to explicit slot 0 | ✅ | `get_cert_chain_info::default_request_matches_explicit_slot_zero` | Compares complete FW responses |
+| Repeated calls return stable metadata | ✅ | `get_cert_chain_info::repeated_stable` | Two consecutive calls return identical responses |
+| Multiple consecutive calls remain stable | ✅ 🔁 | `get_cert_chain_info::repeated_calls_remain_stable` | Repeats the command several times to detect accidental mutable state |
+| TBOR result matches MBOR `GetCertChainInfo` | ✅ | `get_cert_chain_info::matches_mbor_path` | Cross-checks both `num_certs` and leaf thumbprint against the shared certificate store |
+| Reported `num_certs` defines the valid `GetCert` index range | ✅ 🔁 | `get_cert_chain_info::reported_count_defines_certificate_bounds` | Every advertised certificate is readable; index `num_certs` is rejected with `InvalidArg` |
+| Maximum certificate index is rejected | ✅ | `get_cert_chain_info::maximum_certificate_index_rejected` | `u8::MAX` is outside the valid `0..num_certs` certificate index range |
+| Reading certificates does not mutate chain metadata | ✅ | `get_cert_chain_info::certificate_reads_do_not_change_chain_info` | Compares metadata before and after reading every advertised certificate |
+| Certificate bytes are stable across repeated reads | ✅ 🔁 | `get_cert_chain_info::certificates_are_stable_across_reads` | Reads every advertised certificate twice |
+| Distinct certificate indices do not alias identical certificate bytes | ✅ 🔁 | `get_cert_chain_info::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain |
+| Unsupported slot IDs are rejected with `InvalidArg` | ✅ 🔁 | `get_cert_chain_info::unsupported_slot_boundaries_rejected` | Covers `1`, `2`, `127`, `254`, and `u8::MAX` |
+| First unsupported slot is rejected | ✅ | `get_cert_chain_info::first_unsupported_slot_rejected` | Explicit boundary test for slot 1 |
+| Maximum `slot_id` is rejected | ✅ | `get_cert_chain_info::maximum_slot_id_rejected` | Explicit request-field boundary test for `u8::MAX` |
+| A rejected slot request does not affect valid slot 0 | ✅ | `get_cert_chain_info::invalid_slot_does_not_affect_valid_slot` | Metadata before and after the rejected request must match |
+| Repeated rejected slot requests do not affect valid slot 0 | ✅ 🔁 | `get_cert_chain_info::repeated_invalid_slots_do_not_affect_valid_slot` | Exercises several unsupported IDs before re-reading slot 0 |
+| Out-of-session command remains stable across CO session activity | ✅ | `get_cert_chain_info::stable_across_co_session_activity` | Opens and closes a CO Authenticated session between reads |
+| Out-of-session command remains callable while a CO session is active | ✅ | `get_cert_chain_info::callable_while_co_session_active` | Validates session independence while the CO session remains open |
+| Out-of-session command remains stable across CU session activity | ✅ | `get_cert_chain_info::stable_across_cu_session_activity` | Uses the supported CU PlainText bootstrap session |
+| Out-of-session command remains callable while a CU session is active | ✅ | `get_cert_chain_info::callable_while_cu_session_active` | Uses the supported CU PlainText bootstrap session |
+| Response missing the thumbprint field is rejected as truncated | ✅ | `get_cert_chain_info::truncated_response_rejected` | Expects `DecodeError::MessageTruncated` |
+| Response with maximum TOC entries decodes the known prefix | ✅ | `get_cert_chain_info::max_toc_response_decodes_known_fields` | Verifies forward compatibility with trailing unknown TOC fields |
+| Single unknown trailing response field is ignored | ✅ | `get_cert_chain_info::trailing_unknown_toc_type_is_ignored` | Known `num_certs` and thumbprint fields remain intact |
+| Wrong TOC type for `num_certs` is rejected | ✅ | `get_cert_chain_info::wrong_num_certs_type_rejected` | Encodes `num_certs` as `Uint16`; expects `UnexpectedTocType` |
+| Wrong TOC type for `thumbprint` is rejected | ✅ | `get_cert_chain_info::wrong_thumbprint_type_rejected` | Encodes the thumbprint as `Uint8`; expects `UnexpectedTocType` |
+| Thumbprint buffer shorter than `CERT_THUMBPRINT_LEN` is rejected with `InvalidFixedLength` | ✅ | `get_cert_chain_info::wrong_thumbprint_length_rejected` | Uses a correctly typed `Buffer` with `CERT_THUMBPRINT_LEN - 1` bytes. |
+| Thumbprint buffer longer than `CERT_THUMBPRINT_LEN` is rejected with `InvalidFixedLength` | ✅ | `get_cert_chain_info::oversized_thumbprint_rejected` | Uses a correctly typed `Buffer` with `CERT_THUMBPRINT_LEN + 1` bytes. |
+
+## `GetCertificate` (opcode out-of-session)
+
+Firmware integration coverage for the TBOR `GetCertificate` command. These tests exercise
+certificate retrieval from slot 0, cross-check TBOR against the MBOR certificate path,
+validate invalid slot/index status handling, and verify that the out-of-session command is
+independent of CO/CU session state.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Every certificate index advertised by `GetCertChainInfo` returns non-empty, valid DER/X.509 within `CERT_MAX_LEN` | ✅ 🔁 | `get_cert::all_indices_round_trip` | Iterates over the full advertised chain and verifies DER SEQUENCE encoding and X.509 parsing. |
+| TBOR certificate bytes match the MBOR certificate path at every index | ✅ 🔁 | `get_cert::matches_mbor_path` | Both interfaces read the same underlying certificate store. |
+| Repeated reads of every advertised certificate are stable | ✅ 🔁 | `get_cert::repeated_reads_are_stable` | Reads each certificate twice and compares the full response. |
+| Distinct certificate indices do not alias the same certificate bytes | ✅ 🔁 | `get_cert::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain. |
+| First index beyond the advertised chain and `u8::MAX` are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_indices_rejected` | Covers the immediate boundary and maximum representable certificate id. |
+| Non-zero / unsupported certificate slots are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_slots_rejected` | Covers slots `1`, `2`, `127`, `254`, and `u8::MAX`. |
+| Invalid requests do not alter a valid certificate | ✅ | `get_cert::rejected_requests_do_not_affect_valid_certificate` | Valid certificate is identical before and after invalid slot/index requests. |
+| Out-of-session `GetCertificate` remains callable while a CO Authenticated session is active | ✅ | `get_cert::callable_while_session_active` | Uses shared `common::CO`; active in-session state must not gate the command. |
+| `GetCertChainInfo::num_certs` exactly matches the readable `GetCertificate` boundary | ✅ | `get_cert::chain_info_count_matches_get_certificate_boundary` | Every advertised index succeeds and index `num_certs` is rejected with `InvalidArg`. |
+| Interleaved reads of other certificate indices do not alter certificate 0 | ✅ | `get_cert::interleaved_reads_are_stable` | Exercises non-isolated read ordering. |
+| Certificate reads are stable before, during, and after a CO Authenticated-session lifecycle | ✅ | `get_cert::stable_across_session_lifecycle` | Verifies session open/close does not affect this out-of-session command. |
+| A rejected request does not affect any certificate in the valid chain | ✅ 🔁 | `get_cert::rejected_request_does_not_affect_entire_chain` | Snapshots the entire chain before an invalid request and compares afterward. |
+| Reading certificates does not change `GetCertChainInfo` metadata | ✅ | `get_cert::certificate_reads_do_not_change_chain_info` | Compares chain-info response before and after reading every certificate. |
+| Certificates can be fetched in reverse order | ✅ 🔁 | `get_cert::certificates_can_be_read_in_reverse_order` | Confirms reads do not depend on sequential traversal. |
+| First and last advertised certificate indices are readable | ✅ | `get_cert::first_and_last_valid_indices_succeed` | Explicit lower/upper valid-boundary coverage. |
+| Interleaving MBOR and TBOR reads preserves byte-identical certificate results | ✅ 🔁 | `get_cert::mbor_tbor_interleaved_reads_remain_identical` | TBOR-before, MBOR, and TBOR-after remain consistent for every certificate. |
+| Invalid slot and invalid certificate-index failures preserve the entire valid chain | ✅ | `get_cert::all_reject_classes_preserve_entire_chain` | Covers both rejection classes against a full-chain snapshot. |
+| Out-of-session `GetCertificate` remains callable while a CU PlainText session is active | ✅ | `get_cert::callable_while_cu_session_active` | Uses shared `common::CU`; CU uses the supported `SessionType::PlainText` pairing. |
+| `GetCertificate` remains stable across both supported CO Authenticated and CU PlainText session lifecycles | ✅ | `get_cert::entire_chain_stable_across_co_and_cu_session_lifecycles` | Verifies every advertised certificate before, during, and after each supported role/session pairing. |
+
+## `GetUnwrappingKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `GetUnwrappingKey` command.
+The command returns the partition RSA-2048 unwrapping public key in
+`n_le(256) ‖ e_le(4)` wire format and is available to both Crypto-Officer
+and Crypto-User sessions after the applicable PSK has been rotated.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Happy path returns a well-formed RSA-2048 unwrapping public key | ✅ | `get_unwrapping_key::get_unwrapping_key_returns_rsa_pub_key` | Verifies 260-byte wire length, 2048-bit odd modulus, and exponent 65537 |
+| Repeated calls in the same CO session return the same partition key | ✅ | `get_unwrapping_key::get_unwrapping_key_is_stable` | Confirms the key is stable rather than regenerated per request |
+| Rotated Crypto-User session may fetch the unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_available_to_cu` | Also validates the returned RSA public-key structure |
+| Closed session is rejected with `SessionNotFound` | ✅ | `get_unwrapping_key::get_unwrapping_key_closed_session_rejected` | Request is issued after closing a valid CO session |
+| Unwrapping key remains stable across separate CO sessions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_co_sessions` | Closes and reopens CO under the rotated PSK |
+| CO and CU sessions observe the same partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_same_for_co_and_cu` | Confirms the key is partition-scoped rather than role-scoped |
+| Crypto-User using the default PSK is rejected with `DefaultPskMustRotate` | ✅ | `get_unwrapping_key::get_unwrapping_key_default_cu_psk_rejected` | Exercises the dispatcher default-PSK gate |
+| Unknown session id is rejected with `SessionNotFound` | ✅ | `get_unwrapping_key::get_unwrapping_key_unknown_session_rejected` | Uses `u16::MAX` |
+| Unwrapping key remains stable across separate CU sessions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_cu_sessions` | Reopens CU using the rotated CU PSK |
+| CO PSK rotation does not change the partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_co_psk_rotation` | Reads the key before and after a second CO PSK rotation |
+| CU PSK rotation does not change the partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_cu_psk_rotation` | Reads the key before and after a second CU PSK rotation |
+| Key remains stable across CO → CU → CO role transitions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_role_transitions` | Confirms partition-key identity across role/session transitions |
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
@@ -251,7 +374,35 @@ the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
 | Non-empty error response surfaces FW status before schema decode | ✅ | `fw_error_decode::fields_response_surfaces_fw_status_before_schema_decode` | Mock + emu |
 | `status == 0` with a valid body still decodes the body | ✅ | `fw_error_decode::zero_status_with_valid_body_still_decodes` | Mock + emu |
 | TOC entry of wrong type yields `TborDecodeError::UnexpectedTocType` | ✅ | `unexpected_toc_type::wrong_toc_entry_type_yields_unexpected_toc_type` | Mock + emu |
-| `mach_seed` AAD wire-layout encoder stability | ✅ | `harness::session::part_init::tests::mach_seed_aad_layout` | Unit test; pure host-side |
+| `mach_seed` AAD wire-layout encoder stability | ✅ | `part_init::success_path::mach_seed_aad_layout` | Unit test; pure host-side |
+
+## `HkdfDerive` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `HkdfDerive` command.
+Tests derive masked AES and HMAC keys from ECDH shared secrets using
+SHA-1, SHA-256, SHA-384, and SHA-512. Coverage includes key types,
+scopes, salt/info handling, deterministic derivation, and invalid requests.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| All supported fixed and variable-length AES/HMAC key types derive successfully | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_key_types` | Covers AES-128/192/256, HMAC-SHA256/384/512, and variable-length HMAC outputs |
+| ECDH secrets from all supported curves can be used as HKDF input | ✅ 🔁 | `hkdf_derive::hkdf_derive_accepts_all_ecdh_secret_sizes` | Covers P-256, P-384, and P-521 |
+| All supported hash algorithms and provisioned output scopes succeed | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_hashes_and_scopes` | SHA-1/256/384/512 across Session, Ephemeral, and Local scopes |
+| Empty and non-empty salt/info combinations are accepted | ✅ 🔁 | `hkdf_derive::hkdf_derive_optional_salt_info` | Covers all four combinations using SHA-1 and SHA-256 |
+| Maximum supported salt and info lengths are accepted | ✅ | `hkdf_derive::hkdf_derive_maximum_salt_and_info` | Uses SHA-512 and maximum-length salt/info buffers |
+| Identical inputs derive stable key material; changing salt or info changes the key | ✅ 🔁 | `hkdf_derive::hkdf_derive_is_stable_and_salt_info_separate_outputs` | Covers SHA-1 and SHA-256 using HMAC tags |
+| Unknown hash algorithm → `InvalidArg` | ✅ | `hkdf_derive::hkdf_derive_unknown_hash_rejected` | Uses unsupported discriminant `u8::MAX` |
+| Unknown derived-key type → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_unknown_key_type_rejected` | Uses key type `99` |
+| SecurityDomain output scope → `UnsupportedKeyScope` | ✅ | `hkdf_derive::hkdf_derive_unsupported_scope_rejected` | Requests unsupported SecurityDomain scope |
+| Variable-length HMAC without explicit length → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_missing_length_rejected` | Uses `key_length = 0` |
+| Variable-length HMAC below minimum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_out_of_range_length_rejected` | Uses VarHmac256 with length `16` |
+| Non-ECDH masked key supplied as IKM → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_non_secret_ikm_rejected` | Supplies a masked ECC private key |
+| Tampered masked ECDH secret → `AesGcmDecryptTagDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_tampered_masked_secret_rejected` | Flips one byte in the masked-secret authentication tag |
+| Fixed-size key types ignore the supplied key length | ✅ 🔁 | `hkdf_derive::hkdf_derive_fixed_key_type_key_length_is_ignored` | AES-256 output remains 32 bytes across different `key_length` values |
+| Invalid session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_invalid_session_id_rejected` | Uses `u16::MAX` |
+| Different HKDF hash algorithms produce different derived keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_different_hashes_produce_different_keys` | Pairwise comparison of SHA-1/256/384/512 using HMAC tags |
+| Different ECDH secrets produce different derived keys | ✅ | `hkdf_derive::hkdf_derive_different_ikm_produces_different_keys` | Same SHA-256 HKDF parameters with two independently generated ECDH secrets |
+| Variable-length HMAC above maximum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_above_max_length_rejected` | Uses VarHmac256 with length `65` |
 
 ---
 

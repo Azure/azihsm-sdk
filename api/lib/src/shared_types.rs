@@ -153,11 +153,11 @@ pub enum HsmKeyKind {
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
 pub enum HsmEccCurve {
-    /// NIST P-256 curve (secp256r1), 256-bit security.
+    /// NIST P-256 curve (secp256r1), approximately 128-bit security strength.
     P256 = 1,
-    /// NIST P-384 curve (secp384r1), 384-bit security.
+    /// NIST P-384 curve (secp384r1), approximately 192-bit security strength.
     P384 = 2,
-    /// NIST P-521 curve (secp521r1), 521-bit security.
+    /// NIST P-521 curve (secp521r1), approximately 256-bit security strength.
     P521 = 3,
 }
 
