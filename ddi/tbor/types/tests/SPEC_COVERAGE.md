@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 168 tests
+* emu: 192 tests
 * mock: 6 tests
 
 ## Legend
@@ -375,6 +375,41 @@ the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
 | `status == 0` with a valid body still decodes the body | ✅ | `fw_error_decode::zero_status_with_valid_body_still_decodes` | Mock + emu |
 | TOC entry of wrong type yields `TborDecodeError::UnexpectedTocType` | ✅ | `unexpected_toc_type::wrong_toc_entry_type_yields_unexpected_toc_type` | Mock + emu |
 | `mach_seed` AAD wire-layout encoder stability | ✅ | `part_init::success_path::mach_seed_aad_layout` | Unit test; pure host-side |
+
+## `HkdfDerive` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `HkdfDerive` command.
+Tests derive masked AES and HMAC keys from ECDH shared secrets using
+SHA-1, SHA-256, SHA-384, and SHA-512. Coverage includes key types,
+scopes, salt/info handling, deterministic derivation, and invalid requests.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| All supported fixed and variable-length AES/HMAC key types derive successfully | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_key_types` | Tests all 12 key-type/length cases with SHA-1, SHA-256, SHA-384, and SHA-512 (48 combinations) |
+| ECDH secrets from all supported curves can be used as HKDF input | ✅ 🔁 | `hkdf_derive::hkdf_derive_accepts_all_ecdh_secret_sizes` | Covers P-256, P-384, and P-521 |
+| All supported hash algorithms and provisioned output scopes succeed | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_hashes_and_scopes` | SHA-1/256/384/512 across Session, Ephemeral, and Local scopes |
+| Empty and non-empty salt/info combinations are accepted | ✅ 🔁 | `hkdf_derive::hkdf_derive_optional_salt_info` | Covers all four combinations using SHA-1 and SHA-256 |
+| Maximum supported salt and info lengths are accepted | ✅ | `hkdf_derive::hkdf_derive_maximum_salt_and_info` | Uses SHA-512 and maximum-length salt/info buffers |
+| Identical inputs derive stable key material; changing salt or info changes the key | ✅ 🔁 | `hkdf_derive::hkdf_derive_is_stable_and_salt_info_separate_outputs` | Covers SHA-1 and SHA-256 using HMAC tags |
+| Unknown hash algorithm → `InvalidArg` | ✅ | `hkdf_derive::hkdf_derive_unknown_hash_rejected` | Uses unsupported discriminant `u8::MAX` |
+| Unknown derived-key type → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_unknown_key_type_rejected` | Uses key type `99` |
+| SecurityDomain output scope → `UnsupportedKeyScope` | ✅ | `hkdf_derive::hkdf_derive_unsupported_scope_rejected` | Requests unsupported SecurityDomain scope |
+| Variable-length HMAC without explicit length → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_missing_length_rejected` | Uses `key_length = 0` |
+| Variable-length HMAC below minimum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_out_of_range_length_rejected` | Uses VarHmac256 with length `16` |
+| Non-ECDH masked key supplied as IKM → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_non_secret_ikm_rejected` | Supplies a masked ECC private key |
+| Tampered masked ECDH secret → `AesGcmDecryptTagDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_tampered_masked_secret_rejected` | Flips one byte in the masked-secret authentication tag |
+| Fixed-size key types ignore the supplied key length | ✅ 🔁 | `hkdf_derive::hkdf_derive_fixed_key_type_key_length_is_ignored` | AES-256 output remains 32 bytes across different `key_length` values |
+| Invalid session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_invalid_session_id_rejected` | Uses `u16::MAX` |
+| Different HKDF hash algorithms produce different derived keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_different_hashes_produce_different_keys` | Pairwise comparison of SHA-1/256/384/512 using HMAC tags |
+| Different ECDH secrets produce different derived keys | ✅ | `hkdf_derive::hkdf_derive_different_ikm_produces_different_keys` | Same SHA-256 HKDF parameters with two independently generated ECDH secrets |
+| Variable-length HMAC above maximum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_above_max_length_rejected` | Uses VarHmac256 with length `65` |
+
+| Rotated Crypto-User session may derive HKDF keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_allowed_on_cu_session` | Tests SHA-1/256/384/512 under a rotated CU session after partition finalization |
+| Default CU PSK → `DefaultPskMustRotate` | ✅ | `hkdf_derive::hkdf_derive_default_cu_psk_rejected` | Verifies the dispatcher default-PSK gate for CU |
+| Mismatched CU session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_session_id_rejected` | Uses a rotated CU session and `u16::MAX` |
+| CU can use HKDF-derived HMAC keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_key_usable_for_hmac` | SHA-1/256/384/512; verifies HMAC determinism and message sensitivity |
+| CU derives keys under all provisioned output scopes | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_all_output_scopes` | Tests Session, Ephemeral, and Local scopes across SHA-1/256/384/512 (12 combinations) |
+| Invalid HKDF request does not corrupt the active CU session | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_request_preserves_session` | Invalid hash returns `InvalidArg`; subsequent valid HKDF derivation succeeds |
 
 ---
 
