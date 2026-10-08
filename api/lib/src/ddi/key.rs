@@ -267,7 +267,7 @@ pub(crate) fn generate_key_report(
     report_data: &[u8],
     report: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
-    if report_data.len() > DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
+    if report_data.len() != DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
         return Err(HsmError::InvalidArgument);
     }
 
