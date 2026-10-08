@@ -19,14 +19,15 @@
 //!   the CRT fields (`prime1`, `prime2`, `exponent1`, `exponent2`,
 //!   `coefficient`). Only the CRT operand assembly (and the derived `n1q`/`n2p`
 //!   PKA math) is added in `rsa`; **no change is needed here**.
-//! - **ECC (#604):** add the SEC1 `ECPrivateKey` / PKCS#8 EC `PrivateKeyInfo`
-//!   decoders alongside the RSA ones below, plus a `parse_ec_private_key`
-//!   returning the scalar + curve OID; consumed by `ecc`.
+//! - **ECC:** [`parse_ec_private_key`] → [`DecodedEcKey`]: the curve, the
+//!   scalar, and the SEC1 `[0]` / `[1]` fields; `ecc` checks the public key
+//!   that the key carries and assembles the scalar.
 
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use der::Decode;
 use der::Sequence;
 use der::asn1::AnyRef;
+use der::asn1::BitStringRef;
 use der::asn1::Null;
 use der::asn1::ObjectIdentifier;
 use der::asn1::OctetStringRef;
@@ -132,10 +133,10 @@ struct EcPrivateKeyInfo<'a> {
     private_key: &'a OctetStringRef,
 }
 
-/// SEC1 `ECPrivateKey` (RFC 5915). The optional `[0] parameters` and
-/// `[1] publicKey` context-specific fields are decoded but unused (a
-/// PKCS#8-wrapped key commonly carries the public key), leaving `private_key`
-/// as the raw big-endian scalar `d`.
+/// SEC1 `ECPrivateKey` (RFC 5915), leaving `private_key` as the raw
+/// big-endian scalar `d`. The optional `[0] parameters` and `[1] publicKey`
+/// context-specific fields are decoded for the import's public-key check in
+/// [`ecc`](crate::crypto::ecc).
 #[derive(Sequence)]
 struct EcPrivateKeyAsn1<'a> {
     version: u8,
@@ -143,7 +144,19 @@ struct EcPrivateKeyAsn1<'a> {
     #[asn1(context_specific = "0", optional = "true", tag_mode = "EXPLICIT")]
     parameters: Option<AnyRef<'a>>,
     #[asn1(context_specific = "1", optional = "true", tag_mode = "EXPLICIT")]
-    public_key: Option<AnyRef<'a>>,
+    public_key: Option<BitStringRef<'a>>,
+}
+
+/// A decoded PKCS#8 EC private key. Its slices borrow from the DER.
+pub(crate) struct DecodedEcKey<'a> {
+    /// The curve that the `namedCurve` OID names.
+    pub(crate) curve: HsmEccCurve,
+    /// The raw big-endian private scalar `d`.
+    pub(crate) scalar: &'a [u8],
+    /// Whether the SEC1 key carries `[0] parameters`.
+    pub(crate) has_parameters: bool,
+    /// The SEC1 `[1] publicKey`, if the key carries one.
+    pub(crate) public_key: Option<BitStringRef<'a>>,
 }
 
 /// Maps a `namedCurve` OID to the supported [`HsmEccCurve`].
@@ -160,14 +173,13 @@ fn curve_from_oid(oid: ObjectIdentifier) -> Option<HsmEccCurve> {
 }
 
 /// Decodes a recovered PKCS#8 EC private key (`PrivateKeyInfo` wrapping a SEC1
-/// `ECPrivateKey`) into `(curve, scalar)`, where `scalar` is the raw big-endian
-/// `d` borrowed from `der_bytes`.
+/// `ECPrivateKey`) into a [`DecodedEcKey`] that borrows from `der_bytes`.
 ///
 /// Validates the PKCS#8 version (v1 = 0), the `id-ecPublicKey` algorithm OID,
 /// the `namedCurve` OID (must be a supported curve), and the SEC1 `ECPrivateKey`
 /// version (`ecPrivkeyVer1` = 1). The scalar length / range checks are a PKA
-/// concern and are done by the caller.
-pub(crate) fn parse_ec_private_key(der_bytes: &[u8]) -> Option<(HsmEccCurve, &[u8])> {
+/// concern, and the public-key checks are import policy; the caller does both.
+pub(crate) fn parse_ec_private_key(der_bytes: &[u8]) -> Option<DecodedEcKey<'_>> {
     let pki = EcPrivateKeyInfo::from_der(der_bytes).ok()?;
     if pki.version != 0 || pki.algorithm.algorithm != EC_PUBLIC_KEY {
         return None;
@@ -177,5 +189,10 @@ pub(crate) fn parse_ec_private_key(der_bytes: &[u8]) -> Option<(HsmEccCurve, &[u
     if ec.version != 1 {
         return None;
     }
-    Some((curve, ec.private_key.as_bytes()))
+    Some(DecodedEcKey {
+        curve,
+        scalar: ec.private_key.as_bytes(),
+        has_parameters: ec.parameters.is_some(),
+        public_key: ec.public_key,
+    })
 }
