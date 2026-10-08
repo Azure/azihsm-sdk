@@ -378,6 +378,30 @@ the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
 
 ---
 
+## FIPS 140-3 key assurance (cross-cutting)
+
+FIPS 140-3 key assurance for keys that `UnwrapKey` imports, plus key-generation
+and unwrapping-key round trips, in the `key_assurance` module. Only hardware
+firmware checks an imported ECC key's structure and runs pairwise consistency
+tests (PCTs), so the tests that need either are ignored under `emu`, `mock`,
+and `sock`.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Imported ECC keys work on every curve, for signing and derivation | ✅ | `key_assurance::import_ecc_p256_sign` through `key_assurance::import_ecc_p521_derive` | Six tests; each signs or derives with the imported key |
+| Imported RSA keys work for every size, layout, and usage | ✅ | `key_assurance::import_rsa_2k_plain_sign` through `key_assurance::import_rsa_4k_crt_decrypt` | Twelve tests: 2048, 3072, and 4096 bits, plain and CRT, sign and decrypt |
+| An ECC key whose embedded public key doesn't match is rejected with `KeyStructuralValidationFailed` | ✅ | `key_assurance::reject_ecc_mismatched_q_p256_sign`, `_p384_derive`, `_p521_sign` | Hardware only (`n/a` on emu, mock, and sock) |
+| An ECC key with no embedded public key is rejected with `KeyStructuralValidationFailed` | ✅ | `key_assurance::reject_ecc_missing_q_p256_derive`, `_p384_sign`, `_p521_derive` | Hardware only |
+| An ECC key with a compressed or hybrid point is rejected with `KeyStructuralValidationFailed` | ✅ | `key_assurance::reject_ecc_compressed_q_02_p256`, `reject_ecc_compressed_q_03_p384`, `reject_ecc_hybrid_q_06_p256`, `reject_ecc_hybrid_q_07_p521` | Hardware only |
+| An ECC key with `[0]` curve parameters is rejected with `KeyStructuralValidationFailed` | ✅ | `key_assurance::reject_ecc_params_p256_sign`, `_p384_derive`, `_p521_sign` | Hardware only |
+| An ECC key whose private value is 0 or the curve order is rejected with `InvalidArg` | ✅ | `key_assurance::reject_ecc_d_zero_p256_sign`, `_p384_derive`, `_p521_sign`, and `key_assurance::reject_ecc_d_order_p256_derive`, `_p384_sign`, `_p521_derive` | All platforms |
+| An RSA key with an inconsistent private component is rejected with `PctValidationRsaUnwrapRsaKeyFailed` | ✅ | `key_assurance::reject_rsa_2k_plain_d_sign` and eight more `reject_rsa_*` tests | Hardware only (`n/a` on emu, mock, and sock) |
+| A wrong CRT coefficient is either rejected by the PCT or harmless | ✅ | `key_assurance::rsa_2k_crt_qinv_corrupted` | All platforms |
+| Rejected imports consume no device resources | ✅ | `key_assurance::reject_repeated_then_valid`, `key_assurance::reject_repeated_then_ecc_valid` | Hardware only; 330 RSA-4096 CRT rejections, more than the vault holds, then valid imports |
+| Every malformed import, back to back in one session | 🔁 | `key_assurance::reject_matrix` | Hardware only; ECC 3 curves × 2 usages × 9 variants, RSA 3 sizes × 2 usages × 6 errors |
+| Generated ECC keys work on every curve, for signing and derivation | ✅ | `key_assurance::generate_ecc_p256_sign` through `key_assurance::generate_ecc_p521_derive` | Six tests |
+| The unwrapping key is available and stable | ✅ | `key_assurance::unwrapping_key_available_and_stable` | Waits up to `UNWRAP_KEY_WAIT_SECS` (default 900) for the SP to publish the key |
+
 ## Known gaps (summary)
 
 The rows marked ⚠️ above, consolidated:
