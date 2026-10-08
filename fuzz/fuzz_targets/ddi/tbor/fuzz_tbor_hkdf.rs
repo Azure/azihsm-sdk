@@ -159,6 +159,11 @@ fuzz_target!(|input: FuzzInput| {
     });
 });
 
+// 8 = HEADER_LEN (fw/core/crypto/aead-envelope/src/format.rs); 
+// 12 = GCM_IV_LEN (fw/core/crypto/aead-envelope/src/alg.rs);
+// 192 = TBOR_MASKED_KEY_METADATA_LEN, the AEAD AAD length
+// (api/lib/src/ddi/masked_key.rs);
+// 16 = GCM_TAG_LEN (fw/core/crypto/aead-envelope/src/alg.rs).
 const MASKED_KEY_OVERHEAD: usize = 8 + 12 + 192 + 16;
 
 fn valid_key_length(key_type: u8, key_length: u8) -> bool {

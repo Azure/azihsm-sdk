@@ -111,6 +111,30 @@ impl KeyClass {
         matches!(self, Self::Rsa | Self::RsaCrt | Self::Ecc)
     }
 
+    fn expected_key_kind(self, rsa_key_size: RsaKeySize, curve: EccCurve) -> u8 {
+        match self {
+            Self::Aes => KEY_KIND_AES256,
+            Self::Rsa => match rsa_key_size {
+                RsaKeySize::Rsa2k => KEY_KIND_RSA2K_PRIVATE,
+                RsaKeySize::Rsa3k => KEY_KIND_RSA3K_PRIVATE,
+                RsaKeySize::Rsa4k => KEY_KIND_RSA4K_PRIVATE,
+            },
+            Self::RsaCrt => match rsa_key_size {
+                RsaKeySize::Rsa2k => KEY_KIND_RSA2K_PRIVATE_CRT,
+                RsaKeySize::Rsa3k => KEY_KIND_RSA3K_PRIVATE_CRT,
+                RsaKeySize::Rsa4k => KEY_KIND_RSA4K_PRIVATE_CRT,
+            },
+            Self::Ecc => match curve {
+                EccCurve::P256 => KEY_KIND_ECC256_PRIVATE,
+                EccCurve::P384 => KEY_KIND_ECC384_PRIVATE,
+                EccCurve::P521 => KEY_KIND_ECC521_PRIVATE,
+            },
+            Self::HmacSha256 => KEY_KIND_VAR_LEN_HMAC_SHA256,
+            Self::HmacSha384 => KEY_KIND_VAR_LEN_HMAC_SHA384,
+            Self::HmacSha512 => KEY_KIND_VAR_LEN_HMAC_SHA512,
+        }
+    }
+
     /// Generate host-side key material (DER for RSA / ECC, raw bytes for
     /// AES / HMAC) suitable for this class, to be RSA-AES-wrapped and
     /// imported via `UnwrapKey`.
@@ -330,6 +354,13 @@ fuzz_target!(|input: FuzzInput| {
                     !resp.pub_key.is_empty(),
                     input.key_class.is_asymmetric(),
                     "pub_key presence must match the recovered key's class"
+                );
+                assert_eq!(
+                    resp.key_kind,
+                    input
+                        .key_class
+                        .expected_key_kind(input.rsa_key_size, input.curve),
+                    "returned key kind must match the requested key class and key parameters"
                 );
             }
             (Ok(_), false) => panic!("invalid UnwrapKey request unexpectedly succeeded"),

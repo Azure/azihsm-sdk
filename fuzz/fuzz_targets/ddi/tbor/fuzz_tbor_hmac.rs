@@ -65,14 +65,10 @@ impl HashAlgorithm {
     }
 }
 
-/// Maximum `HmacGenerateKey` `key_label` length accepted by the device
-/// (see [`TborHmacGenerateKeyReq::key_label`]).
-const HMAC_KEY_LABEL_MAX_LEN: usize = 128;
-
 /// Bound a fuzzed key label to the command's documented maximum length
 /// so a valid request never gets rejected purely for an oversized label.
 fn bounded_key_label(label: &[u8]) -> Vec<u8> {
-    let len = label.len() % (HMAC_KEY_LABEL_MAX_LEN + 1);
+    let len = label.len() % (TBOR_KEY_LABEL_MAX_LEN + 1);
     label[..len].to_vec()
 }
 

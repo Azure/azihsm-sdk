@@ -511,8 +511,18 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         POLICY_MAX_KEY_LEN as u16,
         sata.raw_pub(),
     );
+    assert_eq!(
+        info.pid.len(),
+        policy.backup_part_id.len(),
+        "PartInfo PID should have the expected length",
+    );
     policy.backup_part_id.copy_from_slice(&info.pid);
     let mut backup_part_pub = [0u8; POLICY_MAX_KEY_LEN];
+    assert_eq!(
+        info.pid_pub_key.len(),
+        backup_part_pub.len(),
+        "PartInfo PID public key should have the expected length",
+    );
     backup_part_pub.copy_from_slice(&info.pid_pub_key);
     policy.backup_part_pub_key = PolicyPubKey::new(
         PolicyKeyKind::Ecc384,
