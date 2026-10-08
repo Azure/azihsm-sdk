@@ -20,32 +20,21 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::*;
 
+use crate::commands::common::CU;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
-/// `HashAlgo::Sha256` discriminant.
-const HASH_SHA256: u8 = 1;
-/// `HashAlgo::Sha384` discriminant.
-const HASH_SHA384: u8 = 2;
-/// `HashAlgo::Sha512` discriminant.
-const HASH_SHA512: u8 = 3;
-
 /// AEAD-GCM-256 masked-key envelope overhead:
 /// `header(8) ‖ iv(12) ‖ aad(192) ‖ tag(16)` = 228 B around the plaintext.
 const MASK_OVERHEAD: usize = 8 + 12 + 192 + 16;
-
-/// Derive a fresh masked ECDH shared secret (the HKDF IKM) on-device:
-/// generate two P-256 keypairs and ECDH one against the other's public
-/// key, returning the masked secret blob.
-fn fresh_masked_secret(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
-    fresh_masked_secret_for_curve(ctx, session_id, ECC_CURVE_P256)
-}
 
 /// Derive a fresh masked ECDH shared secret on the requested curve.
 fn fresh_masked_secret_for_curve(ctx: &TestCtx, session_id: u16, curve: u8) -> Vec<u8> {
@@ -128,9 +117,14 @@ fn hkdf_derive_all_key_types() {
         (KDF_KEY_TYPE_VAR_HMAC512, 128, 128),
     ];
 
-    for hash in [HASH_ALGO_SHA1, HASH_SHA256, HASH_SHA384, HASH_SHA512] {
+    for hash in [
+        HASH_ALGO_SHA1,
+        HASH_ALGO_SHA256,
+        HASH_ALGO_SHA384,
+        HASH_ALGO_SHA512,
+    ] {
         for &(key_type, key_length, okm_len) in cases {
-            let ikm = fresh_masked_secret(&ctx, session.session_id);
+            let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
             let masked = hkdf(
                 &ctx,
                 session.session_id,
@@ -169,7 +163,7 @@ fn hkdf_derive_accepts_all_ecdh_secret_sizes() {
             &ctx,
             session.session_id,
             SCOPE_LOCAL,
-            HASH_SHA384,
+            HASH_ALGO_SHA384,
             KDF_KEY_TYPE_AES256,
             0,
             ikm,
@@ -195,7 +189,7 @@ fn hkdf_derive_all_hashes_and_scopes() {
         HASH_ALGO_SHA512,
     ] {
         for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
-            let ikm = fresh_masked_secret(&ctx, session.session_id);
+            let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
             let masked = hkdf(
                 &ctx,
                 session.session_id,
@@ -228,7 +222,7 @@ fn hkdf_derive_optional_salt_info() {
             (Vec::new(), b"only-info".to_vec()),
             (b"salt".to_vec(), b"info".to_vec()),
         ] {
-            let ikm = fresh_masked_secret(&ctx, session.session_id);
+            let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
             let masked = hkdf(
                 &ctx,
                 session.session_id,
@@ -251,13 +245,13 @@ fn hkdf_derive_optional_salt_info() {
 fn hkdf_derive_maximum_salt_and_info() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     let masked = hkdf(
         &ctx,
         session.session_id,
         SCOPE_LOCAL,
-        HASH_SHA512,
+        HASH_ALGO_SHA512,
         KDF_KEY_TYPE_HMAC_SHA512,
         0,
         ikm,
@@ -272,9 +266,9 @@ fn hkdf_derive_maximum_salt_and_info() {
 fn hkdf_derive_is_stable_and_salt_info_separate_outputs() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
-    for hash in [HASH_ALGO_SHA1, HASH_SHA256] {
+    for hash in [HASH_ALGO_SHA1, HASH_ALGO_SHA256] {
         let derive = |salt: &[u8], info: &[u8]| {
             hkdf(
                 &ctx,
@@ -323,7 +317,7 @@ fn hkdf_derive_is_stable_and_salt_info_separate_outputs() {
 fn hkdf_derive_unknown_hash_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborHkdfDeriveReq {
@@ -346,7 +340,7 @@ fn hkdf_derive_unknown_hash_rejected() {
 fn hkdf_derive_unknown_key_type_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     // Key-type discriminant `99` is not a supported KDF output type.
     ctx.expect_fw_reject(
@@ -370,13 +364,13 @@ fn hkdf_derive_unknown_key_type_rejected() {
 fn hkdf_derive_unsupported_scope_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_SECURITY_DOMAIN,
-            hash_algo: HASH_SHA384,
+            hash_algo: HASH_ALGO_SHA384,
             key_type: KDF_KEY_TYPE_AES256,
             key_length: 0,
             masked_secret: ikm,
@@ -393,7 +387,7 @@ fn hkdf_derive_unsupported_scope_rejected() {
 fn hkdf_derive_var_hmac_missing_length_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     // A variable-length HMAC output with `key_length = 0` (absent) is
     // rejected as `InvalidKeyType` (the wire sentinel for "var HMAC with no
@@ -419,7 +413,7 @@ fn hkdf_derive_var_hmac_missing_length_rejected() {
 fn hkdf_derive_var_hmac_out_of_range_length_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     // `VarHmac256` accepts 32..=64; `16` is below the minimum.
     ctx.expect_fw_reject(
@@ -477,7 +471,7 @@ fn hkdf_derive_non_secret_ikm_rejected() {
 fn hkdf_derive_tampered_masked_secret_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let mut ikm = fresh_masked_secret(&ctx, session.session_id);
+    let mut ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
     let last = ikm.len() - 1;
     ikm[last] ^= 1;
 
@@ -485,7 +479,7 @@ fn hkdf_derive_tampered_masked_secret_rejected() {
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA384,
+            hash_algo: HASH_ALGO_SHA384,
             key_type: KDF_KEY_TYPE_AES256,
             key_length: 0,
             masked_secret: ikm,
@@ -502,14 +496,14 @@ fn hkdf_derive_tampered_masked_secret_rejected() {
 fn hkdf_derive_fixed_key_type_key_length_is_ignored() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     for key_length in [1, 16, 31, 32, 64, 255] {
         let masked = hkdf(
             &ctx,
             session.session_id,
             SCOPE_LOCAL,
-            HASH_SHA384,
+            HASH_ALGO_SHA384,
             KDF_KEY_TYPE_AES256,
             key_length,
             ikm.clone(),
@@ -530,13 +524,13 @@ fn hkdf_derive_fixed_key_type_key_length_is_ignored() {
 fn hkdf_derive_invalid_session_id_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     ctx.expect_fw_reject(
         &TborHkdfDeriveReq {
             session_id: u16::MAX,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA384,
+            hash_algo: HASH_ALGO_SHA384,
             key_type: KDF_KEY_TYPE_AES256,
             key_length: 0,
             masked_secret: ikm,
@@ -553,7 +547,7 @@ fn hkdf_derive_invalid_session_id_rejected() {
 fn hkdf_derive_different_hashes_produce_different_keys() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     let derive_tag = |hash_algo| {
         let masked_key = hkdf(
@@ -578,9 +572,9 @@ fn hkdf_derive_different_hashes_produce_different_keys() {
     };
 
     let sha1 = derive_tag(HASH_ALGO_SHA1);
-    let sha256 = derive_tag(HASH_SHA256);
-    let sha384 = derive_tag(HASH_SHA384);
-    let sha512 = derive_tag(HASH_SHA512);
+    let sha256 = derive_tag(HASH_ALGO_SHA256);
+    let sha384 = derive_tag(HASH_ALGO_SHA384);
+    let sha512 = derive_tag(HASH_ALGO_SHA512);
 
     assert_ne!(sha1, sha256);
     assert_ne!(sha1, sha384);
@@ -596,15 +590,15 @@ fn hkdf_derive_different_ikm_produces_different_keys() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    let ikm_a = fresh_masked_secret(&ctx, session.session_id);
-    let ikm_b = fresh_masked_secret(&ctx, session.session_id);
+    let ikm_a = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
+    let ikm_b = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     let derive_tag = |ikm| {
         let masked_key = hkdf(
             &ctx,
             session.session_id,
             SCOPE_LOCAL,
-            HASH_SHA256,
+            HASH_ALGO_SHA256,
             KDF_KEY_TYPE_HMAC_SHA256,
             0,
             ikm,
@@ -633,14 +627,14 @@ fn hkdf_derive_different_ikm_produces_different_keys() {
 fn hkdf_derive_var_hmac_above_max_length_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let ikm = fresh_masked_secret(&ctx, session.session_id);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
 
     // VarHmac256 accepts 32..=64.
     ctx.expect_fw_reject(
         &TborHkdfDeriveReq {
             session_id: session.session_id,
             scope: SCOPE_LOCAL,
-            hash_algo: HASH_SHA256,
+            hash_algo: HASH_ALGO_SHA256,
             key_type: KDF_KEY_TYPE_VAR_HMAC256,
             key_length: 65,
             masked_secret: ikm,
@@ -649,5 +643,231 @@ fn hkdf_derive_var_hmac_above_max_length_rejected() {
             key_label: Vec::new(),
         },
         TborStatus::InvalidKeyLength,
+    );
+}
+
+/// Allows a rotated Crypto-User session to derive HKDF keys.
+#[test]
+fn hkdf_derive_allowed_on_cu_session() {
+    let ctx = TestCtx::new();
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close CO session");
+
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
+    for hash in [
+        HASH_ALGO_SHA1,
+        HASH_ALGO_SHA256,
+        HASH_ALGO_SHA384,
+        HASH_ALGO_SHA512,
+    ] {
+        let masked = hkdf(
+            &ctx,
+            session.session_id,
+            SCOPE_SESSION,
+            hash,
+            KDF_KEY_TYPE_AES256,
+            0,
+            ikm.clone(),
+            b"salt".to_vec(),
+            b"info".to_vec(),
+        );
+
+        assert_eq!(
+            masked.len(),
+            MASK_OVERHEAD + 32,
+            "CU HKDF output length mismatch (hash {hash})",
+        );
+    }
+}
+
+/// Rejects HKDF derivation under a default-PSK Crypto-User session.
+#[test]
+fn hkdf_derive_default_cu_psk_rejected() {
+    let ctx = TestCtx::new();
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("open CU session");
+
+    ctx.expect_fw_reject(
+        &TborHkdfDeriveReq {
+            session_id: session.session_id(),
+            scope: SCOPE_SESSION,
+            hash_algo: HASH_ALGO_SHA256,
+            key_type: KDF_KEY_TYPE_AES256,
+            key_length: 0,
+            masked_secret: vec![0u8; MASK_OVERHEAD + 32],
+            salt: Vec::new(),
+            info: Vec::new(),
+            key_label: Vec::new(),
+        },
+        TborStatus::DefaultPskMustRotate,
+    );
+}
+
+/// Rejects HKDF derivation with a mismatched Crypto-User session ID.
+#[test]
+fn hkdf_derive_cu_invalid_session_id_rejected() {
+    let ctx = TestCtx::new();
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close CO session");
+
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
+
+    ctx.expect_fw_reject(
+        &TborHkdfDeriveReq {
+            session_id: u16::MAX,
+            scope: SCOPE_LOCAL,
+            hash_algo: HASH_ALGO_SHA256,
+            key_type: KDF_KEY_TYPE_AES256,
+            key_length: 0,
+            masked_secret: ikm,
+            salt: Vec::new(),
+            info: Vec::new(),
+            key_label: Vec::new(),
+        },
+        TborStatus::FileHandleSessionIdDoesNotMatch,
+    );
+}
+
+/// Verifies a Crypto-User session can use an HKDF-derived HMAC key.
+#[test]
+fn hkdf_derive_cu_key_usable_for_hmac() {
+    let ctx = TestCtx::new();
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close CO session");
+
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
+
+    for hash in [
+        HASH_ALGO_SHA1,
+        HASH_ALGO_SHA256,
+        HASH_ALGO_SHA384,
+        HASH_ALGO_SHA512,
+    ] {
+        let masked_key = hkdf(
+            &ctx,
+            session.session_id,
+            SCOPE_LOCAL,
+            hash,
+            KDF_KEY_TYPE_HMAC_SHA256,
+            0,
+            ikm.clone(),
+            b"salt".to_vec(),
+            b"info".to_vec(),
+        );
+
+        assert_eq!(
+            masked_key.len(),
+            MASK_OVERHEAD + 32,
+            "unexpected CU-derived HMAC key length (hash {hash})",
+        );
+
+        let mac = |msg: &[u8]| {
+            ctx.tbor(&TborHmacReq {
+                session_id: session.session_id,
+                masked_key: masked_key.clone(),
+                msg: msg.to_vec(),
+            })
+            .expect("CU Hmac with HKDF-derived key")
+            .tag
+        };
+
+        let baseline = mac(b"CU HKDF test");
+
+        assert_eq!(
+            baseline,
+            mac(b"CU HKDF test"),
+            "CU HMAC must be deterministic (hash {hash})",
+        );
+
+        assert_ne!(
+            baseline,
+            mac(b"different message"),
+            "CU HMAC must depend on the message (hash {hash})",
+        );
+    }
+}
+
+/// Allows a rotated Crypto-User session to derive keys under all provisioned scopes.
+#[test]
+fn hkdf_derive_cu_all_output_scopes() {
+    let ctx = TestCtx::new();
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close CO session");
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
+    for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+        for hash in [
+            HASH_ALGO_SHA1,
+            HASH_ALGO_SHA256,
+            HASH_ALGO_SHA384,
+            HASH_ALGO_SHA512,
+        ] {
+            let masked = hkdf(
+                &ctx,
+                session.session_id,
+                scope,
+                hash,
+                KDF_KEY_TYPE_AES256,
+                0,
+                ikm.clone(),
+                b"salt".to_vec(),
+                b"info".to_vec(),
+            );
+            assert_eq!(
+                masked.len(),
+                MASK_OVERHEAD + 32,
+                "CU HKDF output length mismatch (scope {scope}, hash {hash})",
+            );
+        }
+    }
+}
+
+/// Verifies a rejected HKDF request does not affect the active Crypto-User session.
+#[test]
+fn hkdf_derive_cu_invalid_request_preserves_session() {
+    let ctx = TestCtx::new();
+    let co_session = finalized_co_session(&ctx);
+    ctx.session_close(co_session.session_id)
+        .expect("close CO session");
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let ikm = fresh_masked_secret_for_curve(&ctx, session.session_id, ECC_CURVE_P256);
+    ctx.expect_fw_reject(
+        &TborHkdfDeriveReq {
+            session_id: session.session_id,
+            scope: SCOPE_LOCAL,
+            hash_algo: u8::MAX,
+            key_type: KDF_KEY_TYPE_AES256,
+            key_length: 0,
+            masked_secret: ikm.clone(),
+            salt: Vec::new(),
+            info: Vec::new(),
+            key_label: Vec::new(),
+        },
+        TborStatus::InvalidArg,
+    );
+    let masked = hkdf(
+        &ctx,
+        session.session_id,
+        SCOPE_LOCAL,
+        HASH_ALGO_SHA256,
+        KDF_KEY_TYPE_AES256,
+        0,
+        ikm,
+        b"salt".to_vec(),
+        b"info".to_vec(),
+    );
+    assert_eq!(
+        masked.len(),
+        MASK_OVERHEAD + 32,
+        "CU session must remain usable after invalid HKDF request",
     );
 }

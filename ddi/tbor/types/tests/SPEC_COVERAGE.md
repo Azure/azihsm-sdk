@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 186 tests
+* emu: 192 tests
 * mock: 6 tests
 
 ## Legend
@@ -403,6 +403,13 @@ scopes, salt/info handling, deterministic derivation, and invalid requests.
 | Different HKDF hash algorithms produce different derived keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_different_hashes_produce_different_keys` | Pairwise comparison of SHA-1/256/384/512 using HMAC tags |
 | Different ECDH secrets produce different derived keys | ✅ | `hkdf_derive::hkdf_derive_different_ikm_produces_different_keys` | Same SHA-256 HKDF parameters with two independently generated ECDH secrets |
 | Variable-length HMAC above maximum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_above_max_length_rejected` | Uses VarHmac256 with length `65` |
+
+| Rotated Crypto-User session may derive HKDF keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_allowed_on_cu_session` | Tests SHA-1/256/384/512 under a rotated CU session after partition finalization |
+| Default CU PSK → `DefaultPskMustRotate` | ✅ | `hkdf_derive::hkdf_derive_default_cu_psk_rejected` | Verifies the dispatcher default-PSK gate for CU |
+| Mismatched CU session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_session_id_rejected` | Uses a rotated CU session and `u16::MAX` |
+| CU can use HKDF-derived HMAC keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_key_usable_for_hmac` | SHA-1/256/384/512; verifies HMAC determinism and message sensitivity |
+| CU derives keys under all provisioned output scopes | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_all_output_scopes` | Tests Session, Ephemeral, and Local scopes across SHA-1/256/384/512 (12 combinations) |
+| Invalid HKDF request does not corrupt the active CU session | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_request_preserves_session` | Invalid hash returns `InvalidArg`; subsequent valid HKDF derivation succeeds |
 
 ---
 
