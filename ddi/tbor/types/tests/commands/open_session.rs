@@ -138,23 +138,30 @@ fn open_session_unsupported_suite_id() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Phase-2 MAC tampering
-// ---------------------------------------------------------------------------
-
+/// Rejects MAC corruption at the beginning, middle, and end of the tag.
 #[test]
 fn session_open_finish_mac_tampered() {
-    let ctx = TestCtx::new();
-    let pending = ctx
-        .session_open_init(CU, SessionType::PlainText)
-        .expect("phase 1 must succeed");
-    let mut mac_fin = build_mac_fin(&pending).expect("build phase-2 mac");
-    mac_fin[0] ^= 0x01;
-    let err = ctx
-        .session_open_finish_with_mac(pending, mac_fin)
-        .expect_err("tampered mac_fin must be rejected by the FW");
-    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
-    // FW destroys the pending slot on MAC mismatch.
+    let base = TestCtx::new();
+    let path = base.path().to_owned();
+
+    for index in [0usize, 24, 47] {
+        let ctx = TestCtx::new_with_path(&path);
+
+        let pending = ctx
+            .session_open_init(CU, SessionType::PlainText)
+            .unwrap_or_else(|e| panic!("phase 1 must succeed for MAC tamper index {index}: {e:?}"));
+
+        let mut mac_fin = build_mac_fin(&pending)
+            .unwrap_or_else(|e| panic!("build MAC for index {index}: {e:?}"));
+
+        mac_fin[index] ^= 0x01;
+
+        let err = ctx
+            .session_open_finish_with_mac(pending, mac_fin)
+            .expect_err(&format!("tampered MAC at index {index} must be rejected"));
+
+        assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -783,4 +790,279 @@ fn open_session_multi_threaded_all_should_open() {
         unique_wins, CU_SESSION_LIMIT,
         "concurrent winners must have distinct session ids: {winner_ids:?}",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Rejected Phase-1 requests must not poison the fd
+// ---------------------------------------------------------------------------
+
+/// A rejected role/type pairing must leave the fd usable for a valid session.
+#[test]
+fn rejected_role_type_does_not_poison_fd() {
+    let ctx = TestCtx::new();
+
+    let err = ctx
+        .session_open_init(CU, SessionType::Authenticated)
+        .expect_err("CU + Authenticated must be rejected");
+    assert_fw_rejects(&err, TborStatus::InvalidSessionType);
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("valid session must succeed after rejected Phase-1");
+
+    session
+        .close()
+        .expect("session close after recovery must succeed");
+}
+
+/// An unsupported suite must not consume the fd or a firmware session slot.
+#[test]
+fn rejected_suite_does_not_consume_session_slot() {
+    let ctx = TestCtx::new();
+
+    let req = TborSessionOpenInitReq {
+        psk_id: CU,
+        session_type: SessionType::PlainText.to_u8(),
+        suite_id: 0xff,
+        pk_init: [0x04u8; PK_INIT_LEN],
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::UnsupportedSessionSuite);
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("valid session must succeed after unsupported suite");
+
+    session
+        .close()
+        .expect("session close after recovery must succeed");
+}
+
+/// An invalid public key must not leave stale pending-session state behind.
+#[test]
+fn rejected_pk_init_does_not_consume_session_slot() {
+    let ctx = TestCtx::new();
+
+    let req = TborSessionOpenInitReq {
+        psk_id: CU,
+        session_type: SessionType::PlainText.to_u8(),
+        suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
+        pk_init: [0u8; PK_INIT_LEN],
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("valid session must succeed after invalid pk_init");
+
+    session
+        .close()
+        .expect("session close after recovery must succeed");
+}
+
+// ---------------------------------------------------------------------------
+// Pending-session state
+// ---------------------------------------------------------------------------
+
+/// A Phase-1 pending session must count toward the per-fd session limit.
+#[test]
+fn pending_session_blocks_second_open_on_same_fd() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("first Phase-1 must succeed");
+
+    let err = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect_err("second Phase-1 on the same fd must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
+
+    let handshake = ctx
+        .session_open_finish(pending)
+        .expect("original pending session must still finish successfully");
+
+    ctx.session_close(handshake.session_id)
+        .expect("finished session must close successfully");
+}
+
+/// A MAC-authentication failure must reclaim the FW pending-session slot.
+///
+/// The original fd may remain session-bound after a failed Phase-2, so use
+/// fresh fds to exhaust all CU capacity and prove that no pending slot leaked.
+#[test]
+fn failed_finish_mac_reclaims_session_state() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("Phase-1 must succeed");
+
+    let session_id = pending.session_id;
+
+    let mut mac_fin = build_mac_fin(&pending).expect("build Phase-2 mac");
+    mac_fin[0] ^= 0x01;
+
+    let err = ctx
+        .session_open_finish_with_mac(pending, mac_fin)
+        .expect_err("tampered mac_fin must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+
+    // Confirm the failed authentication destroyed the FW pending slot.
+    let replay = TborSessionOpenFinishReq {
+        session_id,
+        mac_fin: [0u8; 48],
+        seed_envelope: [0u8; SEED_ENVELOPE_LEN],
+    };
+
+    let err = ctx
+        .tbor(&replay)
+        .expect_err("failed authentication must destroy the pending slot");
+
+    assert_fw_rejects(&err, TborStatus::SessionNotFound);
+
+    // The original fd may remain session-bound after failed Phase-2.
+    // Open the full CU capacity on fresh fds. If the failed pending slot
+    // leaked, only CU_SESSION_LIMIT - 1 of these opens would succeed.
+    let path = ctx.path().to_owned();
+
+    let recovery_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(&path))
+        .collect();
+
+    let _recovery_guards: Vec<_> = recovery_ctxs
+        .iter()
+        .enumerate()
+        .map(|(index, recovery_ctx)| {
+            recovery_ctx
+                .open_session(CU, SessionType::PlainText)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "CU recovery session {index} of {CU_SESSION_LIMIT} must succeed \
+                         after failed Phase-2 reclaimed its pending slot: {e:?}"
+                    )
+                })
+        })
+        .collect();
+}
+
+/// A valid MAC generated for session A must not authenticate session B.
+#[test]
+fn session_open_finish_rejects_mac_from_another_session() {
+    let ctx_a = TestCtx::new();
+
+    let pending_a = ctx_a
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 for session A must succeed");
+
+    let ctx_b = TestCtx::new_with_path(ctx_a.path());
+
+    let pending_b = ctx_b
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 for session B must succeed");
+
+    assert_ne!(
+        pending_a.session_id, pending_b.session_id,
+        "pending sessions must have distinct ids",
+    );
+
+    let mac_a = build_mac_fin(&pending_a).expect("build MAC for session A");
+
+    let err = ctx_b
+        .session_open_finish_with_mac(pending_b, mac_a)
+        .expect_err("session A's MAC must not authenticate session B");
+
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+
+    // Failure against B must not damage A.
+    let mac_a = build_mac_fin(&pending_a).expect("rebuild MAC for session A");
+
+    let handshake_a = ctx_a
+        .session_open_finish_with_mac(pending_a, mac_a)
+        .expect("session A must remain finishable");
+
+    ctx_a
+        .session_close(handshake_a.session_id)
+        .expect("session A must close successfully");
+}
+
+/// Rejecting an unknown session id must not damage another pending session.
+#[test]
+fn unknown_finish_does_not_destroy_pending_session() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 must succeed");
+
+    let mac_fin = build_mac_fin(&pending).expect("build valid phase-2 MAC");
+
+    let unknown = TborSessionOpenFinishReq {
+        session_id: 0xFFFF,
+        mac_fin: [0u8; 48],
+        seed_envelope: [0u8; SEED_ENVELOPE_LEN],
+    };
+
+    let err = ctx
+        .tbor(&unknown)
+        .expect_err("unknown session id must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionIdDoesNotMatch);
+
+    let handshake = ctx
+        .session_open_finish_with_mac(pending, mac_fin)
+        .expect("valid pending session must remain finishable");
+
+    ctx.session_close(handshake.session_id)
+        .expect("session must close successfully");
+}
+
+/// Repeated MAC-key derivation from one handshake must be deterministic.
+#[test]
+fn authenticated_session_mac_key_derivation_is_stable() {
+    let ctx = TestCtx::new();
+
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("CO authenticated session must succeed");
+
+    let h = session.handshake();
+
+    let tx_first = h.derive_mac_tx_key().expect("derive first TX key");
+    let tx_second = h.derive_mac_tx_key().expect("derive second TX key");
+
+    let rx_first = h.derive_mac_rx_key().expect("derive first RX key");
+    let rx_second = h.derive_mac_rx_key().expect("derive second RX key");
+
+    assert_eq!(tx_first, tx_second, "TX derivation must be stable");
+    assert_eq!(rx_first, rx_second, "RX derivation must be stable");
+    assert_ne!(tx_first, rx_first, "TX and RX keys must remain distinct");
+}
+
+/// Failed Phase-2 authentication does not make the original fd reusable.
+#[test]
+fn failed_finish_mac_keeps_original_fd_session_bound() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("Phase-1 must succeed");
+
+    let mut mac_fin = build_mac_fin(&pending).expect("build Phase-2 mac");
+    mac_fin[0] ^= 0x01;
+
+    let err = ctx
+        .session_open_finish_with_mac(pending, mac_fin)
+        .expect_err("tampered mac_fin must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+
+    let err = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect_err("original fd must remain session-bound");
+
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
 }
