@@ -557,6 +557,93 @@ mod round_trips {
         Ok(())
     }
 
+    /// Session keys through the real keygen/import paths: `azihsm.session:true`
+    /// with no `azihsm.masked_key` (a session key's blob would only unmask
+    /// within the creating HSM session). Generates an EC P-384 key and imports
+    /// a software RSA key; each must carry the HSM session flag and sign
+    /// through the engine, verifying in software.
+    #[cfg(feature = "mock")]
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_session_keys(data: EngineData, dir: &Path) -> EngineResult<()> {
+        use openssl::rsa::Rsa;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+        let verify = |pub_der: &[u8], md: MessageDigest, msg: &[u8], sig: &[u8]| {
+            let pubkey = PKey::public_key_from_der(pub_der).unwrap();
+            let mut verifier = Verifier::new(md, &pubkey).unwrap();
+            verifier.update(msg).unwrap();
+            verifier.verify(sig).unwrap()
+        };
+
+        // EC: session keygen, no blob.
+        let ec_raw = try_armed_keygen(engine_raw, "P-384", None, &[("azihsm.session", "true")])
+            .map_err(|e| EngineError::Other(format!("EC session keygen failed: {e}")))?;
+        // SAFETY: ec_raw is the owning EVP_PKEY from keygen; the HSM key its
+        // EC_KEY carries is retained by the engine data while the key lives.
+        let ec_session = unsafe {
+            let hsm = crate::keyload::ec_key_hsm_key(ffi::EVP_PKEY_get0_EC_KEY(ec_raw));
+            !hsm.is_null() && (*hsm).is_session()
+        };
+        assert!(ec_session, "generated EC key must be an HSM session key");
+        let msg = b"engine session key signing";
+        // SAFETY: EVP_sha384 returns a process-lifetime constant.
+        let sig = evp_digest_sign(ec_raw, msg, unsafe { ffi::EVP_sha384() });
+        // SAFETY: ec_raw is the owning EVP_PKEY from keygen.
+        let ec_key: PKey<Public> = unsafe { PKey::from_ptr(ec_raw.cast()) };
+        let ec_pub = ec_key
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode EC session pub", e))?;
+        assert!(
+            verify(&ec_pub, MessageDigest::sha384(), msg, &sig),
+            "EC session key signature must verify"
+        );
+
+        // RSA: session import, no blob.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+        let input_der = sw_pkey
+            .private_key_to_pkcs8()
+            .map_err(|e| EngineError::wrap("encode pkcs8", e))?;
+        let rsa_pub = sw_pkey
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode sw pub", e))?;
+        let input_path = dir.join(format!("rsa-session-in-{}.der", std::process::id()));
+        let _input_guard = TempFile(input_path.clone());
+        write_key_material(&input_path, &input_der)
+            .map_err(|e| EngineError::wrap("write input der", e))?;
+        let rsa_raw = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "2048"),
+                ("azihsm.input_key", input_path.to_str().unwrap()),
+                ("azihsm.session", "true"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("RSA session import failed: {e}")))?;
+        let hsm = crate::rsasign::hsm_key_from_pkey(rsa_raw);
+        // SAFETY: the imported key's HSM handle is retained by the engine data
+        // while rsa_raw lives.
+        let rsa_session = !hsm.is_null() && unsafe { (*hsm).is_session() };
+        assert!(rsa_session, "imported RSA key must be an HSM session key");
+        // SAFETY: EVP_sha256 returns a process-lifetime constant.
+        let sig = evp_digest_sign(rsa_raw, msg, unsafe { ffi::EVP_sha256() });
+        assert!(
+            verify(&rsa_pub, MessageDigest::sha256(), msg, &sig),
+            "RSA session key signature must verify"
+        );
+
+        // SAFETY: rsa_raw is the owning EVP_PKEY from the import.
+        unsafe { ffi::EVP_PKEY_free(rsa_raw) };
+        drop(ec_key);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        Ok(())
+    }
+
     /// Import a software RSA key into the HSM, then sign a digest through the
     /// engine (HSM PKCS#1 v1.5 via `EVP_DigestSign`, routed to our RSA_METHOD
     /// sign slot) and verify the signature against the public half in software.
@@ -1069,7 +1156,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             "P-384",
-            &agree_blob,
+            Some(&agree_blob),
             &[("azihsm.key_usage", "keyAgreement")],
         )
         .map_err(|e| EngineError::Other(format!("keyAgreement keygen failed: {e}")))?;
@@ -1399,7 +1486,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             curve,
-            &blob_path,
+            Some(&blob_path),
             &[
                 ("azihsm.session", "false"),
                 ("azihsm.key_usage", "keyAgreement"),
@@ -1529,17 +1616,17 @@ mod round_trips {
     pub(super) fn try_armed_keygen(
         engine_raw: *mut ffi::ENGINE,
         curve: &str,
-        blob: &Path,
+        blob: Option<&Path>,
         extra: &[(&str, &str)],
     ) -> Result<*mut ffi::EVP_PKEY, String> {
         use std::ffi::CString;
         use std::ffi::c_int;
 
         let cstr = |s: &str| CString::new(s).unwrap();
-        let mut opts = vec![
-            (cstr("ec_paramgen_curve"), cstr(curve)),
-            (cstr("azihsm.masked_key"), cstr(blob.to_str().unwrap())),
-        ];
+        let mut opts = vec![(cstr("ec_paramgen_curve"), cstr(curve))];
+        if let Some(blob) = blob {
+            opts.push((cstr("azihsm.masked_key"), cstr(blob.to_str().unwrap())));
+        }
         opts.extend(extra.iter().map(|(k, v)| (cstr(k), cstr(v))));
 
         // SAFETY: standard EVP_PKEY keygen sequence against our engine; every
@@ -1601,7 +1688,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             curve,
-            &blob_path,
+            Some(&blob_path),
             &[
                 ("azihsm.session", "false"),
                 ("azihsm.key_usage", "digitalSignature"),
@@ -2163,41 +2250,19 @@ mod mock {
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
 
-    // The provider-parity options accept only their implemented values:
-    // session keys and keyAgreement usage must fail keygen with a clear
-    // "not yet supported" error (never mint an unusable key silently).
+    // `azihsm.session:true` generates an EC key and imports an RSA key as HSM
+    // session keys without a masked blob (see round_trips::run_session_keys).
     #[test]
     #[serial]
-    #[allow(unsafe_code)]
-    fn keygen_rejects_unsupported_option_values() {
-        let scratch = Scratch::new("keygen-opts");
+    fn session_keys_via_pkey_methods() {
+        let scratch = Scratch::new("session-keys");
         let data = EngineData::new();
         data.open_hsm_with(
             caller_settings(&scratch),
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
-
-        let blob = scratch.0.join("opts.bin");
-        let err = round_trips::try_armed_keygen(
-            engine_raw,
-            "P-384",
-            &blob,
-            &[("azihsm.session", "true")],
-        )
-        .expect_err("azihsm.session:true must fail keygen");
-        assert!(
-            err.contains("not yet supported") && err.contains("session keys"),
-            "missing clear error for azihsm.session:true: {err}"
-        );
-        assert!(!blob.exists(), "no blob may be written on failure");
-
-        let slot = crate::engine_impl::engine_data_slot().unwrap();
-        let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
-        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
-        unsafe { ffi::ENGINE_free(engine_raw) };
+        round_trips::run_session_keys(data, &scratch.0).unwrap();
     }
 
     // A curve the HSM does not implement must fail keygen cleanly (the armed
@@ -2216,7 +2281,7 @@ mod mock {
         let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
 
         let blob = scratch.0.join("bad_curve.bin");
-        let err = round_trips::try_armed_keygen(engine_raw, "secp256k1", &blob, &[])
+        let err = round_trips::try_armed_keygen(engine_raw, "secp256k1", Some(&blob), &[])
             .expect_err("keygen with an unsupported curve must fail");
         assert!(
             err.contains("unsupported curve"),

@@ -23,9 +23,11 @@ use std::process::Command;
 use azihsm_ossl_engine_sys as ffi;
 use openssl::ec::EcGroup;
 use openssl::ec::EcKey;
+use openssl::encrypt::Encrypter;
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::PKey;
+use openssl::pkey::Private;
 use openssl::rsa::Padding;
 use openssl::rsa::Rsa;
 use openssl::sign::RsaPssSaltlen;
@@ -867,6 +869,263 @@ fn sign_rsa_key_via_engine_capi() {
     // SAFETY: raw is the owning EVP_PKEY from ENGINE_load_private_key; e is ours.
     unsafe {
         ffi::EVP_PKEY_free(raw);
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Generate or import a key through `EVP_PKEY_CTX_new_id(nid, e)` +
+/// `-pkeyopt`-equivalent control strings + `EVP_PKEY_keygen`, binding the
+/// returned key to `e` (`EVP_PKEY_set1_engine`) so NULL-engine contexts built
+/// on it resolve to the engine's `EVP_PKEY_METHOD`. Returns the owning key.
+#[allow(unsafe_code)]
+fn capi_keygen(
+    e: *mut ffi::ENGINE,
+    nid: std::ffi::c_int,
+    opts: &[(&str, &str)],
+) -> *mut ffi::EVP_PKEY {
+    let cstr = |s: &str| CString::new(s).unwrap();
+    // SAFETY: standard EVP_PKEY keygen sequence on the engine handle; every
+    // return code is checked and the ctx is freed.
+    unsafe {
+        let ctx = ffi::EVP_PKEY_CTX_new_id(nid, e);
+        assert!(!ctx.is_null(), "EVP_PKEY_CTX_new_id({nid}, engine)");
+        assert_eq!(ffi::EVP_PKEY_keygen_init(ctx), 1, "EVP_PKEY_keygen_init");
+        for (k, v) in opts {
+            let key = cstr(k);
+            let value = cstr(v);
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(ctx, key.as_ptr(), value.as_ptr()),
+                1,
+                "keygen option {k}"
+            );
+        }
+        let mut pkey = std::ptr::null_mut();
+        assert_eq!(
+            ffi::EVP_PKEY_keygen(ctx, &mut pkey),
+            1,
+            "EVP_PKEY_keygen: {}",
+            openssl::error::ErrorStack::get()
+        );
+        ffi::EVP_PKEY_CTX_free(ctx);
+        assert!(!pkey.is_null(), "keygen returned a NULL EVP_PKEY");
+        assert_eq!(
+            ffi::EVP_PKEY_set1_engine(pkey, e),
+            1,
+            "EVP_PKEY_set1_engine"
+        );
+        pkey
+    }
+}
+
+/// Software RSA-2048 fixture: its unencrypted PKCS#8 DER written to `path`
+/// (an `azihsm.input_key`), returning the key for software verify/encrypt.
+fn sw_rsa_input(path: &std::path::Path) -> PKey<Private> {
+    let sw = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    write_secret(path, &sw.private_key_to_pkcs8().unwrap());
+    sw
+}
+
+/// Software RSA encrypt of `msg` with `pubkey`: OAEP (SHA-256 OAEP and MGF1)
+/// or PKCS#1 v1.5.
+fn sw_rsa_encrypt(pubkey: &PKey<Private>, msg: &[u8], oaep: bool) -> Vec<u8> {
+    let mut enc = Encrypter::new(pubkey).unwrap();
+    if oaep {
+        enc.set_rsa_padding(Padding::PKCS1_OAEP).unwrap();
+        enc.set_rsa_oaep_md(MessageDigest::sha256()).unwrap();
+        enc.set_rsa_mgf1_md(MessageDigest::sha256()).unwrap();
+    } else {
+        enc.set_rsa_padding(Padding::PKCS1).unwrap();
+    }
+    let mut ct = vec![0u8; enc.encrypt_len(msg).unwrap()];
+    let n = enc.encrypt(msg, &mut ct).unwrap();
+    ct.truncate(n);
+    ct
+}
+
+/// Decrypt `ct` through an engine-bound HSM RSA key via `EVP_PKEY_decrypt` on a
+/// NULL-engine ctx (resolving to the engine's RSA `EVP_PKEY_METHOD` decrypt
+/// override): OAEP with SHA-256 OAEP/MGF1, or PKCS#1 v1.5. `None` if the
+/// decrypt fails.
+#[allow(unsafe_code)]
+fn capi_rsa_decrypt(pkey: *mut ffi::EVP_PKEY, ct: &[u8], oaep: bool) -> Option<Vec<u8>> {
+    let opts: &[(&str, &str)] = if oaep {
+        &[
+            ("rsa_padding_mode", "oaep"),
+            ("rsa_oaep_md", "sha256"),
+            ("rsa_mgf1_md", "sha256"),
+        ]
+    } else {
+        &[("rsa_padding_mode", "pkcs1")]
+    };
+    // SAFETY: EVP_PKEY_decrypt sequence; every setup return code is checked
+    // and the ctx is freed on all paths.
+    unsafe {
+        let ctx = ffi::EVP_PKEY_CTX_new(pkey, std::ptr::null_mut());
+        assert!(!ctx.is_null(), "EVP_PKEY_CTX_new");
+        assert_eq!(ffi::EVP_PKEY_decrypt_init(ctx), 1, "EVP_PKEY_decrypt_init");
+        for (k, v) in opts {
+            let key = CString::new(*k).unwrap();
+            let value = CString::new(*v).unwrap();
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(ctx, key.as_ptr(), value.as_ptr()),
+                1,
+                "decrypt option {k}"
+            );
+        }
+        let mut outlen: usize = 0;
+        let mut out = Vec::new();
+        let mut rc = ffi::EVP_PKEY_decrypt(
+            ctx,
+            std::ptr::null_mut(),
+            &mut outlen,
+            ct.as_ptr(),
+            ct.len(),
+        );
+        if rc == 1 {
+            out.resize(outlen, 0);
+            rc = ffi::EVP_PKEY_decrypt(ctx, out.as_mut_ptr(), &mut outlen, ct.as_ptr(), ct.len());
+        }
+        ffi::EVP_PKEY_CTX_free(ctx);
+        (rc == 1).then(|| {
+            out.truncate(outlen);
+            out
+        })
+    }
+}
+
+/// RSA decrypt over the real C ABI: import a software RSA key with
+/// `keyEncipherment` usage (writing the masked blob), load it back through
+/// `ENGINE_load_private_key`, and decrypt software-encrypted OAEP and PKCS#1
+/// v1.5 ciphertexts with it on the HSM. A tampered OAEP ciphertext must fail.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn decrypt_rsa_key_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let dir = setup_keymat();
+    let input_path = dir.join("rsa_dec_input.der");
+    let sw = sw_rsa_input(&input_path);
+    let blob = dir.join("rsa_dec_key.bin");
+
+    let e = open_dynamic_engine(&engine_so);
+    let imported = capi_keygen(
+        e,
+        ffi::EVP_PKEY_RSA as std::ffi::c_int,
+        &[
+            ("rsa_keygen_bits", "2048"),
+            ("azihsm.input_key", input_path.to_str().unwrap()),
+            ("azihsm.masked_key", blob.to_str().unwrap()),
+            ("azihsm.key_usage", "keyEncipherment"),
+        ],
+    );
+    // SAFETY: imported is the owning key from capi_keygen; only the blob is
+    // needed from here on.
+    unsafe { ffi::EVP_PKEY_free(imported) };
+    assert!(
+        blob.is_file() && std::fs::metadata(&blob).unwrap().len() > 0,
+        "masked blob not written"
+    );
+
+    let uri = CString::new(format!("azihsm://{};type=rsa", blob.display())).unwrap();
+    // SAFETY: e is the initialized engine; uri is a valid NUL-terminated string.
+    let raw = unsafe {
+        ffi::ENGINE_load_private_key(e, uri.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    assert!(!raw.is_null(), "ENGINE_load_private_key returned NULL");
+    // SAFETY: raw is a valid EVP_PKEY; e is the initialized engine.
+    assert_eq!(unsafe { ffi::EVP_PKEY_set1_engine(raw, e) }, 1);
+
+    let msg = b"engine rsa decryption over the capi path";
+    for oaep in [true, false] {
+        let ct = sw_rsa_encrypt(&sw, msg, oaep);
+        let pt = capi_rsa_decrypt(raw, &ct, oaep).expect("HSM decrypt failed");
+        assert_eq!(pt, msg, "decrypted plaintext mismatch (oaep={oaep})");
+    }
+    let mut bad = sw_rsa_encrypt(&sw, msg, true);
+    bad[0] ^= 0xff;
+    assert!(
+        capi_rsa_decrypt(raw, &bad, true).is_none(),
+        "tampered ciphertext unexpectedly decrypted"
+    );
+
+    // SAFETY: raw is the owning EVP_PKEY from ENGINE_load_private_key; e is ours.
+    unsafe {
+        ffi::EVP_PKEY_free(raw);
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Session keys over the real C ABI (`azihsm.session:true`, no
+/// `azihsm.masked_key`: a session key's blob would only unmask within the
+/// creating HSM session, so the keys are used in-process): an EC P-384 keygen
+/// and an RSA import (digitalSignature) sign, verifying in software, and an RSA
+/// import with keyEncipherment decrypts.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn session_keys_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let dir = setup_keymat();
+    let e = open_dynamic_engine(&engine_so);
+    let msg = b"engine session keys over the capi path";
+
+    let ec = capi_keygen(
+        e,
+        ffi::EVP_PKEY_EC as std::ffi::c_int,
+        &[("ec_paramgen_curve", "P-384"), ("azihsm.session", "true")],
+    );
+    let sig = evp_digest_sign_sha384(ec, msg);
+    assert_eq!(
+        evp_digest_verify_sha384(ec, msg, &sig),
+        1,
+        "EC session key signature must verify"
+    );
+
+    let sign_input = dir.join("rsa_session_sign.der");
+    let sw_sign = sw_rsa_input(&sign_input);
+    let pub_der = sw_sign.public_key_to_der().unwrap();
+    let rsa_sign = capi_keygen(
+        e,
+        ffi::EVP_PKEY_RSA as std::ffi::c_int,
+        &[
+            ("rsa_keygen_bits", "2048"),
+            ("azihsm.input_key", sign_input.to_str().unwrap()),
+            ("azihsm.session", "true"),
+        ],
+    );
+    for pss in [false, true] {
+        let sig = capi_rsa_digest_sign(rsa_sign, msg, pss);
+        assert!(
+            sw_rsa_verify(&pub_der, msg, &sig, pss),
+            "RSA session key signature must verify (pss={pss})"
+        );
+    }
+
+    let dec_input = dir.join("rsa_session_dec.der");
+    let sw_dec = sw_rsa_input(&dec_input);
+    let rsa_dec = capi_keygen(
+        e,
+        ffi::EVP_PKEY_RSA as std::ffi::c_int,
+        &[
+            ("rsa_keygen_bits", "2048"),
+            ("azihsm.input_key", dec_input.to_str().unwrap()),
+            ("azihsm.key_usage", "keyEncipherment"),
+            ("azihsm.session", "true"),
+        ],
+    );
+    let ct = sw_rsa_encrypt(&sw_dec, msg, true);
+    let pt = capi_rsa_decrypt(rsa_dec, &ct, true).expect("HSM decrypt failed");
+    assert_eq!(pt, msg, "RSA session key decrypted plaintext mismatch");
+
+    // SAFETY: each key is the owning EVP_PKEY from capi_keygen; e is ours.
+    unsafe {
+        ffi::EVP_PKEY_free(ec);
+        ffi::EVP_PKEY_free(rsa_sign);
+        ffi::EVP_PKEY_free(rsa_dec);
         ffi::ENGINE_finish(e);
         ffi::ENGINE_free(e);
     }
