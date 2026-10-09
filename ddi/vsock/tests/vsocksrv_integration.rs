@@ -307,12 +307,23 @@ fn bridge_connection(mut ch: UnixStream, ddi: RawVsockStream) -> io::Result<()> 
     Ok(())
 }
 
-/// Spawns a background thread that accepts exactly one `vsocksrv`
-/// connection on `endpoints.ch`, connects a real `AF_VSOCK` client to
+/// Spawns a background thread that repeatedly accepts `vsocksrv`
+/// connections on `endpoints.ch`, connects a real `AF_VSOCK` client to
 /// `endpoints.vsock_port` (retrying until `DdiVsock::open_dev`'s listener
 /// is up, or until loopback itself proves unavailable), and bridges them
-/// together. Returns `Ok(None)` if loopback is unavailable rather than
-/// spawning anything.
+/// together, for as long as the process lives. Returns `Ok(None)` if
+/// loopback is unavailable rather than spawning anything.
+///
+/// Looping (rather than accepting exactly once) matters because
+/// `vsocksrv` reconnects automatically whenever its current connection
+/// drops (see `tools/vsocksrv/src/unix.rs`'s "HSM client disconnected;
+/// reconnecting"), which is exactly what happens when a test calls
+/// [`DdiDev::erase`]: that tears down the bridged connection, and
+/// `vsocksrv` immediately tries to re-establish a new one through this
+/// same listener. If the listener only accepted once, it would already
+/// be closed by then, leaving `vsocksrv` stuck retrying a connection
+/// that can never succeed, and `erase()` waiting on a replacement
+/// connection that this bridge can no longer forward.
 ///
 /// Must be called (and must return `Some`) before the caller's own
 /// `DdiVsock::open_dev` call, so the probe connection this performs is
@@ -339,14 +350,23 @@ fn spawn_bridge(endpoints: &mut TestEndpoints) -> io::Result<Option<thread::Join
     endpoints.ch_owned = true;
     let vsock_port = endpoints.vsock_port;
     Ok(Some(thread::spawn(move || {
-        let Ok((ch, _)) = ch_listener.accept() else {
-            return;
-        };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let Ok(Some(ddi)) = connect_vsock_loopback_with_retry(vsock_port, deadline) else {
-            return;
-        };
-        let _ = bridge_connection(ch, ddi);
+        loop {
+            let Ok((ch, _)) = ch_listener.accept() else {
+                // The listener itself is gone (e.g. the test process is
+                // tearing down): nothing left to bridge.
+                return;
+            };
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let Ok(Some(ddi)) = connect_vsock_loopback_with_retry(vsock_port, deadline) else {
+                return;
+            };
+            // Bridge this connection to completion before accepting the
+            // next one: `vsocksrv` only ever has one connection open at a
+            // time, and serializing here keeps accept() ordering (and
+            // therefore which AF_VSOCK connection a given reconnect
+            // lands on) unambiguous.
+            let _ = bridge_connection(ch, ddi);
+        }
     })))
 }
 
@@ -448,6 +468,17 @@ fn assert_get_api_rev_succeeds(dev: &azihsm_ddi_vsock::DdiVsockDev) {
 /// instead of silently reporting these tests as passed-but-skipped.
 const VSOCK_CI_REQUIRED_ENV: &str = "AZIHSM_VSOCK_CI_REQUIRED";
 
+/// Returns whether [`VSOCK_CI_REQUIRED_ENV`] is set to a *nonempty*
+/// value. The CI job sets this conditionally via a GitHub Actions
+/// expression (`cond && '1' || ''`), which — when the condition is
+/// false — still *defines* the env var, just with an empty string
+/// value; `var_os(...).is_some()` alone would treat that as "set",
+/// wrongly turning a confirmed-unavailable `vsock_loopback` module into
+/// a hard panic instead of the intended skip.
+fn vsock_ci_required() -> bool {
+    std::env::var_os(VSOCK_CI_REQUIRED_ENV).is_some_and(|value| !value.is_empty())
+}
+
 /// Skips the running test with a clear message if `bridge` is `None`
 /// (i.e. `AF_VSOCK` loopback is unavailable in this environment) —
 /// unless [`VSOCK_CI_REQUIRED_ENV`] is set, in which case it panics
@@ -461,7 +492,7 @@ macro_rules! bridge_or_skip {
                 let msg = "AF_VSOCK loopback unavailable (vsock_loopback \
                      kernel module likely not loaded); run `sudo modprobe \
                      vsock_loopback` to exercise this test for real.";
-                if std::env::var_os(VSOCK_CI_REQUIRED_ENV).is_some() {
+                if vsock_ci_required() {
                     panic!("{msg}");
                 }
                 eprintln!("SKIP: {msg}");
@@ -483,7 +514,7 @@ macro_rules! vsocksrv_or_skip {
                 let msg = "vsocksrv binary not found; run `cargo build -p \
                      vsocksrv` (or set VSOCKSRV_BIN) to exercise this test \
                      for real.";
-                if std::env::var_os(VSOCK_CI_REQUIRED_ENV).is_some() {
+                if vsock_ci_required() {
                     panic!("{msg}");
                 }
                 eprintln!("SKIP: {msg}");
