@@ -10,7 +10,7 @@ Unix socket.
 
 Both endpoints involved are passive listeners that never dial out:
 
-- `azihsmvsock` (VM1) exposes a Unix socket (e.g. `/tmp/mcr.vsock1`) and
+- `azihsmvsock` (VM1) exposes a Unix socket (e.g. `/tmp/hsm.vsock1`) and
   only *accepts* a single incoming connection per controller-enable cycle
   (`VsockHsmClient::connect` -> `accept_host_stream`).
 - `vsocksrv --socket-type vsock` (VM2) binds a real `AF_VSOCK` CID/port and
@@ -22,7 +22,7 @@ bytes together:
 
 ```
 VM1 guest (azihsm_api_tests)
-   -> azihsmvsock device -> /tmp/mcr.vsock1 (Unix socket, CH-managed)
+   -> azihsmvsock device -> /tmp/hsm.vsock1 (Unix socket, CH-managed)
         <-> host proxy (dials both sockets, relays bytes)
    -> /tmp/vsock2.sock (Unix socket, CH's built-in --vsock backend for VM2)
         -> virtio-vsock -> VM2 guest kernel -> vsocksrv (AF_VSOCK listener)
@@ -45,7 +45,7 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
 
 - VM1 launch script (`~/doit.sh`): boots with
   `--vsock cid=4,socket=/tmp/chv.vsock` and
-  `--azihsmvsock cid=3,socket=/tmp/mcr.vsock1,port=5000`.
+  `--azihsmvsock cid=3,socket=/tmp/hsm.vsock1,port=5000`.
 - VM2 launch script (`~/doit2.sh`): boots with a plain
   `--vsock cid=4,socket=/tmp/vsock2.sock` (no `azihsmvsock`), sharing the
   same bridge (`br0`) as VM1 for networking/SSH access.
@@ -83,10 +83,10 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
    VM2's vsock backend socket:
    ```bash
    sudo python3 ~/vsockproxy2.py \
-     --vm1-socket /tmp/mcr.vsock1 --vm2-socket /tmp/vsock2.sock \
+     --vm1-socket /tmp/hsm.vsock1 --vm2-socket /tmp/vsock2.sock \
      --port 5000 -v
    ```
-   Both `/tmp/mcr.vsock1` and `/tmp/vsock2.sock` are root-owned, so the
+   Both `/tmp/hsm.vsock1` and `/tmp/vsock2.sock` are root-owned, so the
    proxy must run with `sudo` (or as root).
 
    On success, the proxy logs a `CONNECT`/`OK` handshake on each side and
@@ -104,7 +104,7 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
 `azihsmvsock`'s `accept_host_stream()` only calls `accept()` once, during
 the controller's enable path (triggered once at guest boot when the
 `azihsm` kernel module probes the device). If the proxy has already been
-retrying connections against `/tmp/mcr.vsock1` before that enable happens
+retrying connections against `/tmp/hsm.vsock1` before that enable happens
 (or is retrying in a loop against a device that keeps failing), stale,
 already-closed connections pile up in the Unix listener's backlog. The next
 `accept_host_stream()` call then dequeues one of those dead connections
@@ -120,7 +120,7 @@ To avoid this:
   is the one that gets accepted.
 - If the backlog does get polluted (e.g. after several failed attempts),
   restart VM1 cleanly (`sudo rm -f /tmp/chv.sock /tmp/chv.vsock
-  /tmp/mcr.vsock1` before relaunching) to reset the listener, then restart
+  /tmp/hsm.vsock1` before relaunching) to reset the listener, then restart
   the proxy immediately.
 - To retrigger the controller's enable path without rebooting VM1, reload
   the `azihsm` kernel module inside the guest:
@@ -136,7 +136,7 @@ To avoid this:
   the OS level but never received an `OK <port>\n` ack — usually the stale
   backlog issue above. Restart VM1 and retry with correct timing.
 - **`Permission denied` connecting to the sockets**: both
-  `/tmp/mcr.vsock1` and `/tmp/vsock2.sock` are root-owned; run the proxy
+  `/tmp/hsm.vsock1` and `/tmp/vsock2.sock` are root-owned; run the proxy
   with `sudo`.
 - Check `/tmp/chv.log` (VM1) for `azihsmvsock`/`vsock_client` messages
   and `/tmp/vsocksrv_vm2.log` (via SSH into VM2) for connection/request
