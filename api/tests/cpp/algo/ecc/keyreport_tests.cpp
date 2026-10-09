@@ -12,6 +12,7 @@
 #include "handle/session_handle.hpp"
 #include "helpers.hpp"
 #include "utils/auto_key.hpp"
+#include "utils/utils.hpp"
 
 /// Test fixture for ECC key attestation tests across available partition sessions.
 class azihsm_ecc_keyattest : public ::testing::Test
@@ -57,7 +58,7 @@ TEST_F(azihsm_ecc_keyattest, attest_key_all_curves)
             ASSERT_NE(pub_key.get(), 0);
 
             // Prepare report data (128 bytes is the maximum)
-            std::vector<uint8_t> report_data(128, 0x42);
+            std::vector<uint8_t> report_data(kReportDataSize, 0x42);
             azihsm_buffer report_data_buf{ report_data.data(),
                                            static_cast<uint32_t>(report_data.size()) };
 
@@ -137,7 +138,7 @@ TEST_F(azihsm_ecc_keyattest, null_report_output_buffer)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -153,7 +154,7 @@ TEST_F(azihsm_ecc_keyattest, invalid_key_handle)
         // Use an invalid key handle
         azihsm_handle invalid_key = 0;
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -184,7 +185,7 @@ TEST_F(azihsm_ecc_keyattest, public_key_fails)
         ASSERT_NE(pub_key.get(), 0);
 
         // Try to attest the public key (should fail - only private keys can be attested)
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -196,6 +197,7 @@ TEST_F(azihsm_ecc_keyattest, public_key_fails)
     });
 }
 
+#if !SESSION_EX_TESTS
 /// Verifies that key attestation succeeds with zero-length report data.
 TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds)
 {
@@ -265,6 +267,8 @@ TEST_F(azihsm_ecc_keyattest, one_byte_report_data_succeeds)
     });
 }
 
+#endif
+
 /// Verifies that key attestation succeeds with the maximum supported report data length.
 TEST_F(azihsm_ecc_keyattest, max_length_report_data_succeeds)
 {
@@ -283,7 +287,7 @@ TEST_F(azihsm_ecc_keyattest, max_length_report_data_succeeds)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(128, 0x5A);
+        std::vector<uint8_t> report_data(kReportDataSize, 0x5A);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -319,7 +323,7 @@ TEST_F(azihsm_ecc_keyattest, report_data_larger_than_max_fails)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(129, 0x42);
+        std::vector<uint8_t> report_data(kReportDataSize + 1, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -377,7 +381,7 @@ TEST_F(azihsm_ecc_keyattest, output_buffer_too_small_reports_required_size)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -408,7 +412,7 @@ TEST_F(azihsm_ecc_keyattest, exact_sized_output_buffer_succeeds)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -458,7 +462,7 @@ TEST_F(azihsm_ecc_keyattest, valid_report_generation_does_not_modify_report_data
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0xA5);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0xA5);
         std::vector<uint8_t> original_report_data = report_data;
 
         azihsm_buffer report_data_buf{ report_data.data(),
@@ -497,7 +501,7 @@ TEST_F(azihsm_ecc_keyattest, repeated_attestation_succeeds_for_same_key)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -538,7 +542,7 @@ TEST_F(azihsm_ecc_keyattest, output_buffer_null_ptr_with_nonzero_len_fails)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -568,7 +572,7 @@ TEST_F(azihsm_ecc_keyattest, oversized_output_buffer_succeeds)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -607,7 +611,7 @@ TEST_F(azihsm_ecc_keyattest, failed_attestation_does_not_modify_output_buffer)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(129, 0x42);
+        std::vector<uint8_t> report_data(kReportDataSize + 1, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -653,6 +657,7 @@ TEST_F(azihsm_ecc_keyattest, invalid_report_data_size_query_fails)
     });
 }
 
+#if !SESSION_EX_TESTS
 /// Verifies that zero-length report data succeeds for key attestation across all supported curves.
 TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds_for_all_curves)
 {
@@ -711,7 +716,7 @@ TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves
 
     std::vector<uint32_t> report_data_lengths = {
         1,
-        128,
+        kReportDataSize,
     };
 
     for (const auto &curve_case : curve_cases)
@@ -760,6 +765,39 @@ TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves
     }
 }
 
+#else
+/// Verifies EX rejects report data whose length differs from the TBOR field size.
+TEST_F(azihsm_ecc_keyattest, rejects_noncanonical_report_data_lengths)
+{
+    part_list_.for_each_session([](azihsm_handle session) {
+        auto_key priv_key;
+        auto_key pub_key;
+        ASSERT_EQ(
+            generate_ecc_keypair(
+                session,
+                AZIHSM_ECC_CURVE_P256,
+                true,
+                priv_key.get_ptr(),
+                pub_key.get_ptr()
+            ),
+            AZIHSM_STATUS_SUCCESS
+        );
+        for (uint32_t length :
+             { 0u, 1u, kLegacyReportDataSize, kReportDataSize - 1, kReportDataSize + 1 })
+        {
+            SCOPED_TRACE(length);
+            std::vector<uint8_t> report_data(length, 0x42);
+            azihsm_buffer report_data_buf{ report_data.data(), length };
+            azihsm_buffer report_buf{ nullptr, 0 };
+            ASSERT_EQ(
+                azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf),
+                AZIHSM_STATUS_INVALID_ARGUMENT
+            );
+        }
+    });
+}
+#endif
+
 /// Verifies that two different ECC private keys produce different key attestation reports.
 TEST_F(azihsm_ecc_keyattest, different_keys_produce_different_key_reports)
 {
@@ -792,7 +830,7 @@ TEST_F(azihsm_ecc_keyattest, different_keys_produce_different_key_reports)
         ASSERT_NE(pub_key_2.get(), 0);
         ASSERT_NE(priv_key_1.get(), priv_key_2.get());
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -847,8 +885,8 @@ TEST_F(azihsm_ecc_keyattest, different_report_data_produces_different_key_report
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data_1(64, 0x42);
-        std::vector<uint8_t> report_data_2(64, 0x43);
+        std::vector<uint8_t> report_data_1(kValidReportDataSize, 0x42);
+        std::vector<uint8_t> report_data_2(kValidReportDataSize, 0x43);
 
         azihsm_buffer report_data_buf_1{ report_data_1.data(),
                                          static_cast<uint32_t>(report_data_1.size()) };
@@ -906,7 +944,7 @@ TEST_F(azihsm_ecc_keyattest, repeated_attestation_has_stable_report_size)
         ASSERT_NE(priv_key.get(), 0);
         ASSERT_NE(pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 
@@ -957,7 +995,7 @@ TEST_F(azihsm_ecc_keyattest, different_curves_produce_different_key_reports)
         ASSERT_NE(p384_priv_key.get(), 0);
         ASSERT_NE(p384_pub_key.get(), 0);
 
-        std::vector<uint8_t> report_data(64, 0x42);
+        std::vector<uint8_t> report_data(kValidReportDataSize, 0x42);
         azihsm_buffer report_data_buf{ report_data.data(),
                                        static_cast<uint32_t>(report_data.size()) };
 

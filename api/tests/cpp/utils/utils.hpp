@@ -9,6 +9,14 @@
 #include <gtest/gtest.h>
 #include <vector>
 
+inline constexpr uint32_t kReportDataSize = 128;
+inline constexpr uint32_t kLegacyReportDataSize = 64;
+#if SESSION_EX_TESTS
+inline constexpr uint32_t kValidReportDataSize = kReportDataSize;
+#else
+inline constexpr uint32_t kValidReportDataSize = kLegacyReportDataSize;
+#endif
+
 /// Returns the standard test API revision (1.0) used by MBOR tests.
 inline azihsm_api_rev test_api_rev()
 {
