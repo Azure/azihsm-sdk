@@ -24,5 +24,18 @@ tracing.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 nix.workspace = true
 
+[dev-dependencies]
+azihsm_cred_encrypt.workspace = true
+azihsm_crypto.workspace = true
+# Forced "vsock" so `azihsm_ddi_mbor_test_helpers`'s generic
+# `<AzihsmDdi as Ddi>::Dev` helpers (used by this crate's real-session
+# regression test) resolve to this crate's own `DdiVsockDev`, not another
+# backend. This is a dev-dependency-only cycle back onto this crate
+# (through the `azihsm_ddi` facade's optional `azihsm_ddi_vsock` dep),
+# which Cargo supports for test-only code.
+azihsm_ddi = { features = ["vsock"], workspace = true }
+azihsm_ddi_mbor_test_helpers.workspace = true
+x509.workspace = true
+
 [lints]
 workspace = true

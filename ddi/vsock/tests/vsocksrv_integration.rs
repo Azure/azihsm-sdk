@@ -42,15 +42,33 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+use azihsm_cred_encrypt::DeviceCredKey;
+use azihsm_crypto::DerEccPublicKey;
+use azihsm_crypto::EccPrivateKey;
+use azihsm_crypto::EcdsaAlgo;
+use azihsm_crypto::HashAlgo;
+use azihsm_crypto::ImportableKey;
+use azihsm_crypto::Signer;
 use azihsm_ddi_interface::Ddi;
 use azihsm_ddi_interface::DdiDev;
 use azihsm_ddi_interface::DdiError;
+use azihsm_ddi_mbor_codec::MborByteArray;
+use azihsm_ddi_mbor_test_helpers::helper_establish_credential;
+use azihsm_ddi_mbor_test_helpers::helper_get_cert_chain_info;
+use azihsm_ddi_mbor_test_helpers::helper_get_certificate;
+use azihsm_ddi_mbor_test_helpers::helper_get_establish_cred_encryption_key;
+use azihsm_ddi_mbor_test_helpers::helper_get_or_init_bk3;
+use azihsm_ddi_mbor_test_helpers::helper_get_session_encryption_key;
 use azihsm_ddi_mbor_types::DdiApiRev;
 use azihsm_ddi_mbor_types::DdiCloseSessionCmdReq;
 use azihsm_ddi_mbor_types::DdiCloseSessionReq;
+use azihsm_ddi_mbor_types::DdiDerPublicKey;
 use azihsm_ddi_mbor_types::DdiGetApiRevCmdReq;
 use azihsm_ddi_mbor_types::DdiGetApiRevReq;
+use azihsm_ddi_mbor_types::DdiKeyType;
 use azihsm_ddi_mbor_types::DdiOp;
+use azihsm_ddi_mbor_types::DdiOpenSessionCmdReq;
+use azihsm_ddi_mbor_types::DdiOpenSessionReq;
 use azihsm_ddi_mbor_types::DdiReqHdr;
 use azihsm_ddi_mbor_types::DdiStatus;
 use azihsm_ddi_vsock::DdiVsock;
@@ -62,6 +80,8 @@ use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockType;
 use nix::sys::socket::VsockAddr;
 use nix::unistd::close;
+use x509::X509Certificate;
+use x509::X509CertificateOp;
 
 /// Kills the `vsocksrv` child process when dropped, so a failing
 /// assertion never leaks a background server.
@@ -553,6 +573,300 @@ fn unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock() 
     // No bytes should ever have reached the replacement connection: the
     // rejection above must come from the local guard, not from sending
     // the request and getting back some unrelated failure.
+    let reached = reached_rx
+        .recv_timeout(Duration::from_millis(500))
+        .unwrap_or(false);
+    assert!(
+        !reached,
+        "the stale close must be rejected before reaching the transport, \
+         but bytes arrived at the replacement connection",
+    );
+}
+
+// ── Real-session variant of the stale-close regression test ──
+//
+// `unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock`
+// above uses a synthetic `(sess_id: Some(1), cookie: None)` pair, which
+// only exercises `SessionGenerationTracker::check`'s *missing-cookie*
+// branch (`let Some(token) = cookie else { ... }`): any `None` cookie is
+// rejected immediately, regardless of generation. It never reaches the
+// branch this guard actually exists for — a session id *and* cookie that
+// were genuinely valid under a since-reset generation
+// (`session.token == token && session.generation != current`) — because
+// a real, firmware-issued `(sess_id, cookie)` pair is needed to populate
+// `open_sessions` in the first place.
+//
+// The test below drives a real `EstablishCredential` + `OpenSession`
+// handshake through `vsocksrv`'s in-process `StdHsm` (the same reference
+// firmware the `emu` backend uses, just reached over a socket instead of
+// in-process — see `ddi/emu/src/dev.rs`), over this same AF_VSOCK
+// connection, so `SessionGenerationTracker::record` stores the *real*
+// `(id, token)` pair under the pre-erase generation. After `erase()`
+// bumps the generation, closing that exact pair must fall through to
+// `check`'s final `_ => Err(SessionNotFound)` arm — the generation
+// mismatch itself, not the shortcut for an absent cookie.
+//
+// These are the same fixed test credential/key constants and crypto
+// helper patterns used by `ddi/mbor/types/tests/integration/common.rs`
+// (and duplicated similarly across other DDI test crates): the
+// credential-establishment flow needs its own local copies here since
+// `common.rs`'s versions are private to that crate's own test binary.
+
+// 70FCF730-B876-4238-B835-8010CE8A3F76
+const TEST_CRED_ID: [u8; 16] = [
+    0x70, 0xFC, 0xF7, 0x30, 0xB8, 0x76, 0x42, 0x38, 0xB8, 0x35, 0x80, 0x10, 0xCE, 0x8A, 0x3F, 0x76,
+];
+
+// DB3DC77F-C22E-4300-80D4-1B31B6F04800
+const TEST_CRED_PIN: [u8; 16] = [
+    0xDB, 0x3D, 0xC7, 0x7F, 0xC2, 0x2E, 0x43, 0x00, 0x80, 0xD4, 0x1B, 0x31, 0xB6, 0xF0, 0x48, 0x00,
+];
+
+const TEST_SESSION_SEED: [u8; 48] = [
+    0xe5, 0x1b, 0x8b, 0x4b, 0xa7, 0x94, 0xc7, 0xc8, 0xa2, 0x32, 0x84, 0xec, 0xad, 0x2b, 0x6a, 0xc,
+    0x37, 0xe8, 0x6a, 0x63, 0x6a, 0x9f, 0x43, 0x20, 0x95, 0xe1, 0x24, 0xd0, 0x85, 0x12, 0xe2, 0x12,
+    0x95, 0x14, 0xaa, 0x0f, 0x6b, 0x05, 0x40, 0x71, 0xbf, 0x63, 0xa5, 0x87, 0xa6, 0x25, 0x70, 0x81,
+];
+
+/// Ephemeral ECDH key pair the test (acting as the caller/client) uses to
+/// derive the shared encryption key for credential/session-credential
+/// payloads; an arbitrary fixed DER key, not tied to any real identity.
+const TEST_ECC_384_PRIVATE_KEY: [u8; 185] = [
+    0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+    0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
+    0x01, 0x04, 0x30, 0xce, 0xbc, 0xbb, 0x90, 0x3d, 0x9a, 0x1d, 0x46, 0xd9, 0x59, 0x15, 0x16, 0xf9,
+    0x7d, 0xbe, 0x6f, 0xf6, 0x44, 0xa3, 0x2d, 0xa4, 0x7b, 0x73, 0xfb, 0x6e, 0xad, 0xa5, 0x09, 0x9a,
+    0x83, 0x2a, 0x67, 0x07, 0xd2, 0x25, 0xd3, 0x8e, 0x67, 0x52, 0xcd, 0x09, 0x90, 0xa8, 0x31, 0x06,
+    0x66, 0xc0, 0xe4, 0xa1, 0x64, 0x03, 0x62, 0x00, 0x04, 0xe4, 0x20, 0x9a, 0xd7, 0x07, 0xa4, 0x88,
+    0x1a, 0xff, 0xf0, 0x12, 0x61, 0x92, 0xc7, 0x9d, 0x83, 0x77, 0x49, 0x21, 0xcc, 0x5d, 0xf3, 0xb9,
+    0x21, 0xc4, 0x3d, 0xae, 0xaa, 0x58, 0xb8, 0x34, 0x2b, 0x38, 0x3c, 0xda, 0xb2, 0x88, 0xf0, 0xe4,
+    0xb9, 0x56, 0x14, 0x11, 0x15, 0x75, 0xba, 0xbb, 0x23, 0x7c, 0x67, 0xf7, 0xd1, 0x97, 0x63, 0xc7,
+    0xb8, 0x56, 0xd3, 0x22, 0xb2, 0xba, 0xba, 0x1a, 0xc6, 0xb4, 0xea, 0x0d, 0xad, 0xa2, 0x56, 0x29,
+    0xd5, 0xca, 0x0f, 0x4a, 0x4e, 0xee, 0x17, 0xb0, 0xb2, 0xf4, 0xb1, 0x58, 0xba, 0xae, 0xa1, 0x58,
+    0x9c, 0x10, 0x07, 0xf7, 0x0e, 0xc7, 0x62, 0x42, 0xe0,
+];
+
+/// Fixed test POTA endorsement key pair (ECC P-384): the private half
+/// signs the device's partition-identity public key to stand in for a
+/// real POTA endorsement during credential establishment, and the public
+/// half (DER) is what gets sent back to the device alongside the
+/// signature for it to verify.
+const TEST_POTA_ECC_PRIVATE_KEY: [u8; 185] = [
+    0x30, 0x81, 0xb6, 0x02, 0x01, 0x00, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
+    0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x04, 0x81, 0x9e, 0x30, 0x81, 0x9b, 0x02, 0x01,
+    0x01, 0x04, 0x30, 0x17, 0xe9, 0x1c, 0xac, 0xf7, 0xb7, 0x21, 0xd7, 0x75, 0x20, 0x02, 0x07, 0xbc,
+    0xaa, 0x94, 0x2c, 0xe3, 0xb5, 0x5b, 0x78, 0x13, 0xcc, 0x8b, 0xde, 0x87, 0x65, 0x6b, 0xe1, 0x7b,
+    0xc2, 0xa8, 0xcc, 0x89, 0x33, 0x4e, 0xcd, 0xaa, 0x9d, 0x1d, 0x09, 0xf1, 0xc7, 0x01, 0x1b, 0x64,
+    0xeb, 0x78, 0x5b, 0xa1, 0x64, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67,
+    0xc2, 0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20,
+    0xce, 0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9, 0x5f, 0xe5, 0x90,
+    0xab, 0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10, 0xd3, 0x17, 0x6e, 0x99,
+    0xc8, 0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3, 0xda, 0x12, 0xc7, 0xdc, 0x3a,
+    0xee, 0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02,
+    0x7d, 0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
+];
+
+const TEST_POTA_ECC_PUB_KEY: [u8; 120] = [
+    0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
+    0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00, 0x04, 0x1f, 0x42, 0x0d, 0x73, 0xeb, 0xf0, 0x67, 0xc2,
+    0xf9, 0x77, 0xbd, 0x51, 0xab, 0xfb, 0xe1, 0xf6, 0x53, 0x19, 0xb7, 0x57, 0xe0, 0xa9, 0x20, 0xce,
+    0x4f, 0x21, 0xbb, 0xd4, 0xa7, 0x84, 0x1c, 0x93, 0x45, 0xf1, 0xea, 0xd9, 0x5f, 0xe5, 0x90, 0xab,
+    0x57, 0xe1, 0xea, 0xfc, 0xd2, 0x06, 0xef, 0x21, 0xa2, 0xad, 0x10, 0xd3, 0x17, 0x6e, 0x99, 0xc8,
+    0x22, 0x26, 0x23, 0x08, 0x57, 0xa7, 0x56, 0x08, 0x45, 0xe3, 0xda, 0x12, 0xc7, 0xdc, 0x3a, 0xee,
+    0x01, 0xfc, 0x37, 0xab, 0x1c, 0x8d, 0xc6, 0xd0, 0x64, 0x7a, 0x7d, 0xc2, 0x67, 0xfc, 0x02, 0x7d,
+    0x8d, 0xa3, 0xc8, 0x01, 0x4b, 0xa4, 0x0d, 0x98,
+];
+
+/// Signs the device's partition-identity public key (fetched via its
+/// cert chain's leaf certificate) with the fixed test POTA private key,
+/// mirroring `helper_get_pota_endorsement` in
+/// `ddi/mbor/types/tests/integration/common.rs`. Returns
+/// `(signature, pota_public_key_der)`.
+fn get_pota_endorsement(dev: &<DdiVsock as Ddi>::Dev) -> (Vec<u8>, Vec<u8>) {
+    let chain_info = helper_get_cert_chain_info(dev).expect("GetCertChainInfo should succeed");
+    let leaf = helper_get_certificate(dev, chain_info.data.num_certs - 1)
+        .expect("GetCertificate (leaf) should succeed");
+    let cert = X509Certificate::from_der(leaf.data.certificate.as_slice())
+        .expect("leaf certificate should parse as DER");
+    let pub_key_der = cert
+        .get_public_key_der()
+        .expect("leaf certificate should carry a public key");
+    let pub_key = DerEccPublicKey::from_der(&pub_key_der).expect("public key should be ECC DER");
+
+    let mut uncompressed_point = vec![0x04u8];
+    uncompressed_point.extend_from_slice(pub_key.x());
+    uncompressed_point.extend_from_slice(pub_key.y());
+
+    let priv_key = EccPrivateKey::from_bytes(&TEST_POTA_ECC_PRIVATE_KEY)
+        .expect("fixed test POTA private key should load");
+    let mut ecdsa = EcdsaAlgo::new(HashAlgo::sha384());
+    let sig_len = Signer::sign(&mut ecdsa, &priv_key, &uncompressed_point, None)
+        .expect("signature length query should succeed");
+    let mut signature = vec![0u8; sig_len];
+    Signer::sign(
+        &mut ecdsa,
+        &priv_key,
+        &uncompressed_point,
+        Some(&mut signature),
+    )
+    .expect("POTA signing should succeed");
+
+    (signature, TEST_POTA_ECC_PUB_KEY.to_vec())
+}
+
+/// Drives a full `EstablishCredential` then `OpenSession` handshake
+/// against `dev` using the fixed test credential/key constants above,
+/// returning the firmware-issued `(sess_id, cookie)` pair recorded by
+/// `SessionGenerationTracker` for this connection's current generation.
+fn establish_credential_and_open_session(dev: &<DdiVsock as Ddi>::Dev) -> (u16, u64) {
+    let api_rev = Some(DdiApiRev { major: 1, minor: 0 });
+
+    let cred_key_resp = helper_get_establish_cred_encryption_key(dev, None, api_rev)
+        .expect("GetEstablishCredEncryptionKey should succeed");
+    let nonce = cred_key_resp.data.nonce;
+    let (establish_key, establish_pub_key) = DeviceCredKey::new(&cred_key_resp.data.pub_key, nonce)
+        .expect("DeviceCredKey::new should succeed")
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
+        .expect("create_credential_key_from_der should succeed");
+    let encrypted_credential = establish_key
+        .encrypt_establish_credential(TEST_CRED_ID, TEST_CRED_PIN, nonce)
+        .expect("encrypt_establish_credential should succeed");
+
+    let masked_bk3 = helper_get_or_init_bk3(dev);
+    let (signature, pota_pub_key) = get_pota_endorsement(dev);
+
+    helper_establish_credential(
+        dev,
+        None,
+        api_rev,
+        encrypted_credential,
+        establish_pub_key,
+        masked_bk3,
+        MborByteArray::from_slice(&[]).expect("empty BMK should fit"),
+        MborByteArray::from_slice(&[]).expect("empty masked unwrapping key should fit"),
+        MborByteArray::from_slice(&signature).expect("POTA signature should fit"),
+        DdiDerPublicKey {
+            der: MborByteArray::from_slice(&pota_pub_key).expect("POTA public key should fit"),
+            key_kind: DdiKeyType::Ecc384Public,
+        },
+    )
+    .expect("EstablishCredential should succeed");
+
+    let session_key_resp = helper_get_session_encryption_key(dev, None, api_rev)
+        .expect("GetSessionEncryptionKey should succeed");
+    let nonce = session_key_resp.data.nonce;
+    let (session_key, session_pub_key) = DeviceCredKey::new(&session_key_resp.data.pub_key, nonce)
+        .expect("DeviceCredKey::new should succeed")
+        .create_credential_key_from_der(&TEST_ECC_384_PRIVATE_KEY)
+        .expect("create_credential_key_from_der should succeed");
+    let encrypted_session_credential = session_key
+        .encrypt_session_credential(TEST_CRED_ID, TEST_CRED_PIN, TEST_SESSION_SEED, nonce)
+        .expect("encrypt_session_credential should succeed");
+
+    // `helper_open_session` doesn't expose the cookie `exec_op_mbor`
+    // threads through as an out-parameter (it discards its own local
+    // one), so build the request directly here to capture it —
+    // `SessionGenerationTracker`'s cookie is purely local, client-side
+    // state (never sent to the firmware), so this is the only way to
+    // retrieve the real token `record()` assigned for this session.
+    let req = DdiOpenSessionCmdReq {
+        hdr: DdiReqHdr {
+            op: DdiOp::OpenSession,
+            sess_id: None,
+            rev: api_rev,
+        },
+        data: DdiOpenSessionReq {
+            encrypted_credential: encrypted_session_credential,
+            pub_key: session_pub_key,
+        },
+        ext: None,
+    };
+    let mut cookie = None;
+    let open_resp = dev
+        .exec_op_mbor(&req, &mut cookie)
+        .expect("OpenSession should succeed");
+
+    let sess_id = open_resp
+        .hdr
+        .sess_id
+        .expect("OpenSession response must carry the new sess_id");
+    let cookie =
+        cookie.expect("a successful OpenSession must record a SessionGenerationTracker cookie");
+    (sess_id, cookie)
+}
+
+/// Regression test for the stale-session-close fix
+/// (`SessionGenerationTracker`), using a *real*, firmware-issued
+/// `(sess_id, cookie)` pair instead of a synthetic one — see the module
+/// comment above for why this is needed to exercise the generation-
+/// mismatch rejection branch specifically (as opposed to the missing-
+/// cookie shortcut `unrecognized_session_close_is_rejected_locally_after_erase_over_real_vsock`
+/// already covers).
+#[test]
+fn stale_real_session_close_is_rejected_by_generation_after_erase_over_real_vsock() {
+    let mut endpoints = TestEndpoints::new("stale-real-session-erase");
+    let _bridge =
+        bridge_or_skip!(spawn_bridge(&mut endpoints).expect("failed to probe/start test bridge"));
+    let _vsocksrv =
+        vsocksrv_or_skip!(spawn_vsocksrv(&endpoints).expect("failed to start vsocksrv"));
+
+    let ddi = DdiVsock::default();
+    let dev = ddi
+        .open_dev(&endpoints.vsock_port.to_string())
+        .expect("failed to accept the real AF_VSOCK connection via the bridge");
+
+    assert_get_api_rev_succeeds(&dev);
+
+    let (sess_id, cookie) = establish_credential_and_open_session(&dev);
+
+    // Same replacement-connection dance as the synthetic-cookie test
+    // above: `erase()` blocks until a new connection is accepted.
+    let vsock_port = endpoints.vsock_port;
+    let replacement_client = thread::spawn(move || {
+        connect_vsock_loopback_with_retry(vsock_port, Instant::now() + Duration::from_secs(10))
+    });
+
+    dev.erase().expect("erase should succeed");
+    let mut replacement = replacement_client
+        .join()
+        .expect("replacement-connect thread panicked")
+        .expect("failed to connect the replacement client")
+        .expect("AF_VSOCK loopback vanished mid-test");
+
+    // As above: prove the rejection happens locally, before any bytes
+    // reach the replacement connection.
+    let (reached_tx, reached_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        let reached = matches!(replacement.read(&mut byte), Ok(n) if n > 0);
+        let _ = reached_tx.send(reached);
+    });
+
+    // Close the *real* pre-erase session using its genuine sess_id and
+    // cookie. `SessionGenerationTracker::check` now finds a matching
+    // token under `open_sessions`, so this exercises the generation
+    // comparison itself (`session.generation == current`) rather than
+    // the `cookie.is_none()` shortcut: the token matches, but the
+    // generation doesn't, so it must still fall through to
+    // `Err(SessionNotFound)`.
+    let close_req = DdiCloseSessionCmdReq {
+        hdr: DdiReqHdr {
+            rev: None,
+            op: DdiOp::CloseSession,
+            sess_id: Some(sess_id),
+        },
+        data: DdiCloseSessionReq {},
+        ext: None,
+    };
+    let mut cookie = Some(cookie);
+    let result = dev.exec_op_mbor(&close_req, &mut cookie);
+    assert!(
+        matches!(result, Err(DdiError::DdiStatus(DdiStatus::SessionNotFound))),
+        "a real pre-erase session id/cookie pair must be rejected once the \
+         post-erase generation no longer matches it, not forwarded to the \
+         (torn-down) stream: {result:?}",
+    );
+
     let reached = reached_rx
         .recv_timeout(Duration::from_millis(500))
         .unwrap_or(false);
