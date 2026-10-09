@@ -10,9 +10,13 @@
 //!   HMAC kind): same, deriving `VarHmac256` / `384` / `512`.
 //! - **Unknown key** (both backends): a MAC against a non-existent
 //!   `key_id` is rejected with `KeyNotFound`.
-//! - **Sign permission** (emu only): a `derive`-only HMAC key cannot
-//!   generate a MAC — rejected with `InvalidPermissions` (MAC
-//!   generation is a PKCS#11 `C_Sign` operation requiring `CKA_SIGN`).
+//! - **Sign permission** (emu + real HW, not mock): a `derive`-only
+//!   HMAC key cannot generate a MAC. Real HW's firmware rejects the
+//!   `derive`-only key's creation outright (it requires `SignVerify`
+//!   on every HMAC-class key); emu permits creating the key and
+//!   rejects the MAC attempt instead. Both are accepted as proof the
+//!   permission is enforced (MAC generation is a PKCS#11 `C_Sign`
+//!   operation requiring `CKA_SIGN`).
 
 #![cfg(test)]
 
@@ -101,7 +105,7 @@ fn test_hmac_unknown_key_smoke() {
     );
 }
 
-#[cfg(feature = "emu")]
+#[cfg(not(feature = "mock"))]
 #[test]
 fn test_hmac_requires_sign_permission_smoke() {
     ddi_dev_test(
@@ -112,6 +116,19 @@ fn test_hmac_requires_sign_permission_smoke() {
             // try to generate a MAC with it.  MAC generation is a
             // PKCS#11 `C_Sign` operation, so a key lacking `CKA_SIGN`
             // must be rejected.
+            //
+            // The two backends reject this at different points:
+            // - emu (fw/core's software emulator) permits creating a
+            //   derive-only VarHmac key, then rejects the MAC attempt
+            //   with `InvalidPermissions` (the scenario this test was
+            //   originally written to exercise).
+            // - real hardware's firmware requires `SignVerify` usage
+            //   for every HMAC-class key, with no `derive`-only
+            //   carve-out, so it rejects the key creation itself with
+            //   `InvalidPermissions` before a MAC is ever attempted.
+            // Both are valid proof that a key without sign permission
+            // can't produce a MAC; accept either so this test is
+            // backend-agnostic rather than emu-only.
             let (secret_id, _) = create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::Session);
             let derived = helper_hkdf_derive(
@@ -126,8 +143,18 @@ fn test_hmac_requires_sign_permission_smoke() {
                 None,
                 key_props,
                 Some(32),
-            )
-            .expect("derive-only var-HMAC key should be created");
+            );
+
+            let derived = match derived {
+                Ok(derived) => derived,
+                Err(err) => {
+                    assert!(
+                        matches!(err, DdiError::DdiStatus(DdiStatus::InvalidPermissions)),
+                        "expected InvalidPermissions rejecting derive-only key creation, got {err:?}"
+                    );
+                    return;
+                }
+            };
 
             let err = hmac_msg(dev, session_id, derived.data.key_id)
                 .expect_err("MAC with a derive-only key must be rejected");
