@@ -22,6 +22,7 @@
 //! | Requested `key_type` | Vault kind | Output length |
 //! |---|---|---|
 //! | `Aes128` / `Aes192` / `Aes256` | `Aes128` / `Aes192` / `Aes256` | 16 / 24 / 32 |
+//! | `AesGcmBulk256` / `AesGcmBulk256Unapproved` / `AesXtsBulk256` | same kind (bulk; registered with the bulk-crypto backend) | 32 |
 //! | `HmacSha256` / `384` / `512` | `VarLenHmacSha256` / `384` / `512` | 32 / 48 / 64 |
 //! | `VarHmac256` / `384` / `512` | `VarLenHmacSha256` / `384` / `512` | `key_length` |
 //!

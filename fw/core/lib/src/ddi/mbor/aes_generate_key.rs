@@ -22,6 +22,7 @@
 
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyReq;
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyResp;
+use azihsm_fw_ddi_mbor_types::DdiAesKeySize;
 
 use super::*;
 
@@ -47,9 +48,17 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     // Bulk kinds (GCM / XTS) map to a 32-byte AES-256 key and report a
     // `bulk_key_id`; non-bulk kinds map to their sized AES vault kind.
-    let (key_len, vault_kind) = super::from_ddi::aes_bulk(body.key_size)
-        .or_else(|_| super::from_ddi::aes(body.key_size))?;
-    let is_bulk = super::bulk::is_bulk(vault_kind);
+    let is_bulk = matches!(
+        body.key_size,
+        DdiAesKeySize::AesGcmBulk256
+            | DdiAesKeySize::AesGcmBulk256Unapproved
+            | DdiAesKeySize::AesXtsBulk256
+    );
+    let (key_len, vault_kind) = if is_bulk {
+        super::from_ddi::aes_bulk(body.key_size)?
+    } else {
+        super::from_ddi::aes(body.key_size)?
+    };
     let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, true)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
