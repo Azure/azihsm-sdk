@@ -79,6 +79,9 @@ fuzz_target!(|input: FuzzInput| {
                             );
                             true
                         }
+                        Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
+                            panic!("Crash Detected: {err}")
+                        }
                         Err(_) => false,
                     }
                 }

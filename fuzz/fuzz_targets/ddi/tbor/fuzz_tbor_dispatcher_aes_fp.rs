@@ -86,7 +86,7 @@ fn iv_from_input(input: &FuzzInput) -> [u8; AES_IV_LEN] {
 
     match input.aes_type {
         FuzzAesType::AesGcm => {
-            let mut iv = [0; AES_IV_LEN];
+            let mut iv = input.xts_request.tweak;
             iv[..input.gcm_request.iv.len()].copy_from_slice(&input.gcm_request.iv);
             fold(&mut iv, &input.gcm_request.key_id.to_le_bytes());
             fold(&mut iv, &input.gcm_request.session_id.to_le_bytes());

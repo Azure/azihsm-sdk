@@ -120,10 +120,13 @@ fuzz_target!(|input: FuzzInput| {
             assert!(resp.pub_key.iter().any(|byte| *byte != 0));
             assert!(resp.masked_key.iter().any(|byte| *byte != 0));
         } else {
-            assert!(
-                result.is_err(),
-                "invalid EccGenerateKey request unexpectedly succeeded"
-            );
+            match result {
+                Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
+                    panic!("Crash Detected: {err}")
+                }
+                Err(_) => {}
+                Ok(_) => panic!("invalid EccGenerateKey request unexpectedly succeeded"),
+            }
         }
 
         ctx.session_close(session.session_id)

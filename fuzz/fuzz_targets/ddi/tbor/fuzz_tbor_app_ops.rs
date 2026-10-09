@@ -43,7 +43,7 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                             Err(DdiError::TborStatus(status))
                                 if status == TborStatus::FileHandleSessionLimitReached
                         ),
-                        "SessionOpenInit on an occupied file handle should hit the session limit: {result:?}"
+                        "SessionOpenInit on an occupied file handle should hit the session limit"
                     );
 
                     // TBOR sessions are opened on their own file handle. Use
@@ -60,8 +60,8 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                         {
                             continue;
                         }
-                        Err(error) => {
-                            panic!("SessionOpenInit with the rotated CO PSK failed: {error:?}")
+                        Err(_error) => {
+                            panic!("SessionOpenInit with the rotated CO PSK failed")
                         }
                     };
                     let pending_session_id = pending.session_id;
@@ -78,7 +78,7 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                         for (index, byte) in user_id.iter().chain(pin.iter()).enumerate() {
                             invalid_mac[index % MAC_FIN_LEN] ^= *byte;
                         }
-                        invalid_mac[0] ^= 1;
+                        invalid_mac[MAC_FIN_LEN - 1] ^= 1;
 
                         let finish_result =
                             secondary.session_open_finish_with_mac(pending, invalid_mac);
@@ -88,7 +88,7 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                                 Err(DdiError::TborStatus(status))
                                     if status == TborStatus::SessionAuthFailure
                             ),
-                            "SessionOpenFinish with a mutated MAC should fail authentication: {finish_result:?}"
+                            "SessionOpenFinish with a mutated MAC should fail authentication"
                         );
 
                         let close_result = secondary.session_close(pending_session_id);
@@ -98,7 +98,7 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                                 Err(DdiError::TborStatus(status))
                                     if status == TborStatus::SessionNotFound
                             ),
-                            "SessionClose on a failed handshake should report SessionNotFound: {close_result:?}"
+                            "SessionClose on a failed handshake should report SessionNotFound"
                         );
                     }
                 }
