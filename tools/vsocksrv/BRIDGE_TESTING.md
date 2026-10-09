@@ -1,7 +1,7 @@
-# Bridging a Manticore VM to a second `vsocksrv` VM
+# Bridging an AziHSM VM to a second `vsocksrv` VM
 
 This document describes how to reproduce a two-VM test topology where a guest
-using the Cloud Hypervisor `manticorevsock` device (VM1) talks to a `StdHsm`
+using the Cloud Hypervisor `azihsmvsock` device (VM1) talks to a `StdHsm`
 hosted by `vsocksrv` running as a real `AF_VSOCK` listener inside a *second*
 VM (VM2), instead of `vsocksrv` running directly on the host against VM1's
 Unix socket.
@@ -10,7 +10,7 @@ Unix socket.
 
 Both endpoints involved are passive listeners that never dial out:
 
-- `manticorevsock` (VM1) exposes a Unix socket (e.g. `/tmp/mcr.vsock1`) and
+- `azihsmvsock` (VM1) exposes a Unix socket (e.g. `/tmp/mcr.vsock1`) and
   only *accepts* a single incoming connection per controller-enable cycle
   (`VsockHsmClient::connect` -> `accept_host_stream`).
 - `vsocksrv --socket-type vsock` (VM2) binds a real `AF_VSOCK` CID/port and
@@ -22,7 +22,7 @@ bytes together:
 
 ```
 VM1 guest (azihsm_api_tests)
-   -> manticorevsock device -> /tmp/mcr.vsock1 (Unix socket, CH-managed)
+   -> azihsmvsock device -> /tmp/mcr.vsock1 (Unix socket, CH-managed)
         <-> host proxy (dials both sockets, relays bytes)
    -> /tmp/vsock2.sock (Unix socket, CH's built-in --vsock backend for VM2)
         -> virtio-vsock -> VM2 guest kernel -> vsocksrv (AF_VSOCK listener)
@@ -37,7 +37,7 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
 1. Connect to both Unix sockets.
 2. Send `CONNECT <port>\n` on each.
 3. Read and discard the `OK <digits>\n` acknowledgement line from each side
-   before relaying any payload bytes (both `manticorevsock` and Cloud
+   before relaying any payload bytes (both `azihsmvsock` and Cloud
    Hypervisor's built-in vsock backend send this ack today).
 4. Splice bytes bidirectionally until either side closes.
 
@@ -45,9 +45,9 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
 
 - VM1 launch script (`~/doit.sh`): boots with
   `--vsock cid=4,socket=/tmp/chv.vsock` and
-  `--manticorevsock cid=3,socket=/tmp/mcr.vsock1,port=5000`.
+  `--azihsmvsock cid=3,socket=/tmp/mcr.vsock1,port=5000`.
 - VM2 launch script (`~/doit2.sh`): boots with a plain
-  `--vsock cid=4,socket=/tmp/vsock2.sock` (no `manticorevsock`), sharing the
+  `--vsock cid=4,socket=/tmp/vsock2.sock` (no `azihsmvsock`), sharing the
   same bridge (`br0`) as VM1 for networking/SSH access.
 - A `vsocksrv` binary built for the guest architecture:
   ```bash
@@ -79,7 +79,7 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
    # ... Listening for HSM requests cid=... port=5000
    ```
 
-4. **Start the host proxy**, pointing it at VM1's manticorevsock socket and
+4. **Start the host proxy**, pointing it at VM1's azihsmvsock socket and
    VM2's vsock backend socket:
    ```bash
    sudo python3 ~/vsockproxy2.py \
@@ -101,7 +101,7 @@ SQE/CQE bytes bidirectionally with auto-reconnect. Any equivalent proxy must:
 
 ## Timing / backlog caveat
 
-`manticorevsock`'s `accept_host_stream()` only calls `accept()` once, during
+`azihsmvsock`'s `accept_host_stream()` only calls `accept()` once, during
 the controller's enable path (triggered once at guest boot when the
 `azihsm` kernel module probes the device). If the proxy has already been
 retrying connections against `/tmp/mcr.vsock1` before that enable happens
@@ -138,6 +138,6 @@ To avoid this:
 - **`Permission denied` connecting to the sockets**: both
   `/tmp/mcr.vsock1` and `/tmp/vsock2.sock` are root-owned; run the proxy
   with `sudo`.
-- Check `/tmp/chv.log` (VM1) for `manticorevsock`/`vsock_client` messages
+- Check `/tmp/chv.log` (VM1) for `azihsmvsock`/`vsock_client` messages
   and `/tmp/vsocksrv_vm2.log` (via SSH into VM2) for connection/request
   activity on the `StdHsm` side.

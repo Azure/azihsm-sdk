@@ -62,7 +62,7 @@ const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// opposed to `CONNECTION_READ_TIMEOUT`, which also bounds writing a
 /// response and, for AF_VSOCK, the initial idle wait). AF_UNIX mode is
 /// inherently single-connection: `serve`'s AF_UNIX loop always reconnects to
-/// the same peer (the cloud-hypervisor manticorevsock device), so there is
+/// the same peer (the cloud-hypervisor azihsmvsock device), so there is
 /// no other client whose fairness this timeout would protect (contrast the
 /// AF_VSOCK rationale on `CONNECTION_READ_TIMEOUT`). Applying the same 30s
 /// bound there instead let an ordinary idle gap between guest-issued HSM

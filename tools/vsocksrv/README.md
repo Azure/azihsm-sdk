@@ -6,7 +6,7 @@ client addresses with service-local DMA buffers, and returns the CQE and output
 payload.
 
 The server allocates and enables its HSM partition during startup. Partition 3
-is used by default to match the Manticore device.
+is used by default to match the AziHSM device.
 
 The server handles one client connection at a time: since all connections
 share the same HSM partition and a disconnect resets it (clearing keys,
@@ -30,11 +30,11 @@ RUST_LOG=vsocksrv=info cargo run --release -p vsocksrv -- --port 5000
 ```
 
 To run the service on the host and connect to the Unix socket created by Cloud
-Hypervisor's `--manticorevsock` option:
+Hypervisor's `--azihsmvsock` option:
 
 ```bash
 cargo run --release -p vsocksrv -- \
-	--socket-type unix --unix-socket /path/to/manticore.sock --port 5000
+	--socket-type unix --unix-socket /path/to/azihsm.sock --port 5000
 ```
 
 Unix mode sends `CONNECT <port>\n` before the framed protocol begins. Vsock
@@ -51,9 +51,9 @@ specific local CID and `--partition-id <id>` to select another HSM partition.
 Cloud Hypervisor uses the corresponding endpoint as follows:
 
 ```text
---manticorevsock cid=<guest_cid>,socket=<unix_socket>,port=5000
+--azihsmvsock cid=<guest_cid>,socket=<unix_socket>,port=5000
 ```
 
-See [BRIDGE_TESTING.md](BRIDGE_TESTING.md) for how to bridge a
-`manticorevsock` guest to `vsocksrv` running as an `AF_VSOCK` listener in a
+See [BRIDGE_TESTING.md](BRIDGE_TESTING.md) for how to bridge an
+`azihsmvsock` guest to `vsocksrv` running as an `AF_VSOCK` listener in a
 second VM.
