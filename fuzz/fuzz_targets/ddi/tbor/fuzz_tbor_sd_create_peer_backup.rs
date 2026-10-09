@@ -400,7 +400,7 @@ fuzz_target!(|input: FuzzInput| {
                 req.pok_local_backup[MASKED_SD_LEN - 1] ^= input.mutation_mask;
             }
             Fault::WrongKindBackup => {
-                // SdSealingKeyGen returns a genuine Local-scope masked-key
+                // SdSealingKeyGen returns a genuine partition-scoped masked-key
                 // envelope with the same fixed size, but the recovery
                 // primitive requires SdPartitionOwnerSeed.
                 req.pok_local_backup = ctx
