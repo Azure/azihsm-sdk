@@ -266,7 +266,7 @@ jobs:
       # supposed to guarantee both prerequisites above, so a skip here
       # would silently stop exercising the AF_VSOCK transport and its
       # session-reset tests instead of catching a real regression.
-      run: cargo xtask precheck --nextest --package azihsm_ddi_vsock --test vsocksrv_integration --profile ci-vsock-ddi
+      run: cargo xtask precheck --nextest --package azihsm_ddi_vsock --features real-session-tests --test vsocksrv_integration --profile ci-vsock-ddi
       env:
         AZIHSM_VSOCK_CI_REQUIRED: "1"
       continue-on-error: true

@@ -27,19 +27,38 @@ nix.workspace = true
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 azihsm_cred_encrypt.workspace = true
 azihsm_crypto.workspace = true
-# Forced "vsock" so `azihsm_ddi_mbor_test_helpers`'s generic
+# NOT given a forced feature here (see the `real-session-tests` feature
+# below for why): `azihsm_ddi_mbor_test_helpers`'s generic
 # `<AzihsmDdi as Ddi>::Dev` helpers (used by this crate's real-session
-# regression test) resolve to this crate's own `DdiVsockDev`, not another
-# backend. This is a dev-dependency-only cycle back onto this crate
-# (through the `azihsm_ddi` facade's optional `azihsm_ddi_vsock` dep),
-# which Cargo supports for test-only code. Linux-only (matching the
-# crate's own `nix`-backed implementation above and this test's
-# `#![cfg(target_os = "linux")]`): enabling `azihsm_ddi`'s "vsock"
-# feature on non-Linux targets would hit `azihsm_ddi`'s non-Linux
-# `compile_error!` and break cross-platform workspace builds/Clippy.
-azihsm_ddi = { features = ["vsock"], workspace = true }
+# regression test) only resolve to this crate's own `DdiVsockDev` when
+# `azihsm_ddi`'s "vsock" feature is active. This is a dev-dependency-only
+# cycle back onto this crate (through the `azihsm_ddi` facade's optional
+# `azihsm_ddi_vsock` dep), which Cargo supports for test-only code.
+azihsm_ddi.workspace = true
 azihsm_ddi_mbor_test_helpers.workspace = true
 x509.workspace = true
+
+[features]
+# Enables the real-session stale-close regression test in
+# tests/vsocksrv_integration.rs, which needs `azihsm_ddi`'s "vsock"
+# feature active so `azihsm_ddi_mbor_test_helpers`'s `<AzihsmDdi as
+# Ddi>::Dev`-generic helpers resolve to this crate's own `DdiVsockDev`.
+#
+# This is deliberately opt-in (not forced on by the dev-dependency
+# above) rather than forced on in `[dev-dependencies]`: Cargo unifies a
+# shared dependency's activated features across every package built in
+# the same invocation, so forcing "vsock" on unconditionally would leak
+# into *any* other workspace-wide build/test/clippy invocation that
+# also builds this crate's tests, breaking other crates' tests that
+# assume `AzihsmDdi` resolves to their own intended backend (`emu`,
+# `mock`, or the default `nix`/`win`) and tripping `azihsm_ddi`'s
+# mutual-exclusivity `compile_error!`s when another backend feature is
+# active in the same build. Gating it behind this feature confines
+# "vsock" activation to dedicated invocations that explicitly request
+# it (see the `ci-vsock-ddi` nextest profile / CI job), matching the
+# pattern `ddi/mbor/types/Cargo.toml` uses for its own `emu`/`mock`
+# features.
+real-session-tests = ["azihsm_ddi/vsock"]
 
 [lints]
 workspace = true
