@@ -27,9 +27,9 @@
 //!    and its leaf is `SndrPub`.  Only when the policy sets
 //!    `require_trusted_sa_key` is the sender **evidence** additionally
 //!    validated: its cert chains are anchored to the policy SAPOTA key, its
-//!    report's v2 `policy_hash` must equal `SHA-384(policy)`, and its
-//!    attested COSE_Key must equal the `SndrPub` recovered from the cert
-//!    chain.
+//!    v2 report must attest the `SndrPub` recovered from the cert chain.
+//!    The sealing authority may operate under a different policy; its
+//!    authorization comes from SATA and SAPOTA, not policy equality.
 //! 3. Unmask `masked_sealing_key` → `RcvrPriv` (must be an
 //!    [`SdSealing`](HsmVaultKeyKind::SdSealing) key) and derive `RcvrPub`.
 //! 4. HPKE-Auth-open `src_remote_backup` (`sk_r = RcvrPriv`, sender-auth
@@ -67,7 +67,6 @@ use azihsm_fw_hsm_oob::OobPtr;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmError;
-use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
@@ -191,8 +190,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             // Sender attestation: required only when the policy demands a
             // trusted Sealing Authority key.  Validate the three-chain
             // evidence, anchor the partition-owner chain to the policy
-            // SAPOTA key, and require the report to attest the same policy
-            // and the same `SndrPub` recovered above.  When the flag is
+            // SAPOTA key, and require the report to attest the same
+            // `SndrPub` recovered above. When the flag is
             // clear the evidence group is ignored (spec `Option<SndrEvidence>`
             // absent).
             if part_policy.flags.require_trusted_sa_key() {
@@ -201,11 +200,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                     return Err(HsmError::InvalidArg);
                 }
 
-                // The sender's report must attest to the same policy.
-                let expected = alloc.dma_alloc(POLICY_HASH_LEN)?;
-                pal.hash(io, HsmHashAlgo::Sha384, policy, expected, true)
-                    .await?;
-
+                // Retain the v2-report requirement, but do not equate an
+                // external sealing authority's policy with the restored SD's.
                 let src_hash = alloc.dma_alloc(POLICY_HASH_LEN)?;
                 let report_pk = alloc.dma_alloc(pk_sndr.len())?;
                 {
@@ -228,10 +224,6 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                     )
                     .await?;
                 }
-                if src_hash[..POLICY_HASH_LEN] != expected[..POLICY_HASH_LEN] {
-                    return Err(HsmError::InvalidArg);
-                }
-
                 // The attested key must be the sender key the cert chain
                 // authorized.
                 if *report_pk != *pk_sndr {

@@ -38,6 +38,7 @@ use super::*;
 /// # Errors
 ///
 /// Returns an error if:
+/// - The session uses EX, where KBKDF is not supported.
 /// - `label` or `context` cannot be encoded as an MBOR byte array.
 /// - The derived key properties cannot be converted to DDI key type/properties.
 /// - The underlying DDI KBKDF command fails.
@@ -46,6 +47,21 @@ use super::*;
 /// with both absent is rejected by the device.
 #[resiliency_key_op(key = "shared_secret")]
 pub(crate) fn kbkdf_derive(
+    shared_secret: &HsmGenericSecretKey,
+    hash_algo: HsmHashAlgo,
+    label: Option<&[u8]>,
+    context: Option<&[u8]>,
+    derived_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    if shared_secret.session().is_ex() {
+        kbkdf_derive_tbor(shared_secret, hash_algo, label, context, derived_key_props)
+    } else {
+        kbkdf_derive_mbor(shared_secret, hash_algo, label, context, derived_key_props)
+    }
+}
+
+/// Executes KBKDF using a legacy resident shared-secret key.
+fn kbkdf_derive_mbor(
     shared_secret: &HsmGenericSecretKey,
     hash_algo: HsmHashAlgo,
     label: Option<&[u8]>,
@@ -90,4 +106,15 @@ pub(crate) fn kbkdf_derive(
     }
 
     Ok((key_id.release(), dev_key_props))
+}
+
+/// Placeholder for KBKDF, which has no command in the current TBOR types.
+fn kbkdf_derive_tbor(
+    _shared_secret: &HsmGenericSecretKey,
+    _hash_algo: HsmHashAlgo,
+    _label: Option<&[u8]>,
+    _context: Option<&[u8]>,
+    _derived_key_props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    Err(HsmError::UnsupportedKeyOperation)
 }

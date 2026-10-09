@@ -25,12 +25,23 @@
 //! the engine's method (e.g. because an application made the engine the process
 //! default) carry no HSM handle; they are rejected with a clear error rather
 //! than signed — software RSA signing through the engine is out of scope for
-//! now. RSA-PSS is likewise not yet supported.
+//! now.
+//!
+//! RSA-PSS takes a different route (see [`AzihsmRsaPssSign`]): in 1.1.1
+//! `pkey_rsa_sign` does PSS padding in software and then calls the raw
+//! `rsa_priv_enc` the HSM-backed key cannot back, so PSS cannot ride the
+//! `RSA_METHOD` sign slot. Instead the engine's custom RSA `EVP_PKEY_METHOD`
+//! overrides `sign`: when the context requests PSS on an HSM-backed key it reads
+//! the digest, MGF1 and salt length from the standard signature parameters
+//! (`rsa_padding_mode:pss`, `rsa_pss_saltlen`, `rsa_mgf1_md`); the SDK builds the
+//! EMSA-PSS block host-side (MGF1 = signing digest) and the HSM performs the raw
+//! private-key operation — the same split as the PKCS#1 v1.5 path above.
 
 use std::ffi::c_int;
 use std::sync::OnceLock;
 
 use azihsm_api::HsmHashAlgo;
+use azihsm_api::HsmRsaPrivateKey;
 use azihsm_api::HsmRsaSignAlgo;
 use azihsm_api::HsmSigner;
 use azihsm_ossl_engine_core::error::EngineError;
@@ -38,6 +49,7 @@ use azihsm_ossl_engine_core::error::EngineResult;
 use azihsm_ossl_engine_core::ffi;
 use azihsm_ossl_engine_core::rsa_method::RsaSignHandler;
 use azihsm_ossl_engine_core::rsa_method::new_rsa_sign_method;
+use azihsm_ossl_engine_core::rsa_pkey_method::RsaPssSignHandler;
 use parking_lot::Mutex;
 
 /// Marker type carrying the engine's RSA sign logic (see [`RsaSignHandler`]).
@@ -82,6 +94,56 @@ impl RsaSignHandler for AzihsmRsaSign {
         let hash = hash_from_nid(md_nid)?;
         let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash);
         HsmSigner::sign_vec(&mut algo, key, m).map_err(|e| EngineError::wrap("RSA sign", e))
+    }
+}
+
+/// Recover the HSM private key stashed in `pkey`'s RSA ex_data, or NULL if
+/// `pkey` carries no engine-bound HSM RSA key (a software key).
+#[allow(unsafe_code)]
+fn hsm_key_from_pkey(pkey: *const ffi::EVP_PKEY) -> *const HsmRsaPrivateKey {
+    if pkey.is_null() {
+        return std::ptr::null();
+    }
+    // SAFETY: get0 borrows the RSA from pkey without taking ownership; pkey is
+    // valid for the call. A non-RSA or empty pkey yields NULL.
+    let rsa = unsafe { ffi::EVP_PKEY_get0_RSA(pkey.cast_mut()) };
+    if rsa.is_null() {
+        return std::ptr::null();
+    }
+    crate::rsaload::rsa_hsm_key(rsa)
+}
+
+/// Marker type carrying the engine's RSA-PSS sign logic (see
+/// [`RsaPssSignHandler`]).
+pub(crate) struct AzihsmRsaPssSign;
+
+impl RsaPssSignHandler for AzihsmRsaPssSign {
+    fn owns(pkey: *const ffi::EVP_PKEY) -> bool {
+        !hsm_key_from_pkey(pkey).is_null()
+    }
+
+    #[allow(unsafe_code)]
+    fn pss_sign(
+        pkey: *const ffi::EVP_PKEY,
+        md_nid: c_int,
+        salt_len: usize,
+        m: &[u8],
+    ) -> EngineResult<Vec<u8>> {
+        let key_ptr = hsm_key_from_pkey(pkey);
+        if key_ptr.is_null() {
+            return Err(EngineError::Other(
+                "no HSM key attached to RSA for PSS signing".into(),
+            ));
+        }
+        // SAFETY: key_ptr points to an HsmRsaPrivateKey owned by EngineData for
+        // the engine's lifetime; this callback runs while the key is live.
+        let key = unsafe { &*key_ptr };
+
+        // The SDK builds the EMSA-PSS block (MGF1 = signing digest) over the
+        // caller's pre-computed digest; the HSM performs the raw private-key op.
+        let hash = hash_from_nid(md_nid)?;
+        let mut algo = HsmRsaSignAlgo::with_pss_padding(hash, salt_len);
+        HsmSigner::sign_vec(&mut algo, key, m).map_err(|e| EngineError::wrap("RSA-PSS sign", e))
     }
 }
 
@@ -131,6 +193,36 @@ mod tests {
                 format!("{err}").contains("no HSM key attached"),
                 "unexpected error: {err}"
             );
+            ffi::RSA_free(rsa);
+        }
+    }
+
+    // A software RSA key (an EVP_PKEY with no HSM handle) is not owned by the PSS
+    // handler and is rejected rather than signed — the engine's sign path never
+    // falls back to a software signature.
+    #[test]
+    #[allow(unsafe_code)]
+    fn pss_owns_false_and_sign_rejects_software_key() {
+        // SAFETY: build an EVP_PKEY wrapping a fresh RSA with no HSM ex_data;
+        // everything is freed below.
+        unsafe {
+            let rsa = ffi::RSA_new();
+            assert!(!rsa.is_null(), "RSA_new");
+            let pkey = ffi::EVP_PKEY_new();
+            assert!(!pkey.is_null(), "EVP_PKEY_new");
+            assert_eq!(ffi::EVP_PKEY_set1_RSA(pkey, rsa), 1, "set1_RSA");
+            assert!(
+                !AzihsmRsaPssSign::owns(pkey),
+                "a key without an HSM handle must not be owned"
+            );
+            let digest = [0u8; 32];
+            let err = AzihsmRsaPssSign::pss_sign(pkey, ffi::NID_sha256 as c_int, 32, &digest)
+                .expect_err("a key without an HSM handle must be rejected");
+            assert!(
+                format!("{err}").contains("no HSM key attached"),
+                "unexpected error: {err}"
+            );
+            ffi::EVP_PKEY_free(pkey);
             ffi::RSA_free(rsa);
         }
     }

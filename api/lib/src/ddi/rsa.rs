@@ -208,7 +208,7 @@ fn rsa_aes_unwrap_key_tbor(
         scope,
         key_class: KEY_CLASS_AES,
         key_usage: tbor_unwrap_key_usage(&key_props)?,
-        oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
+        oaep_hash_algo: oaep_hash_to_tbor(oaep_hash),
         wrapped_blob,
         key_label: key_props.label().to_vec(),
     };
@@ -378,9 +378,9 @@ pub(crate) fn rsa_sign(
 
 /// Generates a key report (attestation) for the specified RSA private key.
 ///
-/// This is a typed wrapper around [`generate_key_report`] that enables the
-/// `#[resiliency_key_op]` proc macro to automatically handle partition restore,
-/// session reopen, and key refresh on retryable errors.
+/// Uses a resident key ID for legacy MBOR sessions and the masked key blob
+/// for EX/TBOR sessions. The `#[resiliency_key_op]` proc macro handles partition
+/// restore, session reopen, and key refresh on retryable errors.
 ///
 /// # Arguments
 ///
@@ -397,7 +397,12 @@ pub(crate) fn rsa_generate_key_report(
     report_data: &[u8],
     report: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
-    generate_key_report(&key.session(), key.handle(), report_data, report)
+    let session = key.session();
+    if session.is_ex() {
+        masked_key_report(&session, &key.masked_key_vec()?, report_data, report)
+    } else {
+        generate_key_report(&session, key.handle(), report_data, report)
+    }
 }
 
 /// Performs an RSA modular exponentiation operation.
@@ -520,6 +525,16 @@ fn get_rsa_unwrapping_key_tbor(
     }
     let crypto_key = hsm_wire_pub_to_crypto(&resp.pub_key)?;
     let pub_key_der = crypto_key.to_vec().map_hsm_err(HsmError::InternalError)?;
+    priv_key_props.set_flags(
+        priv_key_props.flags()
+            | HsmKeyFlags::LOCAL
+            | HsmKeyFlags::SENSITIVE
+            | HsmKeyFlags::EXTRACTABLE,
+    );
+    pub_key_props.set_flags(
+        (pub_key_props.flags() | HsmKeyFlags::LOCAL | HsmKeyFlags::EXTRACTABLE)
+            & !HsmKeyFlags::SENSITIVE,
+    );
     priv_key_props.set_pub_key_der(&pub_key_der);
     pub_key_props.set_pub_key_der(&pub_key_der);
     Ok((HsmKeyHandle::Unpinned, priv_key_props, pub_key_props))
@@ -530,6 +545,8 @@ fn get_rsa_unwrapping_key_tbor(
 /// The response key kind, re-derived public key, masked private-key metadata,
 /// and requested private/public properties are validated before an unpinned
 /// key-pair handle is returned.
+/// RSA/RSA-CRT short-input and device argument failures retain the legacy
+/// `DdiCmdFailure` result; ECC and other errors keep their existing mappings.
 fn rsa_aes_unwrap_key_pair_tbor(
     unwrapping_key: &HsmRsaPrivateKey,
     wrapped_key: &[u8],
@@ -544,7 +561,10 @@ fn rsa_aes_unwrap_key_pair_tbor(
     let (key_class, expected_key_kind) = tbor_key_class_and_kind(&priv_key_props)?;
     let unwrapping_modulus_len = unwrapping_key.size();
     if wrapped_key.len() < unwrapping_modulus_len {
-        return Err(HsmError::InvalidArgument);
+        return Err(match priv_key_props.kind() {
+            HsmKeyKind::Rsa | HsmKeyKind::RsaCrt => HsmError::DdiCmdFailure,
+            _ => HsmError::InvalidArgument,
+        });
     }
 
     // The host wrapper emits the OAEP ciphertext big-endian; TBOR consumes
@@ -558,14 +578,14 @@ fn rsa_aes_unwrap_key_pair_tbor(
         scope,
         key_class,
         key_usage: tbor_unwrap_key_usage(&priv_key_props)?,
-        oaep_hash_algo: oaep_hash_to_tbor(oaep_hash)?,
+        oaep_hash_algo: oaep_hash_to_tbor(oaep_hash),
         wrapped_blob,
         key_label: priv_key_props.label().to_vec(),
     };
     let mut cookie = None;
     let resp = unwrapping_key.with_dev(|dev| {
         dev.exec_op_tbor(&req, None, &mut cookie)
-            .map_err(HsmError::from)
+            .map_err(|err| map_tbor_key_pair_unwrap_error(priv_key_props.kind(), err))
     })?;
 
     if resp.key_kind != expected_key_kind {
@@ -587,6 +607,16 @@ fn rsa_aes_unwrap_key_pair_tbor(
         dev_priv_key_props,
         dev_pub_key_props,
     ))
+}
+
+/// Preserve legacy RSA unwrap argument errors without changing other DDI mappings.
+fn map_tbor_key_pair_unwrap_error(kind: HsmKeyKind, error: DdiError) -> HsmError {
+    match (kind, error) {
+        (HsmKeyKind::Rsa | HsmKeyKind::RsaCrt, DdiError::TborStatus(TborStatus::InvalidArg)) => {
+            HsmError::DdiCmdFailure
+        }
+        (_, error) => HsmError::from(error),
+    }
 }
 
 /// Converts `n_le || e_le` RSA wire bytes to the crypto crate's representation.
@@ -623,12 +653,12 @@ fn tbor_unwrap_key_usage(props: &HsmKeyProps) -> HsmResult<u64> {
 }
 
 /// Maps a supported OAEP hash to its TBOR wire discriminant.
-fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> HsmResult<u8> {
+fn oaep_hash_to_tbor(algo: HsmHashAlgo) -> u8 {
     match algo {
-        HsmHashAlgo::Sha256 => Ok(HASH_ALGO_SHA256),
-        HsmHashAlgo::Sha384 => Ok(HASH_ALGO_SHA384),
-        HsmHashAlgo::Sha512 => Ok(HASH_ALGO_SHA512),
-        _ => Err(HsmError::InvalidArgument),
+        HsmHashAlgo::Sha1 => HASH_ALGO_SHA1,
+        HsmHashAlgo::Sha256 => HASH_ALGO_SHA256,
+        HsmHashAlgo::Sha384 => HASH_ALGO_SHA384,
+        HsmHashAlgo::Sha512 => HASH_ALGO_SHA512,
     }
 }
 

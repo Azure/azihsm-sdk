@@ -403,6 +403,7 @@ mod round_trips {
         )?;
         azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
             crate::rsaimport::AzihsmRsaImport,
+            crate::rsasign::AzihsmRsaPssSign,
         >(&engine)?;
         Ok((engine, engine_raw))
     }
@@ -658,6 +659,103 @@ mod round_trips {
         unsafe { ffi::ENGINE_free(engine_raw) };
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         // input_path removed by _input_guard on drop.
+        Ok(())
+    }
+
+    /// A pure software RSA key (no HSM handle) signed with PSS through the engine
+    /// must be REJECTED, never delegated to a software signature. This exercises
+    /// the real `EVP_PKEY_sign` dispatch on a ctx bound to the engine — so our
+    /// `EVP_PKEY_METHOD` sign override actually runs — rather than calling the
+    /// handler directly; a regression that delegated software PSS would fail here.
+    /// No HSM is opened (the reject precedes any HSM work); only the mock unit
+    /// test drives it (the hardware smokes do not need a software-key path).
+    #[cfg(feature = "mock")]
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_rsa_pss_rejects_software_key(data: EngineData) -> EngineResult<()> {
+        use std::ffi::CString;
+
+        use openssl::rsa::Rsa;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // A software RSA-2048 key that was never imported into the HSM.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+
+        let pad_key = CString::new("rsa_padding_mode").unwrap();
+        let pad_val = CString::new("pss").unwrap();
+        let digest = [0u8; 32];
+        // SAFETY: a standard EVP_PKEY_sign sequence on a ctx bound to our engine
+        // (so the override dispatches); the software key carries no HSM handle, so
+        // the real sign must fail. Every rc is checked and the ctx is freed.
+        let rejected = unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new(sw_pkey.as_ptr().cast(), engine_raw);
+            assert!(!ctx.is_null(), "EVP_PKEY_CTX_new(sw pkey, engine)");
+            assert_eq!(ffi::EVP_PKEY_sign_init(ctx), 1, "EVP_PKEY_sign_init");
+            let md256 = ffi::EVP_sha256();
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl(
+                    ctx,
+                    -1,
+                    ffi::EVP_PKEY_OP_TYPE_SIG_CONST,
+                    ffi::EVP_PKEY_CTRL_MD_CONST,
+                    0,
+                    md256.cast_mut().cast(),
+                ),
+                1,
+                "set signature md"
+            );
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(ctx, pad_key.as_ptr(), pad_val.as_ptr()),
+                1,
+                "set rsa_padding_mode:pss"
+            );
+            // The size query succeeds (AUTOARGLEN, no ownership check); the real
+            // sign must then fail for this software key.
+            let mut siglen: usize = 0;
+            assert_eq!(
+                ffi::EVP_PKEY_sign(
+                    ctx,
+                    std::ptr::null_mut(),
+                    &mut siglen,
+                    digest.as_ptr(),
+                    digest.len(),
+                ),
+                1,
+                "PSS size query"
+            );
+            let mut sig = vec![0u8; siglen];
+            let rc = ffi::EVP_PKEY_sign(
+                ctx,
+                sig.as_mut_ptr(),
+                &mut siglen,
+                digest.as_ptr(),
+                digest.len(),
+            );
+            ffi::EVP_PKEY_CTX_free(ctx);
+            rc != 1
+        };
+        // Capture the queued error to pin that the ownership gate in sign_inner
+        // rejected — not pss_sign's backstop null-key guard. A regression removing
+        // only the owns() early-reject would fall through to pss_sign (whose guard
+        // still errors), so `rejected` alone would not catch it; the distinct
+        // gate message would.
+        let err_text = openssl::error::ErrorStack::get().to_string();
+        assert!(
+            rejected,
+            "software-key RSA-PSS through the engine must be rejected, not signed"
+        );
+        assert!(
+            err_text.contains("software RSA signing through the engine is not supported"),
+            "expected the ownership gate to reject, not pss_sign's backstop; got: {err_text}"
+        );
+
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         Ok(())
     }
 
@@ -1900,6 +1998,16 @@ mod mock {
         )
         .unwrap();
         round_trips::run_rsa_sign(data, &scratch.0).unwrap();
+    }
+
+    // A software RSA key signed with PSS through the engine must be rejected (the
+    // sign override never falls back to a software signature) — driven through a
+    // real EVP_PKEY_sign on an engine-bound ctx, not the handler directly (see
+    // round_trips::run_rsa_pss_rejects_software_key). No HSM is opened.
+    #[test]
+    #[serial]
+    fn rsa_pss_software_key_rejected() {
+        round_trips::run_rsa_pss_rejects_software_key(EngineData::new()).unwrap();
     }
 
     // Import an external RSA key through the pre-wrapped path

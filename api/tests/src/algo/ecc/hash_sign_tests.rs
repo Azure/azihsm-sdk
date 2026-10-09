@@ -405,7 +405,8 @@ fn run_invalid_signature_format_test(
     );
 }
 
-/// Verifies hash/curve mismatch does not incorrectly succeed
+/// Verifies EX signatures with differing hash/curve widths are valid.
+/// Legacy sessions retain their historical operation-completion check.
 fn run_hash_curve_mismatch_test(session: &HsmSession, curve: HsmEccCurve, algo: HsmHashAlgo) {
     let (priv_key, pub_key) = generate_ecc_key_pair(session, curve);
 
@@ -415,12 +416,15 @@ fn run_hash_curve_mismatch_test(session: &HsmSession, curve: HsmEccCurve, algo: 
     let mut verify_algo = HsmHashSignAlgo::new(algo);
     let result = HsmVerifier::verify(&mut verify_algo, &pub_key, data, &sig);
 
-    // must NOT incorrectly verify
+    #[cfg(feature = "session-ex-tests")]
+    let expected_result = matches!(result, Ok(true));
+    #[cfg(not(feature = "session-ex-tests"))]
+    let expected_result = result.is_ok();
+
     assert!(
-        result.is_ok(),
-        "Hash/curve mismatch should succeed for {:?}, got {:?}",
-        curve,
-        result
+        expected_result,
+        "Unexpected verification result for {:?} with {:?}: {:?}",
+        curve, algo, result
     );
 }
 

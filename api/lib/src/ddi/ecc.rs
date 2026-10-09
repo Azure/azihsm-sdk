@@ -538,9 +538,9 @@ fn ecc_der_pub_key_to_wire(curve: HsmEccCurve, der: &[u8]) -> HsmResult<Vec<u8>>
 
 /// Generates a key report (attestation) for the specified ECC private key.
 ///
-/// This is a typed wrapper around [`generate_key_report`] that enables the
-/// `#[resiliency_key_op]` proc macro to automatically handle partition restore,
-/// session reopen, and key refresh on retryable errors.
+/// Uses a resident key ID for legacy MBOR sessions and the masked key blob
+/// for EX/TBOR sessions. The `#[resiliency_key_op]` proc macro handles partition
+/// restore, session reopen, and key refresh on retryable errors.
 ///
 /// # Arguments
 ///
@@ -557,7 +557,12 @@ pub(crate) fn ecc_generate_key_report(
     report_data: &[u8],
     report: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
-    generate_key_report(&key.session(), key.handle(), report_data, report)
+    let session = key.session();
+    if session.is_ex() {
+        masked_key_report(&session, &key.masked_key_vec()?, report_data, report)
+    } else {
+        generate_key_report(&session, key.handle(), report_data, report)
+    }
 }
 
 impl From<HsmEccCurve> for DdiEccCurve {

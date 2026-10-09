@@ -29,6 +29,7 @@ use std::ffi::CStr;
 use std::ffi::OsStr;
 use std::ffi::c_char;
 use std::ffi::c_int;
+use std::ffi::c_uchar;
 use std::ffi::c_void;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -86,6 +87,57 @@ pub trait RsaImportHandler {
     ) -> EngineResult<()>;
 }
 
+/// Caller-supplied RSA-PSS signing, invoked through the `EVP_PKEY_METHOD` `sign`
+/// slot when the context requests PSS padding on an HSM-backed key. Implement on
+/// a marker type and pass it to [`register_rsa_pkey_method`].
+///
+/// PKCS#1 v1.5 signing does not come here — it stays on the `RSA_METHOD` sign
+/// slot (`RSA_sign`); only PSS, which 1.1.1 handles by padding in software and
+/// calling the raw `rsa_priv_enc` the HSM cannot back, needs this higher-level
+/// hook. A PSS request on a key the handler does not [`own`](Self::owns) is
+/// rejected, not delegated: the engine's sign path must never produce a software
+/// signature. Non-PSS paddings delegate to the built-in `sign` (PKCS#1 v1.5 then
+/// reaches the `RSA_METHOD` hook, which likewise rejects non-HSM keys).
+pub trait RsaPssSignHandler {
+    /// Whether `pkey` is one of the handler's keys (carries an HSM key handle).
+    fn owns(pkey: *const ffi::EVP_PKEY) -> bool;
+
+    /// PSS-sign the pre-computed digest `m` (digest NID `md_nid`, salt length
+    /// `salt_len` bytes, MGF1 digest equal to `md_nid`) with `pkey`'s HSM key,
+    /// returning a signature of exactly the modulus size.
+    fn pss_sign(
+        pkey: *const ffi::EVP_PKEY,
+        md_nid: c_int,
+        salt_len: usize,
+        m: &[u8],
+    ) -> EngineResult<Vec<u8>>;
+}
+
+/// OpenSSL PSS salt-length sentinels (negative `rsa_pss_saltlen` values).
+const RSA_PSS_SALTLEN_DIGEST: c_int = -1;
+const RSA_PSS_SALTLEN_AUTO: c_int = -2;
+const RSA_PSS_SALTLEN_MAX: c_int = -3;
+
+/// Resolve an explicitly-set `rsa_pss_saltlen` value to a concrete byte length,
+/// matching the 3.x provider: `DIGEST` → the digest length, `MAX` → `max_salt`
+/// (modulus − digest − 2), a non-negative value as-is. An explicit `AUTO` is
+/// rejected (the provider refuses it), as is any other sentinel. An *unset* salt
+/// length is handled by the caller (it defaults to the digest length), so `AUTO`
+/// here only ever means the caller set it explicitly.
+fn resolve_salt_len(raw: c_int, md_size: usize, max_salt: usize) -> EngineResult<usize> {
+    match raw {
+        RSA_PSS_SALTLEN_DIGEST => Ok(md_size),
+        RSA_PSS_SALTLEN_MAX => Ok(max_salt),
+        RSA_PSS_SALTLEN_AUTO => Err(EngineError::Other(
+            "rsa_pss_saltlen:auto is not supported; use digest, max, or an explicit length".into(),
+        )),
+        n if n >= 0 => Ok(n as usize),
+        other => Err(EngineError::Other(format!(
+            "unsupported RSA-PSS salt length ({other}); use digest, max, or a non-negative value"
+        ))),
+    }
+}
+
 /// Per-context state. `armed` is implied by any azihsm-specific field.
 #[derive(Clone, Default)]
 struct CtxState {
@@ -97,6 +149,11 @@ struct CtxState {
     input_key: Option<PathBuf>,
     wrapped_key: Option<PathBuf>,
     masked_key_path: Option<PathBuf>,
+    /// The `rsa_pss_saltlen` value if the caller set it explicitly (via the
+    /// numeric ctrl or the string form, which the built-in routes through ctrl).
+    /// `None` means unset — a sign then defaults to the digest length, matching
+    /// the 3.x provider. Not an arming field (it does not imply an import).
+    pss_saltlen: Option<c_int>,
 }
 
 impl CtxState {
@@ -123,6 +180,15 @@ struct Defaults {
     copy: Option<unsafe extern "C" fn(*mut ffi::EVP_PKEY_CTX, *mut ffi::EVP_PKEY_CTX) -> c_int>,
     cleanup: Option<unsafe extern "C" fn(*mut ffi::EVP_PKEY_CTX)>,
     keygen: Option<unsafe extern "C" fn(*mut ffi::EVP_PKEY_CTX, *mut ffi::EVP_PKEY) -> c_int>,
+    sign: Option<
+        unsafe extern "C" fn(
+            *mut ffi::EVP_PKEY_CTX,
+            *mut c_uchar,
+            *mut usize,
+            *const c_uchar,
+            usize,
+        ) -> c_int,
+    >,
     ctrl: Option<unsafe extern "C" fn(*mut ffi::EVP_PKEY_CTX, c_int, c_int, *mut c_void) -> c_int>,
     ctrl_str:
         Option<unsafe extern "C" fn(*mut ffi::EVP_PKEY_CTX, *const c_char, *const c_char) -> c_int>,
@@ -206,11 +272,10 @@ unsafe extern "C" fn c_cleanup(ctx: *mut ffi::EVP_PKEY_CTX) {
 }
 
 /// `ctrl` override: delegate every command to the built-in, additionally
-/// recording `rsa_keygen_bits` set through the direct ABI
-/// (`EVP_PKEY_CTX_set_rsa_keygen_bits`), which dispatches here rather than
-/// through `ctrl_str`. Without this an armed import would ignore a direct-ABI
-/// bit size and fall back to the 2048 default (and skip the keyWrapping
-/// non-2048 check).
+/// recording `rsa_keygen_bits` (for an armed import) and an explicitly-set
+/// `rsa_pss_saltlen` (for the PSS sign path). Both the direct numeric ABIs and
+/// the string forms reach here — the built-in `ctrl_str` routes those options
+/// back through `EVP_PKEY_CTX_ctrl`.
 ///
 /// # Safety
 /// Called only by OpenSSL's `EVP_PKEY_CTX_ctrl`; arguments per that contract.
@@ -233,6 +298,14 @@ unsafe extern "C" fn c_ctrl(
                 && let Some(state) = ctx_state().lock().get_mut(&(ctx as usize))
             {
                 state.bits = Some(bits);
+            }
+            // Record an explicitly-set PSS salt length so the sign path can tell
+            // it apart from the unset default (and reject an explicit `auto`).
+            if rc > 0
+                && ctrl_type == ffi::EVP_PKEY_CTRL_RSA_PSS_SALTLEN_CONST
+                && let Some(state) = ctx_state().lock().get_mut(&(ctx as usize))
+            {
+                state.pss_saltlen = Some(p1);
             }
             rc
         },
@@ -427,11 +500,240 @@ fn keygen_inner<H: RsaImportHandler>(
     H::import(&engine, &params, pkey)
 }
 
-/// Build the RSA `EVP_PKEY_METHOD`: a copy of the built-in with
-/// `init`/`copy`/`cleanup`/`ctrl_str`/`keygen` overridden. Never freed by us —
-/// the engine framework owns registered copies.
+/// Read an integer `EVP_PKEY_CTX_ctrl` getter (e.g. padding, salt length).
+/// # Safety
+/// `ctx` must be a valid signing `EVP_PKEY_CTX`.
 #[allow(unsafe_code)]
-pub fn new_rsa_pkey_method<H: RsaImportHandler>() -> EngineResult<*mut ffi::EVP_PKEY_METHOD> {
+unsafe fn ctrl_get_int(
+    ctx: *mut ffi::EVP_PKEY_CTX,
+    optype: c_int,
+    cmd: c_int,
+) -> EngineResult<c_int> {
+    let mut out: c_int = 0;
+    // SAFETY: ctx is valid; the getter writes an int into `out` via p2.
+    let rc = unsafe {
+        ffi::EVP_PKEY_CTX_ctrl(
+            ctx,
+            ffi::EVP_PKEY_RSA as c_int,
+            optype,
+            cmd,
+            0,
+            (&mut out as *mut c_int).cast(),
+        )
+    };
+    if rc <= 0 {
+        return Err(EngineError::Other("EVP_PKEY_CTX_ctrl getter failed".into()));
+    }
+    Ok(out)
+}
+
+/// Read an `EVP_MD *` `EVP_PKEY_CTX_ctrl` getter, returning NULL when unset.
+/// # Safety
+/// `ctx` must be a valid signing `EVP_PKEY_CTX`.
+#[allow(unsafe_code)]
+unsafe fn ctrl_get_md(
+    ctx: *mut ffi::EVP_PKEY_CTX,
+    keytype: c_int,
+    cmd: c_int,
+) -> *const ffi::EVP_MD {
+    let mut md: *const ffi::EVP_MD = std::ptr::null();
+    // SAFETY: ctx is valid; the getter writes an EVP_MD* into `md` via p2.
+    let rc = unsafe {
+        ffi::EVP_PKEY_CTX_ctrl(
+            ctx,
+            keytype,
+            ffi::EVP_PKEY_OP_TYPE_SIG_CONST,
+            cmd,
+            0,
+            (&mut md as *mut *const ffi::EVP_MD).cast(),
+        )
+    };
+    if rc <= 0 { std::ptr::null() } else { md }
+}
+
+/// C trampoline for the `EVP_PKEY_METHOD` `sign` slot: PSS on an HSM-backed key
+/// goes to `S::pss_sign`; a PSS request on a key the engine does not own is
+/// rejected (never software-signed); every non-PSS request — including PKCS#1
+/// v1.5, which reaches the `RSA_METHOD` sign slot via `RSA_sign` — delegates to
+/// the built-in `sign`.
+/// # Safety
+/// Called only by OpenSSL's `EVP_PKEY_sign`; arguments per that contract.
+#[allow(unsafe_code)]
+unsafe extern "C" fn c_sign<S: RsaPssSignHandler>(
+    ctx: *mut ffi::EVP_PKEY_CTX,
+    sig: *mut c_uchar,
+    siglen: *mut usize,
+    tbs: *const c_uchar,
+    tbslen: usize,
+) -> c_int {
+    catch_panic(
+        // SAFETY: forwarding the arguments OpenSSL passed to this sign callback.
+        || result_to_int(unsafe { sign_inner::<S>(ctx, sig, siglen, tbs, tbslen) }),
+        0,
+    )
+}
+
+/// Inner body of [`c_sign`]: PSS on an owned HSM key dispatches to `S::pss_sign`;
+/// anything else delegates to the built-in `sign`.
+///
+/// # Safety
+/// `ctx` is the signing context; `sig`/`siglen` the output buffer (or NULL for a
+/// size query) and `tbs`/`tbslen` the digest, per the `sign` contract.
+#[allow(unsafe_code)]
+unsafe fn sign_inner<S: RsaPssSignHandler>(
+    ctx: *mut ffi::EVP_PKEY_CTX,
+    sig: *mut c_uchar,
+    siglen: *mut usize,
+    tbs: *const c_uchar,
+    tbslen: usize,
+) -> EngineResult<()> {
+    // SAFETY: ctx is the signing context OpenSSL passed us; get0 borrows its key.
+    let pkey = unsafe { ffi::EVP_PKEY_CTX_get0_pkey(ctx) };
+    // PSS is the only padding handled here. Everything else — the size query
+    // (sig == NULL, already short-circuited by AUTOARGLEN) and PKCS#1 v1.5, which
+    // reaches the RSA_METHOD sign slot via RSA_sign — delegates to the built-in.
+    // SAFETY: ctx is a valid signing ctx.
+    let is_pss = !sig.is_null()
+        && !pkey.is_null()
+        && unsafe { ctrl_get_int(ctx, -1, ffi::EVP_PKEY_CTRL_GET_RSA_PADDING_CONST) }
+            .map(|p| p == ffi::RSA_PKCS1_PSS_PADDING_CONST)
+            .unwrap_or(false);
+
+    if !is_pss {
+        let d = defaults()?;
+        let sign = d
+            .sign
+            .ok_or(EngineError::Other("built-in RSA sign missing".into()))?;
+        // SAFETY: delegating the arguments OpenSSL passed us to the built-in.
+        if unsafe { sign(ctx, sig, siglen, tbs, tbslen) } != 1 {
+            return Err(EngineError::Other("RSA sign failed".into()));
+        }
+        return Ok(());
+    }
+
+    // PSS: the engine signs on the HSM and never falls back to software. A key
+    // the engine does not own carries no HSM handle, so it is rejected rather
+    // than signed in software (mirroring the PKCS#1 v1.5 RSA_METHOD hook) — the
+    // engine's sign path must never produce a software signature.
+    if !S::owns(pkey) {
+        return Err(EngineError::Other(
+            "RSA-PSS signing through the engine requires an HSM-backed key \
+             (software RSA signing through the engine is not supported)"
+                .into(),
+        ));
+    }
+
+    // PSS on an HSM key: resolve digest, MGF1, and salt length from the ctx.
+    // SAFETY: ctx is a valid signing ctx.
+    let md = unsafe { ctrl_get_md(ctx, -1, ffi::EVP_PKEY_CTRL_GET_MD_CONST) };
+    if md.is_null() {
+        return Err(EngineError::Other(
+            "RSA-PSS signing requires a signature digest".into(),
+        ));
+    }
+    // SAFETY: md is a valid EVP_MD returned by the getter.
+    let md_nid = unsafe { ffi::EVP_MD_type(md) };
+    // MGF1 must equal the signing digest: the SDK's PSS encoder (RsaPadPssAlgo)
+    // uses one hash for both the message digest and MGF1. On a valid PSS ctx the
+    // getter always reports a non-null digest (the explicit MGF1, or the signing
+    // md when unset), so a NULL means the getter failed — fail closed rather than
+    // silently signing with a different MGF1.
+    // SAFETY: ctx is valid.
+    let mgf1 = unsafe {
+        ctrl_get_md(
+            ctx,
+            ffi::EVP_PKEY_RSA as c_int,
+            ffi::EVP_PKEY_CTRL_GET_RSA_MGF1_MD_CONST,
+        )
+    };
+    if mgf1.is_null() {
+        return Err(EngineError::Other(
+            "could not read the RSA-PSS MGF1 digest".into(),
+        ));
+    }
+    // SAFETY: mgf1 is a valid EVP_MD (checked non-null).
+    if unsafe { ffi::EVP_MD_type(mgf1) } != md_nid {
+        return Err(EngineError::Other(
+            "RSA-PSS MGF1 digest must equal the signing digest".into(),
+        ));
+    }
+    // SAFETY: md is a valid EVP_MD; the size is non-negative.
+    let md_size = usize::try_from(unsafe { ffi::EVP_MD_size(md) })
+        .map_err(|_| EngineError::Other("negative digest size".into()))?;
+    // The pre-computed digest must be non-null (a null pointer with any length is
+    // undefined behavior for slice::from_raw_parts) and its length must match the
+    // signature digest, as the built-in pkey_rsa_sign enforces — reject a null or
+    // mismatched pre-hashed input cleanly rather than forwarding it to the HSM.
+    if tbs.is_null() {
+        return Err(EngineError::NullParam("tbs"));
+    }
+    if tbslen != md_size {
+        return Err(EngineError::Other(format!(
+            "digest length ({tbslen}) does not match the signature digest ({md_size})"
+        )));
+    }
+    // Modulus size, and the maximum PSS salt (modulus − digest − 2) the provider
+    // uses for saltlen:max.
+    // SAFETY: pkey is a valid RSA key (owned, checked).
+    let cap = usize::try_from(unsafe { ffi::EVP_PKEY_size(pkey) })
+        .map_err(|_| EngineError::Other("negative EVP_PKEY_size".into()))?;
+    // Validate the output descriptor BEFORE the HSM private-key operation so a
+    // null or undersized buffer does not consume a signing op. AUTOARGLEN already
+    // makes EVP_PKEY_sign reject *siglen < EVP_PKEY_size before dispatch; this
+    // check makes the copy locally sound regardless of that flag.
+    if siglen.is_null() {
+        return Err(EngineError::NullParam("siglen"));
+    }
+    // SAFETY: siglen is non-null (checked); it holds the caller's buffer capacity.
+    let buf_cap = unsafe { *siglen };
+    if buf_cap < cap {
+        return Err(EngineError::Other(format!(
+            "output buffer too small for RSA-PSS signature ({buf_cap} < {cap})"
+        )));
+    }
+    let max_salt = cap
+        .checked_sub(md_size)
+        .and_then(|v| v.checked_sub(2))
+        .ok_or(EngineError::Other("RSA modulus too small for PSS".into()))?;
+    // Salt length from the caller's explicitly-set value (recorded in c_ctrl):
+    // an unset context defaults to the digest length (the provider's default),
+    // while an explicit value — including `auto`, which is rejected — is resolved.
+    let explicit_salt = ctx_state()
+        .lock()
+        .get(&(ctx as usize))
+        .and_then(|s| s.pss_saltlen);
+    let salt_len = match explicit_salt {
+        None => md_size,
+        Some(v) => resolve_salt_len(v, md_size, max_salt)?,
+    };
+
+    // SAFETY: tbs is valid for tbslen bytes per the sign contract.
+    let digest = unsafe { std::slice::from_raw_parts(tbs, tbslen) };
+    let out = S::pss_sign(pkey, md_nid, salt_len, digest)?;
+
+    // A PSS signature is exactly the modulus size (== cap, already validated to
+    // fit the buffer); a shorter vector would be malformed.
+    if out.len() != cap {
+        return Err(EngineError::Other(format!(
+            "RSA-PSS signature is {} bytes, expected modulus size ({cap})",
+            out.len()
+        )));
+    }
+    // SAFETY: sig is non-null (PSS path requires it) and valid for buf_cap >= cap
+    // == out.len() bytes; siglen is writable (checked non-null).
+    unsafe {
+        std::ptr::copy_nonoverlapping(out.as_ptr(), sig, out.len());
+        *siglen = out.len();
+    }
+    Ok(())
+}
+
+/// Build the RSA `EVP_PKEY_METHOD`: a copy of the built-in with
+/// `init`/`copy`/`cleanup`/`ctrl_str`/`keygen`/`sign` overridden. Never freed by
+/// us — the engine framework owns registered copies.
+#[allow(unsafe_code)]
+pub fn new_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler>()
+-> EngineResult<*mut ffi::EVP_PKEY_METHOD> {
     // SAFETY: EVP_PKEY_meth_find returns the built-in const method.
     let builtin = unsafe { ffi::EVP_PKEY_meth_find(ffi::EVP_PKEY_RSA as c_int) };
     if builtin.is_null() {
@@ -442,6 +744,7 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler>() -> EngineResult<*mut ffi::EVP_
 
     let mut d = Defaults::default();
     let mut keygen_init = None;
+    let mut sign_init = None;
     let mut ctrl_dummy = None;
     // SAFETY: builtin is a valid method; the getters write the out-params.
     unsafe {
@@ -449,6 +752,7 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler>() -> EngineResult<*mut ffi::EVP_
         ffi::EVP_PKEY_meth_get_copy(builtin, &mut d.copy);
         ffi::EVP_PKEY_meth_get_cleanup(builtin, &mut d.cleanup);
         ffi::EVP_PKEY_meth_get_keygen(builtin, &mut keygen_init, &mut d.keygen);
+        ffi::EVP_PKEY_meth_get_sign(builtin, &mut sign_init, &mut d.sign);
         ffi::EVP_PKEY_meth_get_ctrl(builtin, &mut ctrl_dummy, &mut d.ctrl_str);
     }
     d.ctrl = ctrl_dummy;
@@ -474,6 +778,7 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler>() -> EngineResult<*mut ffi::EVP_
         ffi::EVP_PKEY_meth_set_copy(method, Some(c_copy));
         ffi::EVP_PKEY_meth_set_cleanup(method, Some(c_cleanup));
         ffi::EVP_PKEY_meth_set_keygen(method, keygen_init, Some(c_keygen::<H>));
+        ffi::EVP_PKEY_meth_set_sign(method, sign_init, Some(c_sign::<S>));
         ffi::EVP_PKEY_meth_set_ctrl(method, Some(c_ctrl), Some(c_ctrl_str));
         Ok(method)
     }
@@ -483,8 +788,14 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler>() -> EngineResult<*mut ffi::EVP_
 /// table. Only one handler type can be registered per process (the first
 /// wins). Released together with the EC/HKDF methods via
 /// [`release_pkey_methods`](crate::pkey_method::release_pkey_methods).
-pub fn register_rsa_pkey_method<H: RsaImportHandler>(engine: &Engine) -> EngineResult<()> {
-    ENGINE_METHODS.register(engine, ffi::EVP_PKEY_RSA as c_int, new_rsa_pkey_method::<H>)?;
+pub fn register_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler>(
+    engine: &Engine,
+) -> EngineResult<()> {
+    ENGINE_METHODS.register(
+        engine,
+        ffi::EVP_PKEY_RSA as c_int,
+        new_rsa_pkey_method::<H, S>,
+    )?;
     crate::pkey_method::install_pkey_meths_callback(engine)
 }
 
@@ -497,7 +808,7 @@ mod tests {
 
     use super::*;
 
-    /// Import must never dispatch in these parsing/recording tests.
+    /// Import/PSS-sign must never dispatch in these parsing/recording tests.
     struct PanicImport;
     impl RsaImportHandler for PanicImport {
         fn import(
@@ -508,13 +819,56 @@ mod tests {
             unreachable!("import must not be dispatched for this context")
         }
     }
+    impl RsaPssSignHandler for PanicImport {
+        fn owns(_pkey: *const ffi::EVP_PKEY) -> bool {
+            false
+        }
+        fn pss_sign(
+            _pkey: *const ffi::EVP_PKEY,
+            _md_nid: c_int,
+            _salt_len: usize,
+            _m: &[u8],
+        ) -> EngineResult<Vec<u8>> {
+            unreachable!("pss_sign must not be dispatched for this context")
+        }
+    }
+
+    #[test]
+    fn resolve_salt_len_maps_digest_max_explicit_and_rejects_auto() {
+        // DIGEST (-1) resolves to the digest length; MAX (-3) to the max salt.
+        assert_eq!(
+            resolve_salt_len(RSA_PSS_SALTLEN_DIGEST, 32, 222).unwrap(),
+            32
+        );
+        assert_eq!(resolve_salt_len(RSA_PSS_SALTLEN_MAX, 32, 222).unwrap(), 222);
+        // An explicit non-negative length is used as-is.
+        assert_eq!(resolve_salt_len(20, 32, 222).unwrap(), 20);
+        assert_eq!(resolve_salt_len(0, 32, 222).unwrap(), 0);
+        // An explicit AUTO (-2) is rejected, matching the provider.
+        assert!(resolve_salt_len(RSA_PSS_SALTLEN_AUTO, 32, 222).is_err());
+        // Any other sentinel is rejected.
+        assert!(resolve_salt_len(-99, 32, 222).is_err());
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn method_installs_sign_slot() {
+        let method = new_rsa_pkey_method::<PanicImport, PanicImport>().unwrap();
+        let mut sign = None;
+        let mut sign_init = None;
+        // SAFETY: method is our fresh method; the getter writes the out-params.
+        unsafe { ffi::EVP_PKEY_meth_get_sign(method, &mut sign_init, &mut sign) };
+        assert!(sign.is_some(), "sign slot must be installed");
+        // SAFETY: method is ours and unregistered.
+        unsafe { ffi::EVP_PKEY_meth_free(method) };
+    }
 
     /// Capture DEFAULTS (the method itself is left unregistered), then a built-in
     /// `EVP_PKEY_RSA` keygen ctx with a hand-inserted state entry — the
     /// trampolines run against it directly, no HSM involved.
     #[allow(unsafe_code)]
     fn make_ctx() -> *mut ffi::EVP_PKEY_CTX {
-        let method = new_rsa_pkey_method::<PanicImport>().unwrap();
+        let method = new_rsa_pkey_method::<PanicImport, PanicImport>().unwrap();
         // SAFETY: ours, unregistered.
         unsafe { ffi::EVP_PKEY_meth_free(method) };
         // SAFETY: a built-in RSA keygen ctx; the state entry is keyed by its ptr.
@@ -573,7 +927,7 @@ mod tests {
     #[test]
     #[allow(unsafe_code)]
     fn method_advertises_autoarglen() {
-        let method = new_rsa_pkey_method::<PanicImport>().unwrap();
+        let method = new_rsa_pkey_method::<PanicImport, PanicImport>().unwrap();
         let mut flags: c_int = 0;
         // SAFETY: method is our fresh method; the getter writes the out-params
         // (NULL for the ones we don't want).

@@ -23,12 +23,8 @@ use azihsm_ddi_mbor_sim::crypto::ecc::EccPublicKey as SimEccPublicKey;
 use azihsm_ddi_mbor_sim::report::CoseSign1Object;
 use azihsm_ddi_mbor_sim::report::KeyAttestationReport;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::*;
 use common::EccCurve;
 use libfuzzer_sys::arbitrary;
@@ -85,8 +81,8 @@ enum MaskingScope {
 impl MaskingScope {
     fn to_tbor(&self) -> u8 {
         match self {
-            Self::Ephemeral => 0b010,
-            Self::Local => 0b011,
+            Self::Ephemeral => common::KEY_SCOPE_EPHEMERAL,
+            Self::Local => common::KEY_SCOPE_LOCAL,
         }
     }
 }
@@ -123,25 +119,6 @@ enum Expected {
     UnsupportedKeyType,
     /// Not a valid masked blob (raw fuzz bytes or a public key).
     Rejected,
-}
-
-/// Drive `PartInit` → `PartFinal` so the partition is `Initialized`: this
-/// provisions the PID key that signs reports plus the Ephemeral/Local
-/// masking keys that `KeyReport` unmasks with.
-fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
-    let pota = CaKey::generate();
-    let policy = common::known_good_part_policy(pota.raw_pub());
-    let init = ctx
-        .part_init(
-            session,
-            &common::mach_seed(),
-            &policy,
-            &common::pota_thumbprint(),
-        )
-        .expect("PartInit should succeed");
-    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
-    ctx.part_final(session, &policy, &[], &chain.der_items())
-        .expect("PartFinal should succeed");
 }
 
 fn generate_masked_key(ctx: &TestCtx, session_id: u16, input: &FuzzInput) -> (Vec<u8>, Expected) {
@@ -399,7 +376,7 @@ fn verify_key_report(
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        finalize_partition(ctx, &session);
+        common::finalize_partition(ctx, &session);
 
         let (masked_key, expected) = if input.use_generated_key {
             generate_masked_key(ctx, session.session_id, &input)
@@ -413,12 +390,16 @@ fuzz_target!(|input: FuzzInput| {
         };
         let result = ctx.tbor(&req);
 
-        let encodable = req.masked_key.len() <= KEY_REPORT_MASKED_KEY_MAX_LEN;
+        let oversized = req.masked_key.len() > KEY_REPORT_MASKED_KEY_MAX_LEN;
         match (&result, expected) {
             (Err(err @ DdiError::DriverError(_)), _) => panic!("Crash Detected: {err}"),
-            (Err(err), _) if !encodable => assert!(
-                matches!(err, DdiError::TborEncodeError),
-                "oversized masked key must fail host-side encoding, got {err}"
+            (Err(err), _) if oversized => assert!(
+                matches!(
+                    err,
+                    DdiError::TborEncodeError
+                        | DdiError::TborStatus(TborStatus::TborInvalidFixedLength)
+                ),
+                "oversized masked key must be rejected, got {err}"
             ),
             (Ok(resp), Expected::Report { pub_key, coord_len }) => {
                 verify_key_report(ctx, &resp.report, &req.report_data, &pub_key, coord_len)

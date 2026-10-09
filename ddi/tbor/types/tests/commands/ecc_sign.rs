@@ -14,9 +14,9 @@
 //! public key is `x_le ‖ y_le` and the signature is `r_le ‖ s_le` (each
 //! component zero-padded to the curve's wire coordinate length; P-521 pads
 //! 66→68). `azihsm_crypto` is big-endian native, so the test reverses
-//! each component before verifying. Likewise the device internally
-//! reverses the supplied wire-LE digest to big-endian before signing, so
-//! the host verifies against the reversed digest.
+//! each component before verifying. The host verifies the full big-endian
+//! digest; ECDSA truncation retains its most significant curve-width bits
+//! when the digest is longer than the curve's order.
 
 #![cfg(feature = "emu")]
 
@@ -129,8 +129,8 @@ fn verify_wire_ecdsa(pub_le: &[u8], sig_le: &[u8], digest_le: &[u8]) -> bool {
     let mut sig_be = rev(r_le, raw_coord);
     sig_be.extend(rev(s_le, raw_coord));
 
-    // The device reversed the wire-LE digest to big-endian before signing;
-    // verify against that same big-endian digest.
+    // Verify the full big-endian digest; host ECDSA applies the same
+    // most-significant-bit truncation as the firmware.
     let digest_be = rev(digest_le, digest_le.len());
 
     Verifier::verify(&mut EccAlgo::default(), &pubkey, &digest_be, &sig_be)
@@ -167,8 +167,8 @@ fn ecc_sign_roundtrip_all_curves() {
 #[test]
 fn ecc_sign_all_supported_curve_digest_pairs() {
     for (curve, digest_lens) in [
-        (ECC_CURVE_P256, &[32usize][..]),
-        (ECC_CURVE_P384, &[32usize, 48][..]),
+        (ECC_CURVE_P256, &[32usize, 48, 64][..]),
+        (ECC_CURVE_P384, &[32usize, 48, 64][..]),
         (ECC_CURVE_P521, &[32usize, 48, 64][..]),
     ] {
         with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
@@ -379,22 +379,36 @@ fn ecc_sign_unsupported_digest_len_rejected() {
     }
 }
 
-/// Rejects a valid SHA-2 digest that exceeds the selected curve's field width.
+/// Verifies long digests retain their most significant curve-width bits.
 #[test]
-fn ecc_sign_digest_longer_than_curve_field_rejected() {
+fn ecc_sign_long_digests_use_most_significant_curve_bits() {
     for (curve, digest_len) in [
         (ECC_CURVE_P256, 48usize),
         (ECC_CURVE_P256, 64usize),
         (ECC_CURVE_P384, 64usize),
     ] {
-        with_generated_ecc_key(curve, |ctx, session_id, masked_key, _pub_key| {
-            ctx.expect_fw_reject(
-                &TborEccSignReq {
-                    session_id,
-                    masked_key,
-                    digest: vec![0xAB; digest_len],
-                },
-                TborStatus::InvalidArg,
+        with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
+            let digest: Vec<u8> = (0..digest_len)
+                .map(|index| u8::try_from(index).expect("digest byte offset must fit u8"))
+                .collect();
+            let signature = sign(ctx, session_id, masked_key, &digest);
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &digest),
+                "long digest signature must verify (curve {curve}, digest {digest_len} B)",
+            );
+
+            let mut discarded_bit_changed = digest.clone();
+            *discarded_bit_changed.first_mut().expect("nonempty digest") ^= 0x01;
+            assert!(
+                verify_wire_ecdsa(&pub_key, &signature, &discarded_bit_changed),
+                "discarded low digest bits must not affect verification (curve {curve}, digest {digest_len} B)",
+            );
+
+            let mut retained_bit_changed = digest;
+            *retained_bit_changed.last_mut().expect("nonempty digest") ^= 0x01;
+            assert!(
+                !verify_wire_ecdsa(&pub_key, &signature, &retained_bit_changed),
+                "changed high digest bits must invalidate the signature (curve {curve}, digest {digest_len} B)",
             );
         });
     }

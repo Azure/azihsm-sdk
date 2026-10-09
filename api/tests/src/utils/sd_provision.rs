@@ -440,8 +440,8 @@ fn sata_thumbprint() -> [u8; SATA_THUMBPRINT_LEN] {
     v
 }
 
-/// Provision a fresh partition's security domain and return a live,
-/// provisioned Crypto-Officer session (`Initialized` state).
+/// Initialize and finalize a fresh partition and return a live
+/// Crypto-Officer session with the partition in the `Initialized` state.
 ///
 /// Bootstrap CO under the default PSK, rotate it, reopen under the rotated
 /// PSK, `part_init_ex`, build a POTA-anchored PTA chain from the CSR, then
@@ -482,6 +482,13 @@ pub(crate) fn finalized_co_partition() -> (HsmPartition, HsmApiRev, HsmSession) 
         )
         .expect("open rotated CO session");
 
+    provision_partition(&session);
+    (part, rev, session)
+}
+
+/// Initialize and finalize the partition associated with an active CO session.
+/// The partition must be freshly reset and the default CO PSK already rotated.
+pub(crate) fn provision_partition(session: &HsmSession) {
     let pota = CaKey::generate();
     let policy = part_policy_with_pota(&pota.raw_pub(), true);
     let init = session
@@ -506,8 +513,6 @@ pub(crate) fn finalized_co_partition() -> (HsmPartition, HsmApiRev, HsmSession) 
     session
         .part_final_ex(&policy, &certs, None)
         .expect("part_final_ex");
-
-    (part, rev, session)
 }
 
 /// Build a policy naming **this** partition as the backing partition

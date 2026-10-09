@@ -59,6 +59,7 @@ enum TborMaskedKeyKind {
     Secret256,
     Secret384,
     Secret521,
+    SdSealing,
     VarLenHmacSha256,
     VarLenHmacSha384,
     VarLenHmacSha512,
@@ -84,6 +85,7 @@ impl TryFrom<u8> for TborMaskedKeyKind {
             KEY_KIND_SECRET256 => Self::Secret256,
             KEY_KIND_SECRET384 => Self::Secret384,
             KEY_KIND_SECRET521 => Self::Secret521,
+            KEY_KIND_SD_SEALING => Self::SdSealing,
             KEY_KIND_VAR_LEN_HMAC_SHA256 => Self::VarLenHmacSha256,
             KEY_KIND_VAR_LEN_HMAC_SHA384 => Self::VarLenHmacSha384,
             KEY_KIND_VAR_LEN_HMAC_SHA512 => Self::VarLenHmacSha512,
@@ -111,6 +113,7 @@ impl TborMaskedKeyKind {
             Self::Secret256 => (HsmKeyKind::SharedSecret, 256, None),
             Self::Secret384 => (HsmKeyKind::SharedSecret, 384, None),
             Self::Secret521 => (HsmKeyKind::SharedSecret, 521, None),
+            Self::SdSealing => (HsmKeyKind::Sealing, 384, None),
             Self::VarLenHmacSha256 => (HsmKeyKind::HmacSha256, 256, None),
             Self::VarLenHmacSha384 => (HsmKeyKind::HmacSha384, 384, None),
             Self::VarLenHmacSha512 => (HsmKeyKind::HmacSha512, 512, None),
@@ -711,6 +714,27 @@ mod tests {
             HsmEccSignAlgo::masked_key_info(&no_sign),
             Err(HsmError::InvalidKey)
         );
+    }
+
+    #[test]
+    fn masked_sealing_key_props_decode_metadata() {
+        let mut blob = unchecked_ecc_blob(HsmKeyScope::Local as u8);
+        blob[26] = KEY_KIND_SD_SEALING;
+        let usage = HsmMaskedKeyAttributes::DERIVE.bits()
+            | HsmMaskedKeyAttributes::LOCAL.bits()
+            | (3u64 << TBOR_KEY_SCOPE_SHIFT);
+        blob[28..36].copy_from_slice(&usage.to_le_bytes());
+        let props = HsmMaskedKey::to_key_props(&blob).expect("sealing key metadata");
+        assert_eq!(props.kind(), HsmKeyKind::Sealing);
+        assert_eq!(props.class(), HsmKeyClass::Secret);
+        assert_eq!(props.bits(), 384);
+        assert!(props.can_derive());
+        assert!(!props.can_sign());
+        for length in 0..blob.len() {
+            assert!(HsmMaskedKey::to_key_props(&blob[..length]).is_err());
+        }
+        blob.push(0);
+        assert!(HsmMaskedKey::to_key_props(&blob).is_err());
     }
 
     #[test]
