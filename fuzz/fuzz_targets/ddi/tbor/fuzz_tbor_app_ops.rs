@@ -114,7 +114,7 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                                     Err(DdiError::TborStatus(status))
                                         if status == TborStatus::FileHandleSessionIdDoesNotMatch
                                 ),
-                                "SessionClose for a different session ID should be rejected: {result:?}"
+                                "SessionClose for a different session ID should be rejected"
                             );
                             file_handle
                                 .session_close(opened_session_id)
