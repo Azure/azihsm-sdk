@@ -285,6 +285,10 @@ pub(crate) fn generate_key_report(
     report_data: &[u8],
     report: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
+    // Oversized report_data can't be encoded at all; reject it locally
+    // regardless of pass. This also keeps the size-query pass (`report:
+    // None`) working even when the caller hasn't assembled a valid
+    // `report_data` payload yet.
     if report_data.len() > DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
         return Err(HsmError::InvalidArgument);
     }
@@ -292,6 +296,19 @@ pub(crate) fn generate_key_report(
     let Some(report) = report else {
         return Ok(DdiAttestKeyResp::MAX_REPORT_SIZE);
     };
+
+    // Real hardware requires report_data to be exactly MAX_REPORT_DATA_SIZE
+    // bytes; a short payload is rejected deep in firmware's `key_report()`
+    // crypto call, which surfaces to callers as the generic
+    // `HsmError::DdiCmdFailure` (see `ddi/mod.rs`'s `DdiError` → `HsmError`
+    // mapping). Return that same status here directly, now that we know
+    // this is a real generation attempt (not a size query) — this avoids an
+    // unnecessary device round-trip for an input that is already known to
+    // be invalid, while remaining indistinguishable to callers from the
+    // device-rejected case.
+    if report_data.len() != DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
+        return Err(HsmError::DdiCmdFailure);
+    }
 
     if report.len() < DdiAttestKeyResp::MAX_REPORT_SIZE {
         return Err(HsmError::BufferTooSmall);
