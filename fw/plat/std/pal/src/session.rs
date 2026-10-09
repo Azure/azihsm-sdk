@@ -129,11 +129,16 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// For [`Pending`](HsmSessionState::Pending) slots no vault entry
     /// exists yet, so steps 1–3 are skipped and only step 4 runs.
+    /// [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation) slots
+    /// have no backing vault key after partition disable and likewise
+    /// only require freeing the logical slot.
     async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
         let entry = self.active_part_mut(io.pid())?;
 
-        // Pending slots: no vault state to clean up.
-        if matches!(entry.session_table.state(id), HsmSessionState::Pending) {
+        if matches!(
+            entry.session_table.state(id),
+            HsmSessionState::Pending | HsmSessionState::NeedsRenegotiation
+        ) {
             entry.session_table.delete(id)?;
             return Ok(());
         }

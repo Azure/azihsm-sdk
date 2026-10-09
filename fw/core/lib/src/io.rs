@@ -603,13 +603,46 @@ impl<P: HsmPal> Hsm<P> {
 
     /// Handles an [`OP_FLUSH`] IO command.
     ///
-    /// Returns [`HsmError::IoChannelUnknownOp`] — flush is not yet supported.
-    async fn handle_flush_op(&self, _io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
-        Err(OpError::new(
-            HsmError::IoChannelUnknownOp,
-            HostStatus::INVALID_COMMAND_OPCODE,
-        ))
+    /// Tears down the SQE's session without DMA or a DDI response body.
+    /// An already-free slot is an idempotent cleanup.
+    async fn handle_flush_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
+        let sess_id = flush_session_id(&Sqe::from(io.sqe()))
+            .op_status(HostStatus::INVALID_FIELD_IN_COMMAND)?;
+        let _lock = self
+            .pal()
+            .partition_lock(io)
+            .await
+            .op_status(HostStatus::INTERNAL_ERROR)?;
+        let result = self
+            .pal()
+            .session_destroy(io, HsmSessId::from(sess_id))
+            .await;
+        flush_session_completion(sess_id, result)
     }
+}
+
+fn flush_session_completion(sess_id: u16, result: HsmResult<()>) -> Result<HsmOpStatus, OpError> {
+    match result {
+        Ok(()) | Err(HsmError::SessionNotFound) => Ok(HsmOpStatus::new(
+            0,
+            SessionCtrl::Close,
+            Some(sess_id),
+            None,
+            true,
+        )),
+        Err(err) => Err(err).op_status(HostStatus::INTERNAL_ERROR),
+    }
+}
+
+fn flush_session_id(sqe: &Sqe<'_>) -> HsmResult<u16> {
+    let flags = sqe.session_flags();
+    if flags.ctrl() != SessionCtrl::Close as u8 {
+        return Err(HsmError::InvalidSessionControlOpcode);
+    }
+    if !flags.id_valid() {
+        return Err(HsmError::SessionExpected);
+    }
+    Ok(sqe.session_id())
 }
 
 /// Fields extracted from a validated MBOR / TBOR IO SQE.
@@ -663,6 +696,86 @@ fn classify_session_state(session_ctrl: SessionCtrl, state: HsmSessionState) -> 
 #[cfg(test)]
 mod session_gate_tests {
     use super::*;
+
+    #[test]
+    fn flush_success_and_absent_session_report_closed_completion() {
+        for sess_id in [0, 7, u16::MAX] {
+            for result in [Ok(()), Err(HsmError::SessionNotFound)] {
+                let status = flush_session_completion(sess_id, result).unwrap();
+                let flags = CqeDw0::from(status.cqe_dw0_session);
+                let ids = CqeDw1::from(status.cqe_dw1);
+                assert_eq!(status.resp_len, 0);
+                assert_eq!(flags.dst_len(), 0);
+                assert_eq!(flags.session_ctrl(), SessionCtrl::Close as u8);
+                assert!(flags.session_id_valid());
+                assert!(flags.session_closed());
+                assert!(!flags.app_vault_id_valid());
+                assert_eq!(ids.session_id(), sess_id);
+                assert_eq!(ids.app_vault_id(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn flush_preserves_other_teardown_errors() {
+        for err in [
+            HsmError::KeyNotFound,
+            HsmError::InvalidArg,
+            HsmError::InternalError,
+        ] {
+            let result = flush_session_completion(7, Err(err)).unwrap_err();
+            assert_eq!(result.err, err);
+            assert_eq!(result.status, HostStatus::INTERNAL_ERROR);
+        }
+    }
+
+    #[test]
+    fn flush_uses_sqe_session_without_dma_buffers() {
+        for sess_id in [0, 7, u16::MAX] {
+            let sqe = SqeBuilder::new()
+                .cmd(CmdDword::new().with_op(OP_FLUSH))
+                .session_flags(
+                    SessionFlags::new()
+                        .with_ctrl(SessionCtrl::Close as u8)
+                        .with_id_valid(true),
+                )
+                .session_id(sess_id)
+                .build();
+            assert_eq!(flush_session_id(&Sqe::from(&sqe)), Ok(sess_id));
+        }
+    }
+
+    #[test]
+    fn flush_rejects_wrong_session_control() {
+        for ctrl in [
+            SessionCtrl::NoSession,
+            SessionCtrl::Open,
+            SessionCtrl::InSession,
+        ] {
+            let sqe = SqeBuilder::new()
+                .session_flags(
+                    SessionFlags::new()
+                        .with_ctrl(ctrl as u8)
+                        .with_id_valid(true),
+                )
+                .build();
+            assert_eq!(
+                flush_session_id(&Sqe::from(&sqe)),
+                Err(HsmError::InvalidSessionControlOpcode)
+            );
+        }
+    }
+
+    #[test]
+    fn flush_requires_session_id_valid() {
+        let sqe = SqeBuilder::new()
+            .session_flags(SessionFlags::new().with_ctrl(SessionCtrl::Close as u8))
+            .build();
+        assert_eq!(
+            flush_session_id(&Sqe::from(&sqe)),
+            Err(HsmError::SessionExpected)
+        );
+    }
 
     #[test]
     fn no_session_and_open_never_require_a_live_slot() {
