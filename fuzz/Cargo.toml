@@ -140,6 +140,7 @@ bench = false
 doc = false
 name = "fuzz_tbor_sd_sealing_key_gen"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_sealing_key_gen.rs"
+test = false
 
 [[bin]]
 bench = false
