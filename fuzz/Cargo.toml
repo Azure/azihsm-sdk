@@ -40,6 +40,13 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_cmd_reqs"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_cmd_reqs.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_request_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_view.rs"
 test = false
@@ -56,6 +63,13 @@ bench = false
 doc = false
 name = "fuzz_tbor_response_view"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_view.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_dispatcher"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_dispatcher.rs"
 test = false
 
 [[bin]]
@@ -96,6 +110,13 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_dispatcher_aes_fp"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_dispatcher_aes_fp.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_attest_key"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_attest_key.rs"
 test = false
@@ -119,4 +140,11 @@ bench = false
 doc = false
 name = "fuzz_tbor_ecdh_key_exchange"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecdh_key_exchange.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_app_ops"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_app_ops.rs"
 test = false
