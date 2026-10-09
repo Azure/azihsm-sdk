@@ -607,13 +607,3 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     ctx.tbor_oob(&req, &oob)
         .expect("test security-domain creation should succeed");
 }
-
-fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
-    let index = u8::try_from(oob_items.len()).expect("evidence count fits descriptor index");
-    let length = u16::try_from(der.len()).expect("evidence item length fits descriptor");
-    oob_items.push(der.to_vec());
-    CertDescriptor {
-        index,
-        length: length.into(),
-    }
-}
