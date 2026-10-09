@@ -237,6 +237,48 @@ jobs:
         echo "One or more tests failed."
         exit 1
 
+  test_ubuntu_vsock_ddi:
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: ./.github/actions/ubuntu-setup
+    - name: Load vsock_loopback kernel module
+      # AF_VSOCK loopback (connecting to VMADDR_CID_LOCAL from the same
+      # host) requires this module; it isn't loaded by default on
+      # GitHub-hosted runners.
+      run: sudo modprobe vsock_loopback
+    - name: Build vsocksrv
+      # azihsm_ddi_vsock's integration test spawns this binary directly
+      # (it has no lib target, so Cargo can't wire it up as a
+      # dev-dependency); build it explicitly so the test finds it under
+      # target/debug.
+      run: cargo build --package vsocksrv
+    - name: Run AF_VSOCK DDI tests against vsocksrv
+      id: test-vsock-ddi
+      # AZIHSM_VSOCK_CI_REQUIRED turns the tests' usual
+      # skip-if-unavailable fallback into a hard failure: this job is
+      # supposed to guarantee both prerequisites above, so a skip here
+      # would silently stop exercising the AF_VSOCK transport and its
+      # session-reset tests instead of catching a real regression.
+      run: cargo xtask precheck --nextest --package azihsm_ddi_vsock --test vsocksrv_integration --profile ci-vsock-ddi
+      env:
+        AZIHSM_VSOCK_CI_REQUIRED: "1"
+      continue-on-error: true
+    - name: Generate nextest report
+      id: nextest-report
+      run: cargo xtask precheck --nextest-report
+    - name: Fail if any tests failed
+      if: ${{ steps.test-vsock-ddi.outcome == 'failure' }}
+      run: |
+        echo "One or more tests failed."
+        exit 1
+
   test_azihsm-arm64-gh-ubuntu2404-pool_emu_ddi:
 
     runs-on: azihsm-arm64-gh-ubuntu2404-pool

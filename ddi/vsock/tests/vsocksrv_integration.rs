@@ -420,18 +420,31 @@ fn assert_get_api_rev_succeeds(dev: &azihsm_ddi_vsock::DdiVsockDev) {
     );
 }
 
+/// Set by the dedicated CI job that's supposed to guarantee both
+/// prerequisites (loopback module loaded, `vsocksrv` built) are present,
+/// so a missing prerequisite there is a real CI misconfiguration rather
+/// than an expected local-dev skip: `bridge_or_skip!`/`vsocksrv_or_skip!`
+/// panic instead of skipping when this is set, so that job fails loudly
+/// instead of silently reporting these tests as passed-but-skipped.
+const VSOCK_CI_REQUIRED_ENV: &str = "AZIHSM_VSOCK_CI_REQUIRED";
+
 /// Skips the running test with a clear message if `bridge` is `None`
-/// (i.e. `AF_VSOCK` loopback is unavailable in this environment).
+/// (i.e. `AF_VSOCK` loopback is unavailable in this environment) —
+/// unless [`VSOCK_CI_REQUIRED_ENV`] is set, in which case it panics
+/// instead, since that marks an environment that's supposed to
+/// guarantee loopback is available.
 macro_rules! bridge_or_skip {
     ($bridge:expr) => {
         match $bridge {
             Some(bridge) => bridge,
             None => {
-                eprintln!(
-                    "SKIP: AF_VSOCK loopback unavailable (vsock_loopback \
+                let msg = "AF_VSOCK loopback unavailable (vsock_loopback \
                      kernel module likely not loaded); run `sudo modprobe \
-                     vsock_loopback` to exercise this test for real."
-                );
+                     vsock_loopback` to exercise this test for real.";
+                if std::env::var_os(VSOCK_CI_REQUIRED_ENV).is_some() {
+                    panic!("{msg}");
+                }
+                eprintln!("SKIP: {msg}");
                 return;
             }
         }
@@ -440,17 +453,20 @@ macro_rules! bridge_or_skip {
 
 /// Skips the running test with a clear message if `vsocksrv` is `None`
 /// (i.e. the binary hasn't been built in this environment); see
-/// [`locate_vsocksrv_bin`].
+/// [`locate_vsocksrv_bin`]. Panics instead when [`VSOCK_CI_REQUIRED_ENV`]
+/// is set — see [`bridge_or_skip`].
 macro_rules! vsocksrv_or_skip {
     ($vsocksrv:expr) => {
         match $vsocksrv {
             Some(vsocksrv) => vsocksrv,
             None => {
-                eprintln!(
-                    "SKIP: vsocksrv binary not found; run `cargo build -p \
+                let msg = "vsocksrv binary not found; run `cargo build -p \
                      vsocksrv` (or set VSOCKSRV_BIN) to exercise this test \
-                     for real."
-                );
+                     for real.";
+                if std::env::var_os(VSOCK_CI_REQUIRED_ENV).is_some() {
+                    panic!("{msg}");
+                }
+                eprintln!("SKIP: {msg}");
                 return;
             }
         }

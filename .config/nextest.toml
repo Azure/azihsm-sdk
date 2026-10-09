@@ -67,3 +67,8 @@ path = "junit.xml"
 # against a live vsocksrv process
 [profile.ci-api-sock.junit]
 path = "junit.xml"
+
+# profile for running the AF_VSOCK DDI integration tests against a live
+# vsocksrv process over real AF_VSOCK loopback
+[profile.ci-vsock-ddi.junit]
+path = "junit.xml"
