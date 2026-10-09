@@ -29,6 +29,8 @@
 //! without a copy.
 
 use core::cell::Cell;
+use core::future::poll_fn;
+use core::task::Poll;
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmCustomDispatch;
@@ -37,6 +39,7 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
 use azihsm_fw_uno_drivers_boot_status as boot_status;
@@ -94,6 +97,7 @@ use embassy_futures::select::Either;
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
+use embassy_sync::waitqueue::WakerRegistration;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -261,6 +265,28 @@ const WAKE_TABLE: [WakeFn; MAX_IRQ] = {
     t
 };
 
+/// Number of distinct hardware submission-queue ids the live-migration
+/// drain tracks. `queue_id` is the IIC 8-bit "source queue identifier"
+/// (identical to the Admin `device_sq_id`), so 256 slots cover its full
+/// range and indexing by the raw id can never go out of bounds.
+const SQ_DRAIN_SLOTS: usize = 256;
+
+/// Per-submission-queue in-flight host-IO accounting for the live-migration
+/// SQ-delete drain.
+///
+/// `queue_id` — the hardware source queue id the IIC tags onto each inbound
+/// IO — equals the Admin `device_sq_id`, so a single counter keyed by
+/// `queue_id` lets [`try_handle_create_delete_sq`](UnoHsmPal::try_handle_create_delete_sq)'s
+/// `Delete` arm wait until every IO already accepted from the queue being
+/// torn down has finished.
+pub(crate) struct SqDrainState {
+    /// In-flight host-IO count per `queue_id`.
+    inflight: [u16; SQ_DRAIN_SLOTS],
+
+    /// Waker for a task awaiting a queue's in-flight count to reach zero.
+    waker: WakerRegistration,
+}
+
 /// The Uno HSM platform abstraction layer.
 ///
 /// Holds static references to the IIC, OIC, GDMA, and IPC drivers.
@@ -316,6 +342,10 @@ pub struct UnoHsmPal {
     /// being torn down can't be registered with the engine after the
     /// session's engine-side delete (see `vault.rs`).
     pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
+
+    /// In-flight host-IO accounting for the live-migration SQ-delete drain
+    /// (see [`try_handle_create_delete_sq`](Self::try_handle_create_delete_sq)).
+    pub(crate) sq_drain: SingleCell<SqDrainState>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -421,6 +451,10 @@ impl Default for UnoHsmPal {
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
             fp_bulk_lock: Mutex::new(()),
+            sq_drain: SingleCell::new(SqDrainState {
+                inflight: [0; SQ_DRAIN_SLOTS],
+                waker: WakerRegistration::new(),
+            }),
         }
     }
 }
@@ -627,6 +661,9 @@ impl UnoHsmPal {
                 if self.try_handle_pfn_enable(channel, buf).await {
                     return;
                 }
+                if self.try_handle_create_delete_sq(channel, buf).await {
+                    return;
+                }
                 buf[0] |= 0x80;
                 self.ipc.reply(channel as u8, buf);
             }
@@ -687,6 +724,153 @@ impl UnoHsmPal {
         true
     }
 
+    /// Records that a host IO accepted from `queue_id` has entered the
+    /// pipeline, for the live-migration SQ-delete drain. Paired with
+    /// [`sq_inflight_dec`](Self::sq_inflight_dec) in
+    /// [`drop_io`](azihsm_fw_hsm_pal_traits::HsmIoController::drop_io), the
+    /// universal IO teardown point. A `queue_id` outside the tracked range
+    /// is ignored — it can never be the target of an LM SQ-delete, whose
+    /// `device_sq_id` is an 8-bit id.
+    pub(crate) fn sq_inflight_inc(&self, queue_id: u16) {
+        self.sq_drain.with(|s| {
+            if let Some(c) = s.inflight.get_mut(queue_id as usize) {
+                *c = c.saturating_add(1);
+            }
+        });
+    }
+
+    /// Records that a host IO accepted from `queue_id` has finished
+    /// teardown. Wakes a pending SQ-delete drain once the queue's in-flight
+    /// count reaches zero.
+    pub(crate) fn sq_inflight_dec(&self, queue_id: u16) {
+        self.sq_drain.with(|s| {
+            if let Some(c) = s.inflight.get_mut(queue_id as usize) {
+                *c = c.saturating_sub(1);
+                if *c == 0 {
+                    s.waker.wake();
+                }
+            }
+        });
+    }
+
+    /// Clears the in-flight count for `queue_id` back to zero.
+    ///
+    /// Called when the Admin (re)creates a submission queue. A `queue_id`
+    /// reused across a live-migration restore must not inherit a stale,
+    /// non-zero count from the queue's previous life — every IO from that
+    /// prior life already completed through `drop_io` before the SQ was
+    /// deleted, so the correct baseline for a freshly created queue is zero.
+    pub(crate) fn sq_inflight_reset(&self, queue_id: u16) {
+        self.sq_drain.with(|s| {
+            if let Some(c) = s.inflight.get_mut(queue_id as usize) {
+                *c = 0;
+            }
+        });
+    }
+
+    /// Awaits until no host IO accepted from submission queue `queue_id`
+    /// remains in flight.
+    ///
+    /// The Admin disables the hardware submission queue before sending the
+    /// `CreateDeleteSq{Delete}` that drives this wait
+    /// (`admin/src/fsm/vf_stop.rs::disable_submission_queues`), so no new IO
+    /// can arrive for `queue_id` and the in-flight count only decreases —
+    /// the wait always terminates once the last accepted IO completes. A
+    /// `queue_id` outside the tracked range (never incremented) is already
+    /// drained. Only one drain runs at a time: the Admin FSM waits for each
+    /// SQ-delete ACK before issuing the next, and `poll_ipc` handles one IPC
+    /// message to completion before the next.
+    async fn drain_sq(&self, queue_id: u16) {
+        poll_fn(|cx| {
+            self.sq_drain.with(|s| {
+                let inflight = s.inflight.get(queue_id as usize).copied().unwrap_or(0);
+                if inflight == 0 {
+                    Poll::Ready(())
+                } else {
+                    s.waker.register(cx.waker());
+                    Poll::Pending
+                }
+            })
+        })
+        .await
+    }
+
+    /// Handle a `CreateDeleteSq` IPC in the running state.
+    ///
+    /// Decodes the message; if it is a `CreateDeleteSq`, acknowledges the
+    /// submission-queue create/delete for the target partition. Returns
+    /// `true` when the message was handled here, `false` otherwise so the
+    /// caller falls back to the default echo path.
+    ///
+    /// This is the HSM-core half of the Admin's live-migration queue
+    /// teardown (see `admin/src/fsm/vf_stop.rs::disable_submission_queues`).
+    /// The Admin disables the hardware submission queue first, then sends
+    /// `Delete` here so the HSM core can quiesce IO already accepted from
+    /// that queue before VfSave snapshots GSRAM. `Create` is the symmetric
+    /// bring-up on restore.
+    ///
+    /// - `Create`: the Admin has already programmed the IIC hardware queue;
+    ///   there is no software SQ registry to populate in uno (unlike the
+    ///   reference's `enable_io_queue`), so the handler resets the drain
+    ///   counter for this `device_sq_id` to zero (defensive against reuse
+    ///   across a restore) and ACKs `Success`.
+    /// - `Delete`: drains host IO already accepted from this submission
+    ///   queue, then ACKs `Success`. uno indexes in-flight IO by the
+    ///   hardware `queue_id`, which the IIC tags onto each inbound IO and
+    ///   which is identical to the Admin `device_sq_id` (the reference's
+    ///   `DevSqId`); so the drain keys directly on `device_sq_id` with no
+    ///   mapping table. Because the Admin disables the hardware queue before
+    ///   sending `Delete`, the in-flight count only falls and the drain
+    ///   always terminates. Unlike the reference, uno can `.await` the drain
+    ///   inline on the IPC task and reply `Success` directly, rather than
+    ///   returning `Pending` with a deferred completion.
+    async fn try_handle_create_delete_sq(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+        let Some(msg) = decode_create_delete_sq(buf) else {
+            return false;
+        };
+
+        // `decode_create_delete_sq` already validated the pfn range and the
+        // action, so `pid` is in range and `action` is Create/Delete here.
+        let pid = HsmPartId::from(msg.info.pfn);
+
+        // A submission queue can only exist on an enabled function. Reject
+        // create/delete for a function that is not enabled, mirroring the
+        // reference firmware's `part.enabled()` guard.
+        if !self.part_is_enabled(pid) {
+            let reply = encode_create_delete_sq_ack(buf, IpcMessageStatusCode::FunctionNotEnabled);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
+
+        match SqAction(msg.info.action) {
+            SqAction::Create => {
+                // The Admin has already programmed the IIC hardware queue,
+                // so there is no software SQ registry to populate. Reset the
+                // in-flight drain counter to a clean zero baseline in case
+                // this `device_sq_id` is being reused across a restore, then
+                // acknowledge so the Admin FSM proceeds.
+                self.sq_inflight_reset(u16::from(msg.info.device_sq_id));
+            }
+            SqAction::Delete => {
+                // Quiesce IO already accepted from this submission queue
+                // before acknowledging, so VfSave snapshots a consistent
+                // GSRAM. The Admin has already disabled the hardware queue
+                // (vf_stop.rs::disable_submission_queues), so no new IO can
+                // arrive for `device_sq_id` and this wait always terminates.
+                // uno's hardware `queue_id` *is* the Admin `device_sq_id`
+                // (identity — the IIC tags each inbound IO with its source
+                // queue id), so the drain keys directly on it.
+                self.drain_sq(u16::from(msg.info.device_sq_id)).await;
+            }
+            // Unreachable: `validate` rejects any other action during decode.
+            _ => {}
+        }
+
+        let reply = encode_create_delete_sq_ack(buf, IpcMessageStatusCode::Success);
+        self.ipc.reply(channel as u8, &reply);
+        true
+    }
+
     /// Handle a `SetResource` IPC in the running state.
     ///
     /// Decodes the message; if it is a `SetResource`, applies the
@@ -735,7 +919,8 @@ impl UnoHsmPal {
         let result = if mask == 0 {
             self.part_free(pid).await
         } else {
-            self.part_alloc(pid, mask, is_pf).await
+            self.part_alloc(pid, mask, &msg.info.vm_launch_guid, is_pf)
+                .await
         };
         let (status, count) = match result {
             Ok(()) => (IpcMessageStatusCode::Success, mask.count_ones() as u8),

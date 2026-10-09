@@ -526,8 +526,10 @@ pub struct SetResInfo {
     /// `u16` -- a wider field shifts `vm_launch_guid` and corrupts `pfn`.
     pub pfn: u8,
 
-    /// VM launch GUID (unused by the emulator; retained for wire
-    /// compatibility with the reference firmware).
+    /// VM launch GUID supplied by the host. Captured into the partition
+    /// persistent store on a non-zero (allocate) `SetResource`, so a later
+    /// `InitBk3` reports the correct VM identity and migration preserves it
+    /// (mirrors the reference firmware's `part_init::handle_set_res_cnt`).
     pub vm_launch_guid: [u8; 16],
 }
 
@@ -679,6 +681,117 @@ pub fn decode_pfn_enable_disable(
 ///
 /// Copies the original header, sets the response bit and `status`.
 pub fn encode_pfn_enable_disable_ack(
+    original_buf: &[u32; IPC_MESSAGE_LENGTH],
+    status: IpcMessageStatusCode,
+) -> [u32; IPC_MESSAGE_LENGTH] {
+    let original_header = IpcMessageHeader::read_from_bytes(original_buf[0].as_bytes())
+        .unwrap_or(IpcMessageHeader::new());
+
+    let ack_header = original_header
+        .with_response(true)
+        .with_status(status as u32);
+
+    let mut out = *original_buf;
+    out[0] = ack_header.into_bits();
+    out
+}
+
+// ---------------------------------------------------------------------------
+// IpcMessageCreateDeleteSq (opcode 0x3) — Admin → HSM submission-queue mgmt
+// ---------------------------------------------------------------------------
+
+/// Submission-queue action carried by [`SqCreateDeleteInfo::action`].
+///
+/// Mirrors the reference firmware's `SqAction` (`serde/ipc`
+/// `sq_create_delete.rs`).
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum SqAction {
+    /// Tear down an existing submission queue (the live-migration drain
+    /// path: quiesce in-flight IO on this queue before replying).
+    Delete = 0,
+
+    /// Create a new submission queue.
+    Create = 1,
+}
+
+/// `CreateDeleteSq` payload: targets one partition's submission queue.
+///
+/// Mirrors the reference firmware's `SqCreateDeleteInfo`. Each field is a
+/// single byte on the wire, in order: `pfn`, `device_sq_id`,
+/// `device_cq_id`, `action`. The reference uses `PcieFunction` / `DevSqId`
+/// / `DevCqId` newtypes; uno carries the raw bytes (matching
+/// [`PfnEnableDisableInfo`]) and validates ranges in [`IpcMessageType`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, IntoBytes, Immutable, FromBytes)]
+pub struct SqCreateDeleteInfo {
+    /// Target partition (PCIe function); 1-byte `PcieFunction` on the wire.
+    pub pfn: u8,
+
+    /// Device-side submission queue id.
+    pub device_sq_id: u8,
+
+    /// Device-side completion queue id.
+    pub device_cq_id: u8,
+
+    /// Action to perform (`Delete` / `Create`).
+    pub action: u8,
+}
+
+const _: () = assert!(core::mem::size_of::<SqCreateDeleteInfo>() == 4);
+
+/// `CreateDeleteSq` IPC message body (opcode `CreateDeleteSq`, 0x3).
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+pub struct IpcMessageCreateDeleteSq {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Create / delete submission-queue payload.
+    pub info: SqCreateDeleteInfo,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageCreateDeleteSq::LEN],
+}
+
+const _: () =
+    assert!(core::mem::size_of::<IpcMessageCreateDeleteSq>() == core::mem::size_of::<IpcMessage>());
+
+impl IpcMessageType for IpcMessageCreateDeleteSq {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::CreateDeleteSq;
+    const LEN: usize = core::mem::size_of::<SqCreateDeleteInfo>();
+
+    fn validate(&self) -> IpcResult<()> {
+        if usize::from(self.info.pfn) >= crate::part::NUM_PARTITIONS {
+            return Err(IpcMessageErr::InvalidPartitionId.into());
+        }
+        // `open_enum` makes every byte representable, so reject any action
+        // outside the known set rather than silently treating it as a
+        // create/delete.
+        match SqAction(self.info.action) {
+            SqAction::Delete | SqAction::Create => {}
+            _ => return Err(IpcMessageErr::InvalidInputMessageForDecode.into()),
+        }
+        Ok(())
+    }
+}
+
+/// Decode a raw IPC buffer into an [`IpcMessageCreateDeleteSq`].
+///
+/// Returns `None` if the opcode does not match or the body fails to
+/// decode/validate.
+pub fn decode_create_delete_sq(
+    buf: &[u32; IPC_MESSAGE_LENGTH],
+) -> Option<IpcMessageCreateDeleteSq> {
+    let msg = IpcMessage { data: *buf };
+    IpcMessageDecoder::decode::<IpcMessageCreateDeleteSq>(msg).ok()
+}
+
+/// Encode an ACK reply for a `CreateDeleteSq` message.
+///
+/// Copies the original header, sets the response bit and `status`.
+pub fn encode_create_delete_sq_ack(
     original_buf: &[u32; IPC_MESSAGE_LENGTH],
     status: IpcMessageStatusCode,
 ) -> [u32; IPC_MESSAGE_LENGTH] {
@@ -855,4 +968,84 @@ pub struct AesBulk256KeyId {
     /// Reserved.
     #[bits(6)]
     _rsvd: u8,
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a raw `CreateDeleteSq` slot the way the Admin core would.
+    fn make_sq_buf(
+        pfn: u8,
+        device_sq_id: u8,
+        device_cq_id: u8,
+        action: SqAction,
+    ) -> [u32; IPC_MESSAGE_LENGTH] {
+        let msg = IpcMessageCreateDeleteSq {
+            header: IpcMessageHeader::new()
+                .with_msg_op(IpcMessageOpCode::CreateDeleteSq as u32)
+                .with_length(IpcMessageCreateDeleteSq::LEN as u32),
+            info: SqCreateDeleteInfo {
+                pfn,
+                device_sq_id,
+                device_cq_id,
+                action: action.0,
+            },
+            _rsvd: [0; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageCreateDeleteSq::LEN],
+        };
+        IpcMessageEncoder::encode(msg).data
+    }
+
+    #[test]
+    fn create_delete_sq_byte_layout() {
+        // Mirrors the reference encode test: the info word packs pfn, sq, cq,
+        // action as consecutive little-endian bytes.
+        let buf = make_sq_buf(13, 10, 11, SqAction::Create);
+        assert_eq!(buf[1], 0x010B_0A0D, "pfn|sq<<8|cq<<16|action<<24");
+        let header = IpcMessageHeader::read_from_bytes(buf[0].as_bytes()).unwrap();
+        assert_eq!(header.msg_op(), IpcMessageOpCode::CreateDeleteSq as u32);
+        assert_eq!(header.length(), IpcMessageCreateDeleteSq::LEN as u32);
+    }
+
+    #[test]
+    fn create_delete_sq_roundtrip() {
+        for action in [SqAction::Create, SqAction::Delete] {
+            let buf = make_sq_buf(2, 7, 8, action);
+            let msg = decode_create_delete_sq(&buf).expect("decode");
+            assert_eq!(msg.info.pfn, 2);
+            assert_eq!(msg.info.device_sq_id, 7);
+            assert_eq!(msg.info.device_cq_id, 8);
+            assert_eq!(SqAction(msg.info.action), action);
+        }
+    }
+
+    #[test]
+    fn create_delete_sq_rejects_bad_pfn() {
+        let buf = make_sq_buf(crate::part::NUM_PARTITIONS as u8, 1, 1, SqAction::Create);
+        assert!(decode_create_delete_sq(&buf).is_none());
+    }
+
+    #[test]
+    fn create_delete_sq_rejects_bad_action() {
+        let mut buf = make_sq_buf(1, 1, 1, SqAction::Create);
+        // Stomp the action byte (byte 3 of the info word) with an unknown
+        // value; decode must reject it.
+        buf[1] = (buf[1] & 0x00FF_FFFF) | (0x7F << 24);
+        assert!(decode_create_delete_sq(&buf).is_none());
+    }
+
+    #[test]
+    fn create_delete_sq_ack_sets_response_and_status() {
+        let buf = make_sq_buf(1, 2, 3, SqAction::Delete);
+        let ack = encode_create_delete_sq_ack(&buf, IpcMessageStatusCode::Success);
+        let header = IpcMessageHeader::read_from_bytes(ack[0].as_bytes()).unwrap();
+        assert!(header.response());
+        assert_eq!(header.status(), IpcMessageStatusCode::Success as u32);
+        // Payload is preserved so the Admin can correlate the reply.
+        assert_eq!(ack[1], buf[1]);
+    }
 }

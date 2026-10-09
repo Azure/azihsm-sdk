@@ -176,7 +176,11 @@ impl HsmIoController for UnoHsmPal {
     async fn poll_io(&self) -> HsmResult<Self::Io> {
         let index = self.iic.recv().await;
         reset_io_alloc(self, index);
-        Ok(UnoHsmIo { index })
+        let io = UnoHsmIo { index };
+        // Count this IO against its submission queue for the live-migration
+        // SQ-delete drain; `drop_io` performs the paired decrement.
+        self.sq_inflight_inc(io.queue_id());
+        Ok(io)
     }
 
     /// Posts the completion (CQE) to the host via OIC.
@@ -203,6 +207,10 @@ impl HsmIoController for UnoHsmPal {
         // next IO that reuses the slot.
         self.scrub_io_slot(io.index).await;
         self.iic.free_io(io.index, queue_id);
+        // Paired with the increment in `poll_io`: release this IO's hold on
+        // its submission queue so a pending live-migration SQ-delete drain
+        // can make progress once the queue is fully quiesced.
+        self.sq_inflight_dec(queue_id);
         Ok(())
     }
 }
