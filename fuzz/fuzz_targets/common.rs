@@ -465,8 +465,8 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
     bytes
 }
 
-/// Drive `PartInit` → `PartFinal` so partition masking keys are available
-/// to scope-sensitive fuzz targets.
+/// Drive `PartInit` → `PartFinal` so the partition is initialized and
+/// partition-local masking keys are available to a fuzz target.
 pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
     let pota = CaKey::generate();
     let policy = known_good_part_policy(pota.raw_pub());
@@ -478,8 +478,18 @@ pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
         .expect("PartFinal should succeed");
 }
 
-/// Initialize a partition and create a test security domain so the
-/// SecurityDomain masking key is available to scope-sensitive fuzz targets.
+fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
+    let index = u8::try_from(oob_items.len()).expect("evidence count fits descriptor index");
+    let length = u16::try_from(der.len()).expect("evidence item length fits descriptor");
+    oob_items.push(der.to_vec());
+    CertDescriptor {
+        index,
+        length: length.into(),
+    }
+}
+
+/// Initialize a partition and create a test security domain so its
+/// masking key is available to a fuzz target.
 pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     use zerocopy::IntoBytes;
 
@@ -493,19 +503,35 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         .expect("PartInfo PID public key should have the expected length");
     let pota = CaKey::generate();
     let sata = CaKey::generate();
-    let mut policy = PartPolicy::try_read_from_bytes(&known_good_part_policy(pota.raw_pub()))
-        .expect("known-good partition policy should decode");
+    let mut policy =
+        <PartPolicy as TryFromBytes>::try_read_from_bytes(&known_good_part_policy(pota.raw_pub()))
+            .expect("known-good partition policy should decode");
     policy.sata_pub_key = PolicyPubKey::new(
         PolicyKeyKind::Ecc384,
         POLICY_MAX_KEY_LEN as u16,
         sata.raw_pub(),
     );
+    assert_eq!(
+        info.pid.len(),
+        policy.backup_part_id.len(),
+        "PartInfo PID should have the expected length",
+    );
     policy.backup_part_id.copy_from_slice(&info.pid);
-    policy.backup_part_pub_key =
-        PolicyPubKey::new(PolicyKeyKind::Ecc384, POLICY_MAX_KEY_LEN as u16, pid_pub);
-
+    let mut backup_part_pub = [0u8; POLICY_MAX_KEY_LEN];
+    assert_eq!(
+        info.pid_pub_key.len(),
+        backup_part_pub.len(),
+        "PartInfo PID public key should have the expected length",
+    );
+    backup_part_pub.copy_from_slice(&info.pid_pub_key);
+    policy.backup_part_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        backup_part_pub,
+    );
     let mut policy_bytes = [0u8; PART_POLICY_LEN];
     policy_bytes.copy_from_slice(policy.as_bytes());
+
     let init = ctx
         .part_init(session, &mach_seed(), &policy_bytes, &pota_thumbprint())
         .expect("PartInit should succeed");

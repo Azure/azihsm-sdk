@@ -351,12 +351,12 @@ impl UnoHsmPal {
         Ok(())
     }
 
-    /// Generates the enable-time ECC P-384 key pairs — the
-    /// establish-credential and session-encryption keys — mirroring the
-    /// reference firmware's `part_enable`. On failure, any partial key is
-    /// rolled back. Certificates, nonce, and BK_BOOT are out of scope.
+    /// Refreshes the nonce and generates the establish-credential and
+    /// session-encryption key pairs. On failure, any partial key is
+    /// rolled back. Certificates and BK_BOOT are out of scope.
     async fn provision_enabled_keys(&self, pid: HsmPartId) -> HsmResult<()> {
-        let part = PartStore::partition(pid)?;
+        let mut part = PartStore::partition(pid)?;
+        self.rng.fill_bytes(part.nonce_mut())?;
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
             .with_local(true)
@@ -460,15 +460,15 @@ impl UnoHsmPal {
     ///
     /// - **VF / re-enable** (`Allocated | Disabled → Enabled`): the
     ///   establish-credential and session-encryption ECC P-384 key pairs are
-    ///   generated here, then host IO is accepted.
+    ///   generated here with a fresh nonce, then host IO is accepted.
     /// - **PF enable-before-SetResource** (`Unallocated → Enabled`, only when
     ///   `is_pf`): `res_mask` is not yet assigned, so the enable-time keys
     ///   cannot be provisioned (the vault has no table). The enable is
     ///   recorded and key provisioning is *deferred* to [`part_alloc`], which
     ///   runs when `SetResource` arrives.
     ///
-    /// Re-enabling an already-`Enabled` partition is idempotent. Certificates,
-    /// nonce, and BK_BOOT are out of scope.
+    /// Re-enabling an already-`Enabled` partition preserves its keys and nonce.
+    /// Certificates and BK_BOOT are out of scope.
     ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
     ///
@@ -531,8 +531,8 @@ impl UnoHsmPal {
     /// regenerated — matching the *std* reference firmware, whose NSSR/erase
     /// always provisions a fresh identity. Note this intentionally diverges
     /// from mcr-hsm, whose `state.migrate()` preserves the PID keypair inline
-    /// in its persistent store. Finally regenerates the enable-time
-    /// establish-credential and session-encryption keys.
+    /// in its persistent store. Finally refreshes the nonce and regenerates
+    /// the establish-credential and session-encryption keys.
     ///
     /// The net effect matches the reference: the partition keeps its
     /// provisioning across the reset — with a freshly regenerated identity —
