@@ -94,10 +94,10 @@ impl HsmSessionManager for UnoHsmPal {
         // rejected up front with no side effects: tearing down the old keys
         // here destroyed a live session and leaked its slot, because
         // `recreate` then rejects the non-renegotiation slot anyway.
-        if let Some(reopen_id) = id {
-            if !matches!(table.state(reopen_id), HsmSessionState::NeedsRenegotiation) {
-                return Err(HsmError::InvalidArg);
-            }
+        if let Some(reopen_id) = id
+            && !matches!(table.state(reopen_id), HsmSessionState::NeedsRenegotiation)
+        {
+            return Err(HsmError::InvalidArg);
         }
 
         // Build the 88-byte session blob in a DMA buffer:

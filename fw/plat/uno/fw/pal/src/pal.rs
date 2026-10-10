@@ -774,17 +774,50 @@ impl UnoHsmPal {
     /// The Admin disables the hardware submission queue before sending the
     /// `CreateDeleteSq{Delete}` that drives this wait
     /// (`admin/src/fsm/vf_stop.rs::disable_submission_queues`), so no new IO
-    /// can arrive for `queue_id` and the in-flight count only decreases —
-    /// the wait always terminates once the last accepted IO completes. A
-    /// `queue_id` outside the tracked range (never incremented) is already
-    /// drained. Only one drain runs at a time: the Admin FSM waits for each
-    /// SQ-delete ACK before issuing the next, and `poll_ipc` handles one IPC
-    /// message to completion before the next.
+    /// for `queue_id` can be pushed into the shared ICQ after this point.
+    ///
+    /// Two conditions must both hold before the queue is quiesced:
+    ///
+    /// 1. **ICQ drained to the finish line.** Entries the hardware already
+    ///    accepted into the shared ICQ but that `recv` has not yet pulled out
+    ///    are not yet reflected in `inflight` (the counter is bumped in
+    ///    `poll_io` *after* `recv` returns). On the first poll we latch
+    ///    `target = icq_consumed + icq_pending` — the consumer count the IO
+    ///    task must reach for every currently-accepted entry (including any
+    ///    for this queue) to have been dequeued. `icq_consumed` advances
+    ///    monotonically past `target`; other partitions' later IO only pushes
+    ///    it higher, so the finish line is always crossed (no stall waiting on
+    ///    an unrelated idle queue, no premature completion).
+    /// 2. **In-flight count drained.** Once dequeued, each IO for `queue_id`
+    ///    is tracked in `inflight` until `drop_io`; the drain also waits for
+    ///    that count to reach zero.
+    ///
+    /// Progress is driven by two wakers: the IIC `drain_waker` (woken on every
+    /// ICQ consumption, advancing condition 1) and `sq_drain.waker` (woken when
+    /// `inflight` hits zero, condition 2). A `queue_id` outside the tracked
+    /// range is already drained. Only one drain runs at a time: the Admin FSM
+    /// waits for each SQ-delete ACK before issuing the next, and `poll_ipc`
+    /// handles one IPC message to completion before the next.
     async fn drain_sq(&self, queue_id: u16) {
+        let mut target: Option<u32> = None;
         poll_fn(|cx| {
+            // Re-poll whenever the IO task consumes an ICQ entry.
+            self.iic.register_drain_waker(cx.waker());
+
+            // Latch the finish line on the first poll: every ICQ entry the
+            // hardware has already accepted must be consumed before the queue
+            // can be considered quiesced.
+            let goal = *target.get_or_insert_with(|| {
+                self.iic
+                    .icq_consumed()
+                    .wrapping_add(self.iic.icq_pending() as u32)
+            });
+
+            let icq_drained = self.iic.icq_consumed().wrapping_sub(goal) as i32 >= 0;
+
             self.sq_drain.with(|s| {
                 let inflight = s.inflight.get(queue_id as usize).copied().unwrap_or(0);
-                if inflight == 0 {
+                if icq_drained && inflight == 0 {
                     Poll::Ready(())
                 } else {
                     s.waker.register(cx.waker());
@@ -820,13 +853,25 @@ impl UnoHsmPal {
     ///   which is identical to the Admin `device_sq_id` (the reference's
     ///   `DevSqId`); so the drain keys directly on `device_sq_id` with no
     ///   mapping table. Because the Admin disables the hardware queue before
-    ///   sending `Delete`, the in-flight count only falls and the drain
-    ///   always terminates. Unlike the reference, uno can `.await` the drain
-    ///   inline on the IPC task and reply `Success` directly, rather than
-    ///   returning `Pending` with a deferred completion.
+    ///   sending `Delete`, no new IO for this queue enters the ICQ, so the
+    ///   drain's finish line is fixed and always reached (see
+    ///   [`drain_sq`](Self::drain_sq)). Unlike the reference, uno can `.await`
+    ///   the drain inline on the IPC task and reply `Success` directly, rather
+    ///   than returning `Pending` with a deferred completion.
     async fn try_handle_create_delete_sq(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
-        let Some(msg) = decode_create_delete_sq(buf) else {
+        // Only claim the message when the opcode is `CreateDeleteSq`; anything
+        // else belongs to a later handler or the echo path.
+        if !is_create_delete_sq(buf) {
             return false;
+        }
+
+        // The opcode matched but the body failed layout, pfn-range, or action
+        // validation. Reject it with an error ACK rather than returning `false`
+        // and letting the echo path reply `Success` for a malformed message.
+        let Some(msg) = decode_create_delete_sq(buf) else {
+            let reply = encode_create_delete_sq_ack(buf, IpcMessageStatusCode::InvalidField);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
         };
 
         // `decode_create_delete_sq` already validated the pfn range and the

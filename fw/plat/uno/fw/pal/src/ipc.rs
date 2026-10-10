@@ -788,6 +788,20 @@ pub fn decode_create_delete_sq(
     IpcMessageDecoder::decode::<IpcMessageCreateDeleteSq>(msg).ok()
 }
 
+/// Returns `true` when `buf`'s header opcode is `CreateDeleteSq`.
+///
+/// Lets a handler distinguish a genuinely unrelated message (which should
+/// fall through to the next handler / echo path) from a `CreateDeleteSq`
+/// whose body fails layout/range/action validation (which must be rejected
+/// with an error ACK rather than echoed as `Success`). `decode_create_delete_sq`
+/// alone cannot make this distinction — it collapses an opcode mismatch and a
+/// malformed body into the same `None`.
+pub fn is_create_delete_sq(buf: &[u32; IPC_MESSAGE_LENGTH]) -> bool {
+    IpcMessageHeader::read_from_bytes(buf[0].as_bytes())
+        .map(|h| h.msg_op() == IpcMessageOpCode::CreateDeleteSq as u32)
+        .unwrap_or(false)
+}
+
 /// Encode an ACK reply for a `CreateDeleteSq` message.
 ///
 /// Copies the original header, sets the response bit and `status`.

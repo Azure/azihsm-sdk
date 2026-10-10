@@ -31,6 +31,7 @@ mod reggen;
 mod rustup_component_add;
 mod setup;
 mod size;
+mod test;
 
 /// Common context passed into every xtask.
 #[derive(Clone)]
@@ -70,6 +71,7 @@ enum Commands {
     Audit(audit::Audit),
     Setup(setup::Setup),
     RustupComponentAdd(rustup_component_add::RustupComponentAdd),
+    Test(test::Test),
 }
 
 fn main() {
@@ -109,5 +111,6 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Audit(task) => task.run(ctx),
         Commands::Setup(task) => task.run(ctx),
         Commands::RustupComponentAdd(task) => task.run(ctx),
+        Commands::Test(task) => task.run(ctx),
     }
 }
