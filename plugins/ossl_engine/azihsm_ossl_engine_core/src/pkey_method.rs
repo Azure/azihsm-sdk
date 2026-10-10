@@ -12,8 +12,9 @@
 //! built-in callbacks.
 //!
 //! HSM generation is **opt-in per context**: it runs only when the caller armed
-//! the `EVP_PKEY_CTX` with the `azihsm.masked_key:<path>` control string (the
-//! same parameter name the OpenSSL 3.x provider uses). An unarmed context —
+//! the `EVP_PKEY_CTX` with the `azihsm.masked_key:<path>` or
+//! `azihsm.session:true` control string (the same parameter names the OpenSSL
+//! 3.x provider uses). An unarmed context —
 //! e.g. a software keygen that reached this method because an application made
 //! the engine the process default — is delegated wholesale to the built-in
 //! keygen. This mirrors the ownership rule of
@@ -75,7 +76,9 @@ pub struct KeygenParams {
     /// `EVP_PKEY_CTRL_EC_PARAMGEN_CURVE_NID` (int ctrl).
     pub curve_nid: c_int,
     /// Where to write the masked private-key blob (`azihsm.masked_key`).
-    pub masked_key_path: PathBuf,
+    /// Always set for persistent keys; optional for session keys, whose blob
+    /// only unmasks within the HSM session that created it.
+    pub masked_key_path: Option<PathBuf>,
     /// Session key (`azihsm.session`, default false = persistent).
     pub session: bool,
     /// Key usage (`azihsm.key_usage`, default digitalSignature).
@@ -90,7 +93,7 @@ pub trait EcKeygenHandler {
     /// an `EC_KEY` carrying the public half and whatever state later operations
     /// need). `engine` is the ENGINE the context was created with; bind the key
     /// to it so the engine outlives the key. Write the masked blob to
-    /// `params.masked_key_path`.
+    /// `params.masked_key_path` when set.
     fn keygen(engine: &Engine, params: &KeygenParams, pkey: *mut ffi::EVP_PKEY)
     -> EngineResult<()>;
 }
@@ -272,8 +275,8 @@ unsafe extern "C" fn c_ctrl(
     )
 }
 
-/// `ctrl_str` override: handle the `azihsm.*` options (`masked_key` arms the
-/// context for HSM keygen) and delegate everything else — so an armed context
+/// `ctrl_str` override: handle the `azihsm.*` options (`masked_key` or
+/// `session:true` arms the context for HSM keygen) and delegate everything else — so an armed context
 /// still configures the built-in state coherently and unknown non-azihsm
 /// options keep the built-in error behavior.
 ///
@@ -404,7 +407,7 @@ fn keygen_inner<H: EcKeygenHandler>(
     let armed = ctx_state()
         .lock()
         .get(&(ctx as usize))
-        .filter(|state| state.masked_key_path.is_some())
+        .filter(|state| state.masked_key_path.is_some() || state.session == Some(true))
         .cloned();
 
     let Some(state) = armed else {
@@ -432,9 +435,7 @@ fn keygen_inner<H: EcKeygenHandler>(
         curve_nid: state.curve_nid.ok_or(EngineError::Other(
             "azihsm keygen requires a curve (ec_paramgen_curve)".into(),
         ))?,
-        masked_key_path: state.masked_key_path.ok_or(EngineError::Other(
-            "azihsm keygen requires azihsm.masked_key".into(),
-        ))?,
+        masked_key_path: state.masked_key_path,
         session: state.session.unwrap_or(false),
         key_usage: state.key_usage.unwrap_or(EcKeyUsage::DigitalSignature),
     };
@@ -787,6 +788,35 @@ mod tests {
             let pkey = ffi::EVP_PKEY_new();
             let r = keygen_inner::<PanicKeygen>(ctx, pkey);
             assert!(r.is_err(), "armed keygen without a curve must error");
+            ffi::EVP_PKEY_free(pkey);
+        }
+        ctx_state().lock().remove(&(ctx as usize));
+        // SAFETY: ctx is ours.
+        unsafe { ffi::EVP_PKEY_CTX_free(ctx) };
+    }
+
+    // `azihsm.session:true` alone arms the context (a session key needs no
+    // masked blob): it must reach the armed path, not the software fallback.
+    #[test]
+    #[allow(unsafe_code)]
+    fn keygen_inner_session_alone_arms_ctx() {
+        let ctx = software_keygen_ctx();
+        ctx_state().lock().insert(
+            ctx as usize,
+            CtxState {
+                engine: 1, // non-zero placeholder; never dereferenced
+                session: Some(true),
+                ..CtxState::default()
+            },
+        );
+        // SAFETY: ctx is live; EVP_PKEY_new allocates the out-key.
+        unsafe {
+            let pkey = ffi::EVP_PKEY_new();
+            let r = keygen_inner::<PanicKeygen>(ctx, pkey);
+            assert!(
+                r.is_err_and(|e| e.to_string().contains("requires a curve")),
+                "a session-armed ctx must take the armed path"
+            );
             ffi::EVP_PKEY_free(pkey);
         }
         ctx_state().lock().remove(&(ctx as usize));

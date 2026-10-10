@@ -21,7 +21,7 @@
 //!   `keyEncipherment` (decrypt/encrypt), or `keyWrapping` (export the HSM's
 //!   unwrapping public key; requires 2048 bits).
 //! - `azihsm.masked_key` — path to write the imported key's masked blob.
-//! - `azihsm.session` — only `false` (session keys unimplemented).
+//! - `azihsm.session` — `true` imports a session key (default `false`).
 //! - `rsa_keygen_bits` — 2048/3072/4096 (standard option, also forwarded to
 //!   the built-in so an unarmed keygen still sees it).
 

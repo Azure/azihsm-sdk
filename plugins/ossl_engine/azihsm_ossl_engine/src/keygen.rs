@@ -6,18 +6,19 @@
 //!
 //! The engine registers an EC `EVP_PKEY_METHOD` (see
 //! [`azihsm_ossl_engine_core::pkey_method`]) whose keygen hook lands here when
-//! the context was armed with `azihsm.masked_key:<path>` — the same parameter
-//! the OpenSSL 3.x provider uses. The handler generates a persistent signing
-//! key pair on the HSM, writes the masked private-key blob (owner-only) to the
-//! given path, and returns an `EVP_PKEY` that is immediately usable for ECDSA
-//! signing: the same engine-bound `EC_KEY` + retained-HSM-key plumbing the
-//! loader produces, so generate→sign works without a reload, and the blob
-//! reloads later via `ENGINE_load_private_key`.
+//! the context was armed with `azihsm.masked_key:<path>` or
+//! `azihsm.session:true` — the same parameters the OpenSSL 3.x provider uses.
+//! The handler generates a key pair on the HSM, writes the masked private-key
+//! blob (owner-only) when a path is given, and returns an `EVP_PKEY` that is
+//! immediately usable for ECDSA signing: the same engine-bound `EC_KEY` +
+//! retained-HSM-key plumbing the loader produces, so generate→sign works
+//! without a reload, and the blob reloads later via `ENGINE_load_private_key`.
 //!
 //! `azihsm.key_usage` selects the pair's exclusive usage: `digitalSignature`
 //! (sign/verify, the default) or `keyAgreement` (ECDH derive, see
-//! [`crate::derive`]). `azihsm.session` accepts only `false` — session keys
-//! are not implemented yet and fail keygen with a clear error.
+//! [`crate::derive`]). `azihsm.session:true` makes it a session key, dropped
+//! when the HSM session closes; its blob only unmasks within that session, so
+//! `azihsm.masked_key` is optional for session keys.
 //!
 //! Unarmed keygen contexts never reach this module — the toolkit delegates
 //! them to OpenSSL's software keygen (see the pkey_method module docs).
@@ -128,14 +129,6 @@ impl EcKeygenHandler for AzihsmEcKeygen {
     ) -> EngineResult<()> {
         let curve = curve_from_nid(params.curve_nid)?;
 
-        // Session keys are not implemented yet; fail loudly rather than mint
-        // a key the engine cannot use.
-        if params.session {
-            return Err(EngineError::Other(
-                "azihsm.session:true (session keys) is not yet supported by the engine".into(),
-            ));
-        }
-
         let slot = engine_data_slot()?;
         let data = slot
             .get(engine)
@@ -143,8 +136,8 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // First caller may be the keygen itself (idempotent open).
         data.open_hsm_from_env()?;
 
-        // Generate a persistent key pair on the HSM and export the masked
-        // blob + public-key DER. Usage is exclusive: sign/verify for
+        // Generate a key pair on the HSM (persistent, or a session key that
+        // dies with the HSM session) and export the masked blob + public-key DER. Usage is exclusive: sign/verify for
         // digitalSignature, derive on both halves for keyAgreement.
         let agree = params.key_usage == EcKeyUsage::KeyAgreement;
         let (priv_key, masked, pub_der) = data.with_session(|session| {
@@ -152,7 +145,7 @@ impl EcKeygenHandler for AzihsmEcKeygen {
                 .class(HsmKeyClass::Private)
                 .key_kind(HsmKeyKind::Ecc)
                 .ecc_curve(curve)
-                .is_session(false)
+                .is_session(params.session)
                 .can_sign(!agree)
                 .can_derive(agree)
                 .build()
@@ -161,7 +154,7 @@ impl EcKeygenHandler for AzihsmEcKeygen {
                 .class(HsmKeyClass::Public)
                 .key_kind(HsmKeyKind::Ecc)
                 .ecc_curve(curve)
-                .is_session(false)
+                .is_session(params.session)
                 .can_verify(!agree)
                 .can_derive(agree)
                 .build()
@@ -191,9 +184,11 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         })?;
 
         // Persist the blob before touching `pkey`, so a write failure surfaces
-        // cleanly. (The blob stays valid independently of this key handle: a
-        // later unmask imports it as a fresh handle.)
-        if let Err(e) = write_masked_blob(&params.masked_key_path, &masked) {
+        // cleanly. (A persistent key's blob stays valid independently of this
+        // key handle: a later unmask imports it as a fresh handle.)
+        if let Some(path) = &params.masked_key_path
+            && let Err(e) = write_masked_blob(path, &masked)
+        {
             crate::context::delete_hsm_key(priv_key, "generated EC private key");
             return Err(e);
         }
