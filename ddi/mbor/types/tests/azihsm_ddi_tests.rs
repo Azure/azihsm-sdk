@@ -85,6 +85,7 @@ mod integration {
     pub mod rsa_mod_exp;
     pub mod rsa_mod_exp_smoke;
     pub mod rsa_unwrap_generated_key;
+    pub mod rsa_unwrap_key_assurance;
     pub mod rsa_unwrap_smoke;
     pub mod sealed_bk3_smoke;
     pub mod secret_hkdf_derive;

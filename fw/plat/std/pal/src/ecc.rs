@@ -342,14 +342,16 @@ impl HsmEcc for StdHsmPal {
             .await
     }
 
-    fn ecc_priv_der_to_vault(
+    async fn ecc_priv_der_to_vault(
         &self,
         _io: &impl HsmIo,
         der: &DmaBuf,
         out: Option<&mut DmaBuf>,
+        _pct: HsmEccPct,
     ) -> HsmResult<(usize, HsmEccCurve)> {
         // std PAL vault format is raw HSM-format scalar bytes; parse the
         // recovered PKCS#8 DER and re-export in the vault representation.
+        // Like key generation here, it runs no PCT.
         let pk = EccPrivateKey::from_bytes(der).map_err(|_| HsmError::InvalidArg)?;
         let curve = from_ecc_curve(pk.curve());
         let priv_len = curve.wire_coord_len();

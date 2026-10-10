@@ -1,0 +1,102 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// SysMbx — HSM-to-SP system mailbox (Mailbox0)
+//
+// Base address: 0xB000_0000
+//
+// Only Mailbox0, the mailbox the SP watches for this core, is modeled.
+// "S2H" is system (this core) to HSP (the SP); "H2S" is the reverse
+// direction.
+//
+// The firmware enters the FIPS error state by setting S2H_MBX_INSTS.ERR_BIT.
+// The SP turns that interrupt into its own error state.
+
+reg s2h_mbx_ctrl_t {
+    name = "S2H Mailbox Control";
+    desc = "System-to-HSP mailbox interrupt enables. Read-only from this core.";
+
+    field { sw = r; hw = w; desc = "FIFO full interrupt enable."; } FIFO_FULL_INT_EN[0:0] = 0x0;
+    field { sw = r; hw = w; desc = "FIFO not-empty interrupt enable."; } FIFO_NEMPTY_INT_EN[1:1] = 0x0;
+    field { sw = r; hw = w; desc = "FIFO valid interrupt enable."; } FIFO_VALID_INT_EN[2:2] = 0x1;
+    field { sw = r; hw = w; desc = "Error interrupt enable."; } ERR_INT_EN[3:3] = 0x0;
+};
+
+reg s2h_mbx_insts_t {
+    name = "S2H Mailbox Interrupt Status";
+    desc = "System-to-HSP mailbox interrupt status. Writing 1 to ERR_BIT raises
+             the error interrupt to the SP.";
+
+    field { sw = r; hw = w; desc = "FIFO full status."; } FIFO_FULL_INSTS[0:0] = 0x0;
+    field { sw = r; hw = w; desc = "FIFO not-empty status."; } FIFO_NEMPTY_INSTS[1:1] = 0x0;
+    field { sw = rw; desc = "Write 1 to mark the FIFO data valid."; } FIFO_VALID[2:2] = 0x0;
+    field { sw = rw; desc = "Write 1 to raise the error interrupt to the SP."; } ERR_BIT[3:3] = 0x0;
+    field { sw = r; hw = w; desc = "Number of entries in the FIFO."; } FIFO_CNT[15:8] = 0x0;
+};
+
+reg s2h_mbx_fifo_push_t {
+    name = "S2H Mailbox FIFO Push";
+    desc = "Writing pushes a word into the system-to-HSP FIFO.";
+
+    field {} FIFO_DATA_PUSH[31:0] = 0x0;
+};
+
+reg s2h_mbx_fifo_pop_t {
+    name = "S2H Mailbox FIFO Pop";
+    desc = "The word at the system-to-HSP FIFO output.";
+
+    field { sw = r; hw = w; } FIFO_DATA_POP[31:0] = 0x0;
+};
+
+reg h2s_mbx_ctrl_t {
+    name = "H2S Mailbox Control";
+    desc = "HSP-to-system mailbox interrupt enables.";
+
+    field { desc = "FIFO full interrupt enable."; } FIFO_FULL_INT_EN[0:0] = 0x0;
+    field { desc = "FIFO not-empty interrupt enable."; } FIFO_NEMPTY_INT_EN[1:1] = 0x0;
+    field { desc = "FIFO valid interrupt enable."; } FIFO_VALID_INT_EN[2:2] = 0x1;
+    field { desc = "Error interrupt enable."; } ERR_INT_EN[3:3] = 0x0;
+};
+
+reg h2s_mbx_insts_t {
+    name = "H2S Mailbox Interrupt Status";
+    desc = "HSP-to-system mailbox interrupt status.";
+
+    field { desc = "FIFO full status."; } FIFO_FULL_INSTS[0:0] = 0x0;
+    field { desc = "FIFO not-empty status."; } FIFO_NEMPTY_INSTS[1:1] = 0x0;
+    field { desc = "FIFO valid."; } FIFO_VALID[2:2] = 0x0;
+    field { desc = "Error bit."; } ERR_BIT[3:3] = 0x0;
+    field { sw = r; hw = w; desc = "Number of entries in the FIFO."; } FIFO_CNT[15:8] = 0x0;
+};
+
+reg h2s_mbx_fifo_push_t {
+    name = "H2S Mailbox FIFO Push";
+    desc = "The HSP-to-system FIFO input. Read-only from this core.";
+
+    field { sw = r; hw = w; } FIFO_DATA_PUSH[31:0] = 0x0;
+};
+
+reg h2s_mbx_fifo_pop_t {
+    name = "H2S Mailbox FIFO Pop";
+    desc = "Reading pops a word from the HSP-to-system FIFO.";
+
+    field { sw = r; hw = w; } FIFO_DATA_POP[31:0] = 0x0;
+};
+
+addrmap sys_mbx {
+    name = "SysMbx";
+    desc = "HSM-to-SP system mailbox (Mailbox0). The firmware sets
+             S2H_MBX_INSTS.ERR_BIT to enter the FIPS error state.";
+
+    default hw = na;
+    default sw = rw;
+
+    s2h_mbx_ctrl_t      S2H_MBX_CTRL      @ 0x00;
+    s2h_mbx_insts_t     S2H_MBX_INSTS     @ 0x04;
+    s2h_mbx_fifo_push_t S2H_MBX_FIFO_PUSH @ 0x08;
+    s2h_mbx_fifo_pop_t  S2H_MBX_FIFO_POP  @ 0x0C;
+    h2s_mbx_ctrl_t      H2S_MBX_CTRL      @ 0x10;
+    h2s_mbx_insts_t     H2S_MBX_INSTS     @ 0x14;
+    h2s_mbx_fifo_push_t H2S_MBX_FIFO_PUSH @ 0x18;
+    h2s_mbx_fifo_pop_t  H2S_MBX_FIFO_POP  @ 0x1C;
+};

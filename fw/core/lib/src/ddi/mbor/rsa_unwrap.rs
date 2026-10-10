@@ -237,8 +237,10 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
                 )
                 .await?;
 
-                // Decode the recovered material into vault-ready form.
-                let decoded = decode(pal, io, material, key_class).await?;
+                // Decode the recovered material into vault-ready form.  The
+                // import attributes select the PCT passed to the PAL for an
+                // RSA / ECC key.
+                let decoded = decode(pal, io, material, key_class, import_attrs).await?;
                 let vault_kind = decoded.kind;
 
                 // Persist the decoded key, session-bound iff its attrs ask.
