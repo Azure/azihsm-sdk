@@ -10,13 +10,13 @@ use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_types::*;
+use common::KeyScope;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 const MIN_NUMBER_OF_REQS: usize = 1;
 const MAX_NUMBER_OF_REQS: usize = 32;
-const KEY_SCOPE_SESSION: u8 = 0b001;
 
 #[derive(Debug, Arbitrary)]
 struct FuzzInput {
@@ -48,6 +48,7 @@ fuzz_target!(|input: FuzzInput| {
             % (MAX_NUMBER_OF_REQS - MIN_NUMBER_OF_REQS + 1))
             + MIN_NUMBER_OF_REQS;
         let mut state = input.rand_seed;
+        let mut requests = Vec::with_capacity(number_of_reqs);
 
         for _ in 0..number_of_reqs {
             let command = match next_random(&mut state) % 3 {
@@ -55,17 +56,42 @@ fuzz_target!(|input: FuzzInput| {
                 1 => Command::EccGenerateKey,
                 _ => Command::HmacGenerateKey,
             };
+            let key_scope = match next_random(&mut state) % 6 {
+                0 => KeyScope::Unspecified,
+                1 => KeyScope::Session,
+                2 => KeyScope::Ephemeral,
+                3 => KeyScope::Local,
+                4 => KeyScope::SecurityDomain,
+                _ => KeyScope::Internal,
+            };
+            requests.push((command, key_scope));
+        }
+
+        if requests
+            .iter()
+            .any(|(_, scope)| matches!(scope, KeyScope::SecurityDomain))
+        {
+            common::create_test_security_domain(ctx, &session);
+        } else if requests
+            .iter()
+            .any(|(_, scope)| matches!(scope, KeyScope::Ephemeral | KeyScope::Local))
+        {
+            common::finalize_partition(ctx, &session);
+        }
+
+        for (command, key_scope) in requests {
             let session_id = if input.use_valid_header {
                 session.session_id
             } else {
                 session.session_id ^ 0x8000
             };
+            let scope = key_scope.to_tbor();
 
             let succeeded = match command {
                 Command::AesGenerateKey => {
                     let req = TborAesGenerateKeyReq {
                         session_id,
-                        scope: KEY_SCOPE_SESSION,
+                        scope,
                         key_size: AES_KEY_SIZE_128,
                         key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
                         key_label: Vec::new(),
@@ -88,7 +114,7 @@ fuzz_target!(|input: FuzzInput| {
                 Command::EccGenerateKey => {
                     let req = TborEccGenerateKeyReq {
                         session_id,
-                        scope: KEY_SCOPE_SESSION,
+                        scope,
                         curve: ECC_CURVE_P256,
                         key_usage: KEY_USAGE_SIGN,
                         key_label: Vec::new(),
@@ -109,7 +135,7 @@ fuzz_target!(|input: FuzzInput| {
                 Command::HmacGenerateKey => {
                     let req = TborHmacGenerateKeyReq {
                         session_id,
-                        scope: KEY_SCOPE_SESSION,
+                        scope,
                         hash_algo: HMAC_HASH_SHA256,
                         key_length: 32,
                         key_label: Vec::new(),
@@ -125,7 +151,17 @@ fuzz_target!(|input: FuzzInput| {
             };
 
             if input.use_valid_header {
-                assert!(succeeded, "valid TBOR request unexpectedly failed");
+                let scope_is_supported = matches!(
+                    key_scope,
+                    KeyScope::Session
+                        | KeyScope::Ephemeral
+                        | KeyScope::Local
+                        | KeyScope::SecurityDomain
+                );
+                assert_eq!(
+                    succeeded, scope_is_supported,
+                    "TBOR request success did not match the key-scope support"
+                );
             } else {
                 assert!(!succeeded, "request with an invalid session id succeeded");
             }
