@@ -55,6 +55,7 @@ use crate::uri::KeyType;
 /// Load the private key named by `key_id` (an `azihsm://…` URI) and return an
 /// owning `*mut EVP_PKEY`. `engine` binds the returned key to the engine so it
 /// stays loaded while the key is alive (see [`build_ec_pkey`]).
+#[allow(unsafe_code)]
 pub fn load_key(
     engine: &Engine,
     data: &EngineData,
@@ -62,22 +63,25 @@ pub fn load_key(
 ) -> EngineResult<*mut ffi::EVP_PKEY> {
     let parsed = uri::parse(key_id)?;
 
-    // Reject key types with no load path yet before any HSM open or file I/O,
-    // so they fail with a clear error instead of a misleading environment or
-    // filesystem one. RSA-PSS loading lands with its signature support.
-    if parsed.key_type == KeyType::RsaPss {
-        return Err(EngineError::Other(
-            "RSA-PSS key loading is not yet supported".into(),
-        ));
-    }
-
     // First real caller of the lazy HSM open (idempotent).
     data.open_hsm_from_env()?;
     let masked = read_masked_key(&parsed.masked_key_path)?;
     match parsed.key_type {
         KeyType::Ec => load_ec(engine, data, &masked),
         KeyType::Rsa => crate::rsaload::load_rsa(engine, data, &masked),
-        KeyType::RsaPss => unreachable!("rejected above"),
+        // The blob does not record RSA-PSS-ness; the URI type selects it.
+        KeyType::RsaPss => {
+            let pkey = crate::rsaload::load_rsa(engine, data, &masked)?;
+            // SAFETY: pkey is the owning RSA key load_rsa just returned; on
+            // failure it is still ours to free.
+            unsafe {
+                if let Err(e) = azihsm_ossl_engine_core::rsa_pkey_method::set_rsa_pss_type(pkey) {
+                    ffi::EVP_PKEY_free(pkey);
+                    return Err(e);
+                }
+            }
+            Ok(pkey)
+        }
     }
 }
 
@@ -369,7 +373,6 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::path::PathBuf;
-    use std::ptr::NonNull;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
@@ -426,30 +429,5 @@ mod tests {
         let oversize = usize::try_from(MAX_MASKED_KEY_SIZE + 1).unwrap();
         fs::write(&p, vec![0u8; oversize]).unwrap();
         assert!(read_masked_key(&p).is_err());
-    }
-
-    /// `load_key` rejects RSA-PSS before opening the HSM, so this needs no
-    /// device — only a throwaway ENGINE to satisfy the signature. (RSA now has
-    /// a load path via `rsaload::load_rsa`; RSA-PSS lands with its signature
-    /// support.)
-    #[test]
-    #[allow(unsafe_code)]
-    fn load_key_rejects_rsa_pss_before_hsm_open() {
-        // SAFETY: ENGINE_new returns a fresh structural ref, freed below; the
-        // Engine wrapper is only used to satisfy the signature (the RSA-PSS arm
-        // returns before touching it).
-        unsafe {
-            let raw = ffi::ENGINE_new();
-            assert!(!raw.is_null(), "ENGINE_new");
-            let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
-            let data = EngineData::new();
-            let err =
-                load_key(&engine, &data, "azihsm:///tmp/does-not-matter;type=rsa-pss").unwrap_err();
-            assert!(
-                format!("{err}").contains("RSA-PSS key loading is not yet supported"),
-                "unexpected error: {err}"
-            );
-            ffi::ENGINE_free(raw);
-        }
     }
 }

@@ -24,6 +24,10 @@
 //! - `azihsm.session` — only `false` (session keys unimplemented).
 //! - `rsa_keygen_bits` — 2048/3072/4096 (standard option, also forwarded to
 //!   the built-in so an unarmed keygen still sees it).
+//!
+//! The same overrides back an `EVP_PKEY_RSA_PSS` method (`-algorithm RSA-PSS`),
+//! whose import yields an `EVP_PKEY_RSA_PSS` key: OpenSSL restricts it to PSS
+//! signing (its default padding) and, like the built-in, gives it no decrypt.
 
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -493,21 +497,23 @@ fn ctrl_str_inner(
 }
 
 /// `keygen` override: delegate an unarmed context to the built-in software
-/// keygen; run `H::import` for an armed one.
+/// keygen; run `H::import` for an armed one. `PSS` marks the RSA-PSS method
+/// (OpenSSL 1.1.x has no getter for a context's method).
 /// # Safety
 /// Called only by OpenSSL's `EVP_PKEY_keygen`; arguments per that contract.
 #[allow(unsafe_code)]
-unsafe extern "C" fn c_keygen<H: RsaImportHandler>(
+unsafe extern "C" fn c_keygen<H: RsaImportHandler, const PSS: bool>(
     ctx: *mut ffi::EVP_PKEY_CTX,
     pkey: *mut ffi::EVP_PKEY,
 ) -> c_int {
-    catch_panic(|| result_to_int(keygen_inner::<H>(ctx, pkey)), 0)
+    catch_panic(|| result_to_int(keygen_inner::<H>(ctx, pkey, PSS)), 0)
 }
 
 #[allow(unsafe_code)]
 fn keygen_inner<H: RsaImportHandler>(
     ctx: *mut ffi::EVP_PKEY_CTX,
     pkey: *mut ffi::EVP_PKEY,
+    pss: bool,
 ) -> EngineResult<()> {
     if pkey.is_null() {
         return Err(EngineError::NullParam("pkey"));
@@ -546,7 +552,44 @@ fn keygen_inner<H: RsaImportHandler>(
         wrapped_key: state.wrapped_key,
         masked_key_path: state.masked_key_path,
     };
-    H::import(&engine, &params, pkey)
+    // An RSA-PSS key can only sign, and keyWrapping exports the HSM's plain-RSA
+    // unwrapping key.
+    if pss && params.key_usage != RsaKeyUsage::DigitalSignature {
+        return Err(EngineError::Other(
+            "-algorithm RSA-PSS supports only azihsm.key_usage:digitalSignature".into(),
+        ));
+    }
+    H::import(&engine, &params, pkey)?;
+    if pss {
+        // SAFETY: pkey is the keygen out-key the import just filled with an RSA.
+        unsafe { set_rsa_pss_type(pkey) }?;
+    }
+    Ok(())
+}
+
+/// Re-type an RSA `pkey` as `EVP_PKEY_RSA_PSS`, keeping its `RSA` (and so its
+/// HSM key). Used for RSA-PSS imports and `type=rsa-pss` loads.
+///
+/// # Safety
+/// `pkey` must be a valid `EVP_PKEY` holding an `RSA`.
+#[allow(unsafe_code)]
+pub unsafe fn set_rsa_pss_type(pkey: *mut ffi::EVP_PKEY) -> EngineResult<()> {
+    // SAFETY: per this function's contract. get1 takes our own reference to the
+    // RSA; EVP_PKEY_assign drops the key's old reference and adopts ours, which
+    // we free only if the assign fails.
+    unsafe {
+        let rsa = ffi::EVP_PKEY_get1_RSA(pkey);
+        if rsa.is_null() {
+            return Err(EngineError::Other("EVP_PKEY has no RSA".into()));
+        }
+        if ffi::EVP_PKEY_assign(pkey, ffi::EVP_PKEY_RSA_PSS as c_int, rsa.cast()) != 1 {
+            ffi::RSA_free(rsa);
+            return Err(EngineError::Other(
+                "EVP_PKEY_assign (RSA-PSS) failed".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Read an integer `EVP_PKEY_CTX_ctrl` getter (e.g. padding, salt length).
@@ -559,17 +602,10 @@ unsafe fn ctrl_get_int(
     cmd: c_int,
 ) -> EngineResult<c_int> {
     let mut out: c_int = 0;
-    // SAFETY: ctx is valid; the getter writes an int into `out` via p2.
-    let rc = unsafe {
-        ffi::EVP_PKEY_CTX_ctrl(
-            ctx,
-            ffi::EVP_PKEY_RSA as c_int,
-            optype,
-            cmd,
-            0,
-            (&mut out as *mut c_int).cast(),
-        )
-    };
+    // SAFETY: ctx is valid; the getter writes an int into `out` via p2. Key type
+    // -1: the ctx may be RSA or RSA-PSS.
+    let rc =
+        unsafe { ffi::EVP_PKEY_CTX_ctrl(ctx, -1, optype, cmd, 0, (&mut out as *mut c_int).cast()) };
     if rc <= 0 {
         return Err(EngineError::Other("EVP_PKEY_CTX_ctrl getter failed".into()));
     }
@@ -742,7 +778,7 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
     let mgf1 = unsafe {
         ctrl_get_md(
             ctx,
-            ffi::EVP_PKEY_RSA as c_int,
+            -1,
             ffi::EVP_PKEY_OP_TYPE_SIG_CONST,
             ffi::EVP_PKEY_CTRL_GET_RSA_MGF1_MD_CONST,
         )
@@ -991,8 +1027,17 @@ unsafe fn decrypt_inner<D: RsaDecryptHandler>(
 /// Build the RSA `EVP_PKEY_METHOD`: a copy of the built-in with
 /// `init`/`copy`/`cleanup`/`ctrl_str`/`keygen`/`sign`/`decrypt` overridden. Never
 /// freed by us — the engine framework owns registered copies.
-#[allow(unsafe_code)]
 pub fn new_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler, D: RsaDecryptHandler>()
+-> EngineResult<*mut ffi::EVP_PKEY_METHOD> {
+    new_method::<H, S, D, false>()
+}
+
+/// [`new_rsa_pkey_method`], or with `PSS` the RSA-PSS method: a copy of the
+/// built-in RSA-PSS method (its own PSS `sign_init`, no decrypt) with the same
+/// overrides minus decrypt. Both delegate to the built-in RSA callbacks, which
+/// the RSA-PSS built-in shares.
+#[allow(unsafe_code)]
+fn new_method<H: RsaImportHandler, S: RsaPssSignHandler, D: RsaDecryptHandler, const PSS: bool>()
 -> EngineResult<*mut ffi::EVP_PKEY_METHOD> {
     // SAFETY: EVP_PKEY_meth_find returns the built-in const method.
     let builtin = unsafe { ffi::EVP_PKEY_meth_find(ffi::EVP_PKEY_RSA as c_int) };
@@ -1020,6 +1065,22 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler, D: RsaDecr
     d.ctrl = ctrl_dummy;
     let _ = DEFAULTS.set(d);
 
+    let (nid, source) = if PSS {
+        // SAFETY: as above.
+        let pss = unsafe { ffi::EVP_PKEY_meth_find(ffi::EVP_PKEY_RSA_PSS as c_int) };
+        if pss.is_null() {
+            return Err(EngineError::Other(
+                "built-in RSA-PSS pkey method missing".into(),
+            ));
+        }
+        let mut sign_dummy = None;
+        // SAFETY: pss is a valid method; keep its PSS sign_init.
+        unsafe { ffi::EVP_PKEY_meth_get_sign(pss, &mut sign_init, &mut sign_dummy) };
+        (ffi::EVP_PKEY_RSA_PSS, pss)
+    } else {
+        (ffi::EVP_PKEY_RSA, builtin)
+    };
+
     // Create with EVP_PKEY_FLAG_AUTOARGLEN: EVP_PKEY_meth_copy copies the
     // callbacks but not the flags, and the inherited built-in encrypt/decrypt/
     // sign ops rely on it to short-circuit the out==NULL size query. Without it
@@ -1028,27 +1089,26 @@ pub fn new_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler, D: RsaDecr
     // SAFETY: fresh method; meth_copy duplicates the built-in callbacks; the
     // setters install our overrides (keeping the built-in keygen_init).
     unsafe {
-        let method = ffi::EVP_PKEY_meth_new(
-            ffi::EVP_PKEY_RSA as c_int,
-            ffi::EVP_PKEY_FLAG_AUTOARGLEN_CONST,
-        );
+        let method = ffi::EVP_PKEY_meth_new(nid as c_int, ffi::EVP_PKEY_FLAG_AUTOARGLEN_CONST);
         if method.is_null() {
             return Err(EngineError::Other("EVP_PKEY_meth_new failed".into()));
         }
-        ffi::EVP_PKEY_meth_copy(method, builtin);
+        ffi::EVP_PKEY_meth_copy(method, source);
         ffi::EVP_PKEY_meth_set_init(method, Some(c_init));
         ffi::EVP_PKEY_meth_set_copy(method, Some(c_copy));
         ffi::EVP_PKEY_meth_set_cleanup(method, Some(c_cleanup));
-        ffi::EVP_PKEY_meth_set_keygen(method, keygen_init, Some(c_keygen::<H>));
+        ffi::EVP_PKEY_meth_set_keygen(method, keygen_init, Some(c_keygen::<H, PSS>));
         ffi::EVP_PKEY_meth_set_sign(method, sign_init, Some(c_sign::<S>));
-        ffi::EVP_PKEY_meth_set_decrypt(method, decrypt_init, Some(c_decrypt::<D>));
+        if !PSS {
+            ffi::EVP_PKEY_meth_set_decrypt(method, decrypt_init, Some(c_decrypt::<D>));
+        }
         ffi::EVP_PKEY_meth_set_ctrl(method, Some(c_ctrl), Some(c_ctrl_str));
         Ok(method)
     }
 }
 
-/// Register `H` as `engine`'s RSA import handler in the shared pkey-method
-/// table. Only one handler type can be registered per process (the first
+/// Register `H` as `engine`'s RSA and RSA-PSS import handler in the shared
+/// pkey-method table. Only one handler type can be registered per process (the first
 /// wins). Released together with the EC/HKDF methods via
 /// [`release_pkey_methods`](crate::pkey_method::release_pkey_methods).
 pub fn register_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler, D: RsaDecryptHandler>(
@@ -1058,6 +1118,11 @@ pub fn register_rsa_pkey_method<H: RsaImportHandler, S: RsaPssSignHandler, D: Rs
         engine,
         ffi::EVP_PKEY_RSA as c_int,
         new_rsa_pkey_method::<H, S, D>,
+    )?;
+    ENGINE_METHODS.register(
+        engine,
+        ffi::EVP_PKEY_RSA_PSS as c_int,
+        new_method::<H, S, D, true>,
     )?;
     crate::pkey_method::install_pkey_meths_callback(engine)
 }
@@ -1136,6 +1201,80 @@ mod tests {
         assert!(sign.is_some(), "sign slot must be installed");
         // SAFETY: method is ours and unregistered.
         unsafe { ffi::EVP_PKEY_meth_free(method) };
+    }
+
+    // The RSA-PSS method copies the built-in RSA-PSS method: AUTOARGLEN, the PSS
+    // sign override with the built-in PSS sign_init, and no decrypt.
+    #[test]
+    #[allow(unsafe_code)]
+    fn pss_method_signs_but_has_no_decrypt() {
+        let method = new_method::<PanicImport, PanicImport, PanicImport, true>().unwrap();
+        let mut id: c_int = 0;
+        let mut flags: c_int = 0;
+        let mut sign_init = None;
+        let mut sign = None;
+        let mut decrypt_init = None;
+        let mut decrypt = None;
+        // SAFETY: method is our fresh method; the getters write the out-params.
+        unsafe {
+            ffi::EVP_PKEY_meth_get0_info(&mut id, &mut flags, method);
+            ffi::EVP_PKEY_meth_get_sign(method, &mut sign_init, &mut sign);
+            ffi::EVP_PKEY_meth_get_decrypt(method, &mut decrypt_init, &mut decrypt);
+        }
+        assert_eq!(id, ffi::EVP_PKEY_RSA_PSS as c_int);
+        assert_ne!(flags & ffi::EVP_PKEY_FLAG_AUTOARGLEN_CONST, 0);
+        assert!(sign.is_some() && sign_init.is_some());
+        assert!(decrypt.is_none(), "RSA-PSS keys have no decrypt");
+        // SAFETY: method is ours and unregistered.
+        unsafe { ffi::EVP_PKEY_meth_free(method) };
+    }
+
+    /// Fills the keygen out-key with a software public RSA key (no HSM).
+    struct SoftwareImport;
+    impl RsaImportHandler for SoftwareImport {
+        #[allow(unsafe_code)]
+        fn import(
+            _engine: &Engine,
+            _params: &RsaImportParams,
+            pkey: *mut ffi::EVP_PKEY,
+        ) -> EngineResult<()> {
+            let n = [0xc3u8; 256];
+            let e = [1u8, 0, 1];
+            // SAFETY: RSA_set0_key adopts the fresh BIGNUMs and EVP_PKEY_assign
+            // the fresh RSA.
+            unsafe {
+                let rsa = ffi::RSA_new();
+                let n = ffi::BN_bin2bn(n.as_ptr(), 256, null_mut());
+                let e = ffi::BN_bin2bn(e.as_ptr(), 3, null_mut());
+                assert_eq!(ffi::RSA_set0_key(rsa, n, e, null_mut()), 1);
+                assert_eq!(
+                    ffi::EVP_PKEY_assign(pkey, ffi::EVP_PKEY_RSA as c_int, rsa.cast()),
+                    1
+                );
+            }
+            Ok(())
+        }
+    }
+
+    // An armed RSA-PSS keygen rejects a non-signing usage before importing, and
+    // re-types the imported key as EVP_PKEY_RSA_PSS.
+    #[test]
+    #[allow(unsafe_code)]
+    fn pss_keygen_checks_usage_and_retypes_key() {
+        let ctx = make_ctx();
+        // Non-zero placeholder; never dereferenced.
+        ctx_state().lock().get_mut(&(ctx as usize)).unwrap().engine = 1;
+        assert_eq!(set_str(ctx, "azihsm.key_usage", "keyEncipherment"), 1);
+        // SAFETY: EVP_PKEY_new allocates the out-key, freed below.
+        unsafe {
+            let pkey = ffi::EVP_PKEY_new();
+            assert!(keygen_inner::<PanicImport>(ctx, pkey, true).is_err());
+            assert_eq!(set_str(ctx, "azihsm.key_usage", "digitalSignature"), 1);
+            keygen_inner::<SoftwareImport>(ctx, pkey, true).unwrap();
+            assert_eq!(ffi::EVP_PKEY_id(pkey), ffi::EVP_PKEY_RSA_PSS as c_int);
+            ffi::EVP_PKEY_free(pkey);
+        }
+        free_ctx(ctx);
     }
 
     /// Capture DEFAULTS (the method itself is left unregistered), then a built-in
