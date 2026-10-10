@@ -301,16 +301,16 @@ mod layout_asserts;
 /// Stateless entry point: [`PartStore::partition`] validates a raw
 /// partition id and returns a [`Partition`] handle through which the
 /// slot's fields are accessed. [`PartStore::init_default`] initializes
-/// every slot at PAL boot.
+/// every slot on power-on boot; warm boots preserve the store.
 #[derive(Debug)]
 pub struct PartStore;
 
 /// Selects how much partition state [`Partition::clear_state`] wipes.
 ///
-/// Both kinds clear the per-tenant runtime state (enable-time keys,
-/// credential, BK3 session key, nonce, session table, and PIN policy);
-/// they differ only in whether the write-once provisioning material is
-/// preserved. Future reset flavours can be added as additional variants.
+/// Both kinds clear the per-tenant runtime state (enable-time key handles,
+/// credential, BK3 session key, nonce, volatile session metadata, and PIN
+/// policy); they differ only in whether the write-once provisioning material is
+/// preserved. The persistent session table is left for the PAL to manage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartResetKind {
     /// NSSR `Migrate`: preserve the partition's provisioning material.
@@ -350,6 +350,25 @@ impl PartStore {
     pub fn init_default() {
         for idx in 0..NUM_PARTITIONS {
             Partition(idx).reset();
+        }
+    }
+
+    /// Re-arms Gate 1 (`unwrapping_key_required`) for every partition that
+    /// still owns table resources, after a warm / fw-update reboot.
+    ///
+    /// The GSRAM-resident store survives a warm reset, so each slot's
+    /// `res_mask` is already correct and no wipe is performed. But the SP
+    /// consumes and clears Gate 1 on every boot. Re-arm
+    /// `unwrapping_key_required` wherever the resource mask is non-zero,
+    /// without relying on a subsequent `SetResource` replay, so the SP
+    /// re-stages that partition's RSA unwrapping key. Mirrors the reference
+    /// `PartStateImpl::restore_res_mask`.
+    pub fn rearm_unwrapping_key_required() {
+        for idx in 0..NUM_PARTITIONS {
+            let part = Partition(idx);
+            if part.res_mask() != 0 {
+                part.set_unwrapping_key_required(true);
+            }
         }
     }
 }
@@ -444,8 +463,8 @@ impl Partition {
     /// The shared core (cleared for every kind) drops the enable-time and
     /// provisioning vault-key handles (the vault deletions themselves are the
     /// PAL's responsibility), the cached public keys, the caller-presented
-    /// credential, the derived BK3 session key, the nonce, the per-partition
-    /// session table + metadata, and the PIN lockout policy — matching the
+    /// credential, the derived BK3 session key, the nonce, the volatile
+    /// session metadata, and the PIN lockout policy — matching the
     /// reference `state.disable()` / `state.migrate()`, which both reset the
     /// policy.
     ///
@@ -454,12 +473,11 @@ impl Partition {
     /// thumbprints, sealed BK3 + incarnation flag, rotated PSKs, and the VM
     /// launch GUID); [`PartResetKind::Migrate`] preserves it so a host that
     /// resets via NSSR keeps its provisioning and only re-establishes its
-    /// credential. The partition identity and `Masked_BK_BOOT` are preserved
-    /// for both — they are torn down only on free (see [`reset`]). The
-    /// resource mask, generation counter, and lifecycle state are left for the
-    /// caller to manage.
-    ///
-    /// [`reset`]: Self::reset
+    /// credential. This helper leaves the partition identity,
+    /// `Masked_BK_BOOT`, persistent session table, resource mask, generation
+    /// counter, and lifecycle state for the caller to manage. The PAL
+    /// preserves established session reservations on disable and releases
+    /// all slots on NSSR/migrate or free.
     #[inline(never)]
     pub fn clear_state(mut self, kind: PartResetKind) {
         // ── Per-tenant runtime state (cleared for every reset kind) ──
@@ -491,11 +509,19 @@ impl Partition {
         // Reset the PIN lockout policy to default (matches the reference
         // `state.disable()` and `state.migrate()`).
         self.set_pin_policy(PinPolicy::default());
-        // Per-tenant runtime: nonce, session table, session metadata.
+        // Per-tenant runtime: nonce and the volatile session metadata. The
+        // persistent `session_table` is deliberately *not* touched here,
+        // because the right disposition depends on the caller: a disable
+        // keeps the allocation mask so the host can still close the sessions
+        // it owns, while a migrate (NSSR) or free releases the slots. That
+        // policy needs the session-store layout, so it lives one layer up —
+        // see `SessionTable::mark_all_needs_renego` / `clear_all`, which
+        // every caller of this function invokes. Mirrors the reference, whose
+        // `disable` calls `session_table().restore(backup())` and whose
+        // `clear_partition_info` calls `session_table().restore(0)`.
         {
             let slot = self.slot_mut();
             slot.nonce = [0u8; NONCE_LEN];
-            slot.session_table = [0u8; SESSION_TABLE_LEN];
             slot.session_meta = [0u8; 2];
         }
 

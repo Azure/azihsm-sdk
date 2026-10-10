@@ -55,9 +55,10 @@ impl SessionStore {
 ///
 /// Obtained only via [`SessionStore::partition`], so holding one is proof
 /// that the partition index is in range. Logical session IDs are slot
-/// indices (`0..MAX_SESSIONS`); each occupied slot maps to a physical
-/// vault key ID. Only the persistent fields live here — see the crate docs
-/// for the volatile state that is managed elsewhere. Mirrors the
+/// indices (`0..MAX_SESSIONS`). Active and Pending slots map to physical
+/// vault key IDs; NeedsRenegotiation slots retain only their logical
+/// reservation, without a live vault mapping. Only the persistent fields
+/// live here — see the crate docs for the volatile state. Mirrors the
 /// [`Partition`](azihsm_fw_uno_drivers_part_store::Partition) handle.
 #[derive(Debug, Clone, Copy)]
 pub struct SessionTable(Partition);
@@ -243,17 +244,82 @@ impl SessionTable {
         }
     }
 
-    /// Returns the physical vault key id of every occupied slot (Active,
-    /// NeedsRenegotiation, or Pending), so a caller tearing the partition
-    /// down can delete the backing session-blob vault keys before the
-    /// table is zeroized — otherwise they would be orphaned in the vault.
+    /// Flags every *established* slot as needing renegotiation, keeping its
+    /// logical session id reserved while dropping the state that a partition
+    /// reset invalidates, and releases every in-flight handshake slot.
+    ///
+    /// Used when a partition is **disabled** — notably when the host clears
+    /// `CC.EN` during an NVMe Level-2 abort or firmware-crash recovery, which
+    /// reaches the HSM as `PfnEnableDisable(Disable)`. The host still holds
+    /// the session ids it opened, and the DDI contract lets it close them
+    /// afterwards (see `classify_session_state`, which admits `Close` on a
+    /// renegotiating slot), so their allocation bits survive. The
+    /// physical-id indirection is dropped because the caller deletes the
+    /// backing session-blob vault keys.
+    ///
+    /// An NSSR (`Migrate`) and a free use [`clear_all`](Self::clear_all)
+    /// instead: both regenerate or discard the partition identity that a
+    /// renegotiating slot would have to be reopened against.
+    ///
+    /// [`Pending`](HsmSessionState::Pending) slots are released because the
+    /// reset invalidates their handshake state. The host may already have
+    /// received a pending ID from `SessionOpenInit`, but an incomplete
+    /// handshake cannot resume as a renegotiating session.
+    ///
+    /// Mirrors the reference firmware's
+    /// `session_table().restore(session_table().backup())` in
+    /// `PartState::disable` / `PartState::migrate`, and the std PAL's
+    /// `backup`/`restore` pair, whose `backup` is likewise
+    /// `alloc_mask & !pending_mask`.
+    #[inline(never)]
+    pub fn mark_all_needs_renego(&mut self) {
+        let survivors = self.alloc_mask() & !self.pending_mask();
+        self.region_mut()[ALLOC_MASK] = survivors;
+        self.region_mut()[RENEGO_MASK] = survivors;
+        self.region_mut()[PHYS_IDS..].fill(0);
+        self.set_pending_mask(0);
+        self.set_psk_change_mask(0);
+    }
+
+    /// Releases every slot: clears the allocation and renegotiation masks,
+    /// the physical-id indirection, and the volatile pending / PSK-change
+    /// masks.
+    ///
+    /// Used on partition free and NSSR (`Migrate`), which discard or regenerate
+    /// the partition identity and release the prior session context. A plain
+    /// disable uses [`mark_all_needs_renego`](Self::mark_all_needs_renego)
+    /// instead, retaining established logical IDs so the host can still close
+    /// its sessions. Mirrors the reference firmware's
+    /// `session_table().restore(0)` in `PartState::clear_partition_info`.
+    #[inline(never)]
+    pub fn clear_all(&mut self) {
+        self.region_mut().fill(0);
+        self.set_pending_mask(0);
+        self.set_psk_change_mask(0);
+    }
+
+    /// Returns the physical vault key id of every slot that still owns live
+    /// vault key material — [`Active`](HsmSessionState::Active) and
+    /// [`Pending`](HsmSessionState::Pending) — so a caller tearing the
+    /// partition down can delete the backing session-blob and handshake-blob
+    /// vault keys before the indirection is dropped; otherwise they would be
+    /// orphaned in the vault.
+    ///
+    /// [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation) slots are
+    /// skipped: by construction their key material has already been deleted
+    /// and their indirection zeroed by
+    /// [`mark_all_needs_renego`](Self::mark_all_needs_renego). Enumerating
+    /// them would yield a physical id of `0`, which is not a "no mapping"
+    /// sentinel but the perfectly valid key id for table 0 / entry 0 — so a
+    /// second disable (disable → enable → disable) would ask the vault to
+    /// delete a live, unrelated key.
     ///
     /// Read-only: the table is left unchanged (the caller clears it
     /// separately, e.g. via the partition store's `clear_enabled_state`).
     #[inline(never)]
     pub fn occupied_physical_ids(&self) -> [Option<HsmKeyId>; MAX_SESSIONS] {
         let mut out = [None; MAX_SESSIONS];
-        let mask = self.alloc_mask();
+        let mask = self.alloc_mask() & !self.renego_mask();
         for (slot, entry) in out.iter_mut().enumerate() {
             if (mask & (1 << slot)) != 0 {
                 *entry = Some(HsmKeyId::from(self.phys_id(slot)));

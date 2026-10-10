@@ -167,6 +167,9 @@ pub enum IpcMessageOpCode {
     /// FP error log.
     FpErrLog = 0x9,
 
+    /// Trigger a crash on a remote core (test hook).
+    TriggerCrash = 0x47,
+
     /// Set resource.
     SetResource = 0x7f,
 }
@@ -182,6 +185,7 @@ impl TryFrom<u8> for IpcMessageOpCode {
             0x06 => Self::CdmaIo,
             0x07 => Self::AesKeyUpdate,
             0x09 => Self::FpErrLog,
+            0x47 => Self::TriggerCrash,
             0x7F => Self::SetResource,
             _ => return Err(IpcMessageErr::InvalidOpcodeConversion.into()),
         })
@@ -855,4 +859,109 @@ pub struct AesBulk256KeyId {
     /// Reserved.
     #[bits(6)]
     _rsvd: u8,
+}
+
+// ---------------------------------------------------------------------------
+// IpcMessageTriggerCrash (opcode 0x47)
+// ---------------------------------------------------------------------------
+
+/// Crash mechanism requested on the target core.
+///
+/// Wire values mirror the reference firmware's `CrashType`.
+#[repr(u32)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum CrashType {
+    /// Trigger a hard fault.
+    HardFault = 1,
+
+    /// Trigger the explicit-crash path.
+    ExplicitCrash = 2,
+
+    /// Trigger a panic.
+    Panic = 3,
+
+    /// Stop forward progress.
+    Hang = 4,
+}
+
+/// Target processor for a crash request.
+///
+/// Wire values mirror the reference firmware's `SocCpuId`. See [`CrashType`]
+/// for why these are re-declared rather than shared with the DDI enum.
+#[repr(u32)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum SocCpuId {
+    /// Admin core.
+    Admin = 0,
+
+    /// HSM core.
+    Hsm = 1,
+
+    /// Fast-path core 0.
+    Fp0 = 2,
+
+    /// Fast-path core 1.
+    Fp1 = 3,
+
+    /// Fast-path core 2.
+    Fp2 = 4,
+}
+
+/// `TriggerCrash` IPC message body (opcode `TriggerCrash`, 0x47).
+///
+/// Outbound only: the HSM core asks another core to crash itself. Mirrors the
+/// reference firmware's `IpcMessageTriggerCrash`, which the Admin core decodes.
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+pub struct IpcMessageTriggerCrash {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Crash mechanism to execute on the target core.
+    pub crash_type: CrashType,
+
+    /// Core that should execute the crash.
+    pub cpu_id: SocCpuId,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageTriggerCrash::LEN],
+}
+
+const _: () =
+    assert!(core::mem::size_of::<IpcMessageTriggerCrash>() == core::mem::size_of::<IpcMessage>());
+
+// Lock the wire layout: two 4-byte enums, no padding.
+const _: () = assert!(IpcMessageTriggerCrash::LEN == 8);
+
+impl IpcMessageType for IpcMessageTriggerCrash {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::TriggerCrash;
+    const LEN: usize = core::mem::size_of::<CrashType>() + core::mem::size_of::<SocCpuId>();
+
+    fn validate(&self) -> IpcResult<()> {
+        Ok(())
+    }
+}
+
+/// Encode a `TriggerCrash` request targeting `cpu_id`.
+///
+/// `tag` is echoed by the responder, matching the reference request/response
+/// tagging convention. A responder may acknowledge before crashing; the
+/// requester does not wait for or depend on that acknowledgement.
+pub fn encode_trigger_crash(
+    tag: u8,
+    cpu_id: SocCpuId,
+    crash_type: CrashType,
+) -> [u32; IPC_MESSAGE_LENGTH] {
+    let msg = IpcMessageTriggerCrash {
+        header: IpcMessageHeader::new()
+            .with_msg_op(IpcMessageOpCode::TriggerCrash as u32)
+            .with_tag(tag as u32)
+            .with_length(IpcMessageTriggerCrash::LEN as u32),
+        crash_type,
+        cpu_id,
+        _rsvd: [0; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageTriggerCrash::LEN],
+    };
+    IpcMessageEncoder::encode(msg).data
 }

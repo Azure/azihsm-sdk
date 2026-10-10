@@ -6,6 +6,7 @@ members = [
   "app",
   "crates/bulk_copy",
   "crates/cert_blob",
+  "crates/crashdump",
   "crates/error",
   "crates/fault",
   "crates/key_vault",
@@ -29,7 +30,9 @@ members = [
   "drivers/semihosting",
   "drivers/session_store",
   "drivers/sha",
+  "drivers/soc",
   "drivers/systick",
+  "drivers/tcon",
   "drivers/uart",
   "drivers/upka",
   "drivers/vault",
@@ -45,6 +48,7 @@ azihsm_fw_single_cell = { path = "crates/single_cell" }
 azihsm_fw_static_init = { path = "crates/static_init" }
 azihsm_fw_static_ref = { path = "crates/static_ref" }
 azihsm_fw_uno_cert_blob = { path = "crates/cert_blob" }
+azihsm_fw_uno_crashdump = { path = "crates/crashdump" }
 azihsm_fw_uno_reg_cortex_m = { path = "reg/cortex-m" }
 
 azihsm_fw_uno_drivers_aes = { path = "drivers/aes" }
@@ -62,7 +66,9 @@ azihsm_fw_uno_drivers_rng = { path = "drivers/rng" }
 azihsm_fw_uno_drivers_semihosting = { path = "drivers/semihosting" }
 azihsm_fw_uno_drivers_session_store = { path = "drivers/session_store" }
 azihsm_fw_uno_drivers_sha = { path = "drivers/sha" }
+azihsm_fw_uno_drivers_soc = { path = "drivers/soc" }
 azihsm_fw_uno_drivers_systick = { path = "drivers/systick" }
+azihsm_fw_uno_drivers_tcon = { path = "drivers/tcon" }
 azihsm_fw_uno_drivers_uart = { path = "drivers/uart" }
 azihsm_fw_uno_drivers_upka = { path = "drivers/upka" }
 azihsm_fw_uno_drivers_vault = { path = "drivers/vault" }

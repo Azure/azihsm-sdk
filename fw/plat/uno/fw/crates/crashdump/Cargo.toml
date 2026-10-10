@@ -1,0 +1,20 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+edition = "2021"
+name = "azihsm_fw_uno_crashdump"
+version = "0.1.0"
+
+[lib]
+bench = false
+doctest = false
+
+[dependencies]
+azihsm_fw_uno_reg_soc = { workspace = true }
+cortex-m = { workspace = true }
+cortex-m-rt = { workspace = true }
+zerocopy = { features = ["derive"], workspace = true }
+
+[lints]
+workspace = true
