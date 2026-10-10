@@ -559,9 +559,10 @@ mod round_trips {
 
     /// Session keys through the real keygen/import paths: `azihsm.session:true`
     /// with no `azihsm.masked_key` (a session key's blob would only unmask
-    /// within the creating HSM session). Generates an EC P-384 key and imports
-    /// a software RSA key; each must carry the HSM session flag and sign
-    /// through the engine, verifying in software.
+    /// within the creating HSM session). Generates EC P-384 signing and
+    /// agreement keys and imports a software RSA key; each must carry the HSM
+    /// session flag, the signing keys sign through the engine (verifying in
+    /// software) and the agreement key derives.
     #[cfg(feature = "mock")]
     #[allow(unsafe_code)]
     #[allow(clippy::unwrap_used)]
@@ -599,6 +600,34 @@ mod round_trips {
             verify(&ec_pub, MessageDigest::sha384(), msg, &sig),
             "EC session key signature must verify"
         );
+
+        // EC keyAgreement: a session agreement key derives against a software
+        // peer (buffer mode yields the derived secret's masked blob).
+        let agree_raw = try_armed_keygen(
+            engine_raw,
+            "P-384",
+            None,
+            &[
+                ("azihsm.session", "true"),
+                ("azihsm.key_usage", "keyAgreement"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("EC session agreement keygen failed: {e}")))?;
+        // SAFETY: agree_raw is the owning EVP_PKEY from keygen (see above).
+        let agree_session = unsafe {
+            let hsm = crate::keyload::ec_key_hsm_key(ffi::EVP_PKEY_get0_EC_KEY(agree_raw));
+            !hsm.is_null() && (*hsm).is_session()
+        };
+        assert!(
+            agree_session,
+            "generated agreement key must be an HSM session key"
+        );
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let peer = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let derived = derive_masked(engine_raw, agree_raw, peer.as_ptr().cast(), None);
+        assert!(!derived.is_empty(), "EC session agreement key must derive");
+        // SAFETY: agree_raw is the owning EVP_PKEY from keygen.
+        unsafe { ffi::EVP_PKEY_free(agree_raw) };
 
         // RSA: session import, no blob.
         let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
@@ -2250,7 +2279,7 @@ mod mock {
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
 
-    // `azihsm.session:true` generates an EC key and imports an RSA key as HSM
+    // `azihsm.session:true` generates EC keys and imports an RSA key as HSM
     // session keys without a masked blob (see round_trips::run_session_keys).
     #[test]
     #[serial]
