@@ -22,13 +22,6 @@ use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
-    /// Use arbitrary bytes as the request label instead of the numeric seed.
-    use_rand_data: bool,
-    /// Arbitrary request bytes; TBOR's typed API cannot dispatch a raw frame,
-    /// so these bytes are carried in the command's key-label field.
-    rand_data: Vec<u8>,
-    /// Seed used to create request data when `use_rand_data` is false.
-    request_seed: u64,
     /// Session identifier supplied in place of the original MBOR request
     /// header's session id.
     request_header: FuzzRequestHeader,
@@ -40,8 +33,10 @@ struct FuzzInput {
     invalid_field: InvalidField,
     /// Valid curve choice used when constructing a valid request.
     curve: common::EccCurve,
-    /// Fuzzed usage value used for invalid usage requests.
+    /// Fuzzed key usage bitfield.
     key_usage: u64,
+    /// Fuzzed key label, including values longer than the TBOR limit.
+    key_label: Vec<u8>,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -58,22 +53,11 @@ enum InvalidField {
     KeyLabel,
 }
 
-fn request_label(input: &FuzzInput) -> Vec<u8> {
-    let mut label = if input.use_rand_data {
-        input.rand_data.clone()
-    } else {
-        input.request_seed.to_le_bytes().to_vec()
-    };
-    label.truncate(TBOR_KEY_LABEL_MAX_LEN);
-    label
-}
-
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         // A rotated CO session exercises the authenticated, in-session command
         // path and leaves the per-session masking key ready for key generation.
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        let label = request_label(&input);
         let key_scope_is_supported = matches!(
             input.key_scope,
             common::KeyScope::Session
@@ -99,8 +83,8 @@ fuzz_target!(|input: FuzzInput| {
             session_id: session.session_id,
             scope: input.key_scope.to_tbor(),
             curve: input.curve.to_tbor(),
-            key_usage: KEY_USAGE_SIGN,
-            key_label: label,
+            key_usage: input.key_usage,
+            key_label: input.key_label.clone(),
         };
 
         if !input.valid_request {
@@ -127,7 +111,12 @@ fuzz_target!(|input: FuzzInput| {
         }
 
         let result = ctx.tbor(&req);
-        let expect_success = input.valid_request && key_scope_is_supported;
+        let key_usage_is_valid = matches!(req.key_usage, KEY_USAGE_SIGN | KEY_USAGE_DERIVE);
+        let key_label_is_valid = req.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
+        let expect_success = input.valid_request
+            && key_scope_is_supported
+            && key_usage_is_valid
+            && key_label_is_valid;
         if expect_success {
             let resp = result.expect("valid EccGenerateKey request should succeed");
             let wire_coord_len = match req.curve {
