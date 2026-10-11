@@ -8,8 +8,8 @@ mod common;
 
 use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::build_mac_fin;
@@ -46,24 +46,21 @@ fuzz_target!(|ops: Vec<TestAppOps>| {
                         "SessionOpenInit on an occupied file handle should hit the session limit"
                     );
 
-                    // TBOR sessions are opened on their own file handle. Use
-                    // the rotated CO PSK for Phase 1, then fuzz Phase 2 with
-                    // the original user-id/PIN bytes as a MAC mutation.
+                    // The bootstrap occupies the single CO slot. Open the
+                    // secondary session as CU so Phase 1 can reach Phase 2.
                     let secondary = TestCtx::new_with_path(path);
-                    let pending = match secondary.session_open_init_with_options(
-                        SessionOpenInitOptions::new(CO_PSK_ID, SessionType::Authenticated)
-                            .with_psk(&ROTATED_CO_PSK),
-                    ) {
-                        Ok(pending) => pending,
-                        Err(DdiError::TborStatus(status))
-                            if status == TborStatus::VaultSessionLimitReached =>
-                        {
-                            continue;
-                        }
-                        Err(_error) => {
-                            panic!("SessionOpenInit with the rotated CO PSK failed")
-                        }
-                    };
+                    let pending =
+                        match secondary.session_open_init(CU_PSK_ID, SessionType::PlainText) {
+                            Ok(pending) => pending,
+                            Err(DdiError::TborStatus(status))
+                                if status == TborStatus::VaultSessionLimitReached =>
+                            {
+                                continue;
+                            }
+                            Err(_error) => {
+                                panic!("CU SessionOpenInit with available capacity failed")
+                            }
+                        };
                     let pending_session_id = pending.session_id;
                     let expected_mac = build_mac_fin(&pending)
                         .expect("building a valid SessionOpenFinish MAC should succeed");
