@@ -56,6 +56,8 @@ struct FuzzInput {
     use_valid_key: bool,
     key_scope: common::KeyScope,
     key_size: common::AesKeySize,
+    key_usage: u64,
+    key_label: Vec<u8>,
     gcm_request: FuzzAesGcmRequest,
     xts_request: FuzzAesXtsRequest,
     source_buffers: Vec<Vec<u8>>,
@@ -177,8 +179,12 @@ fuzz_target!(|input: FuzzInput| {
                 | common::KeyScope::Local
                 | common::KeyScope::SecurityDomain
         );
+        let key_usage_is_valid = input.key_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT);
+        let key_label_is_valid = input.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
+        let key_generation_should_succeed =
+            key_scope_is_supported && key_usage_is_valid && key_label_is_valid;
 
-        if input.use_valid_key {
+        if input.use_valid_key && key_generation_should_succeed {
             match input.key_scope {
                 common::KeyScope::Ephemeral | common::KeyScope::Local => {
                     common::finalize_partition(ctx, &session)
@@ -197,14 +203,14 @@ fuzz_target!(|input: FuzzInput| {
                 session_id: session.session_id,
                 scope: input.key_scope.to_tbor(),
                 key_size: input.key_size.to_tbor(),
-                key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
-                key_label: Vec::new(),
+                key_usage: input.key_usage,
+                key_label: input.key_label.clone(),
             }) {
-                Ok(resp) if key_scope_is_supported => (resp.masked_key, true),
-                Ok(_) => panic!("unsupported AES key scope unexpectedly succeeded"),
+                Ok(resp) if key_generation_should_succeed => (resp.masked_key, true),
+                Ok(_) => panic!("invalid AES key-generation request unexpectedly succeeded"),
                 Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
-                Err(_) if !key_scope_is_supported => (Vec::new(), false),
-                Err(err) => panic!("supported AES key scope failed: {err}"),
+                Err(_) if !key_generation_should_succeed => (Vec::new(), false),
+                Err(err) => panic!("valid AES key-generation request failed: {err}"),
             }
         } else {
             (legacy_masked_key(&input), false)
