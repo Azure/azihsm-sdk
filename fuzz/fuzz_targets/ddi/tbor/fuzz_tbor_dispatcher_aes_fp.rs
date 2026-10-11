@@ -54,6 +54,7 @@ struct FuzzInput {
     aes_type: FuzzAesType,
     aes_mode: FuzzAesMode,
     use_valid_key: bool,
+    key_scope: common::KeyScope,
     key_size: common::AesKeySize,
     gcm_request: FuzzAesGcmRequest,
     xts_request: FuzzAesXtsRequest,
@@ -62,7 +63,6 @@ struct FuzzInput {
     masked_key: Vec<u8>,
 }
 
-const AES_KEY_SCOPE_SESSION: u8 = 0b001;
 const MAX_FUZZ_MSG_LEN: usize = AES_MSG_MAX_LEN + 1;
 
 fn message_from_sources(source_buffers: &[Vec<u8>]) -> Vec<u8> {
@@ -170,18 +170,44 @@ fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
         let mut destination_buffers = input.destination_buffers.clone();
-        let masked_key = if input.use_valid_key {
-            ctx.tbor(&TborAesGenerateKeyReq {
+        let key_scope_is_supported = matches!(
+            input.key_scope,
+            common::KeyScope::Session
+                | common::KeyScope::Ephemeral
+                | common::KeyScope::Local
+                | common::KeyScope::SecurityDomain
+        );
+
+        if input.use_valid_key {
+            match input.key_scope {
+                common::KeyScope::Ephemeral | common::KeyScope::Local => {
+                    common::finalize_partition(ctx, &session)
+                }
+                common::KeyScope::SecurityDomain => {
+                    common::create_test_security_domain(ctx, &session)
+                }
+                common::KeyScope::Unspecified
+                | common::KeyScope::Session
+                | common::KeyScope::Internal => {}
+            }
+        }
+
+        let (masked_key, generated_key) = if input.use_valid_key {
+            match ctx.tbor(&TborAesGenerateKeyReq {
                 session_id: session.session_id,
-                scope: AES_KEY_SCOPE_SESSION,
+                scope: input.key_scope.to_tbor(),
                 key_size: input.key_size.to_tbor(),
                 key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
                 key_label: Vec::new(),
-            })
-            .expect("session-scoped AES key generation should succeed")
-            .masked_key
+            }) {
+                Ok(resp) if key_scope_is_supported => (resp.masked_key, true),
+                Ok(_) => panic!("unsupported AES key scope unexpectedly succeeded"),
+                Err(err @ DdiError::DriverError(_)) => panic!("Crash Detected: {err}"),
+                Err(_) if !key_scope_is_supported => (Vec::new(), false),
+                Err(err) => panic!("supported AES key scope failed: {err}"),
+            }
         } else {
-            legacy_masked_key(&input)
+            (legacy_masked_key(&input), false)
         };
 
         let msg = message_from_sources(&input.source_buffers);
@@ -190,7 +216,7 @@ fuzz_target!(|input: FuzzInput| {
             FuzzAesMode::Encrypt => AES_OP_ENCRYPT,
             FuzzAesMode::Decrypt => AES_OP_DECRYPT,
         };
-        let expect_success = input.use_valid_key
+        let expect_success = generated_key
             && !msg.is_empty()
             && msg.len().is_multiple_of(AES_IV_LEN)
             && msg.len() <= AES_MSG_MAX_LEN;
