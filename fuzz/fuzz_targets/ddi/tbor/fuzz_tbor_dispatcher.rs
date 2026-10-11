@@ -20,8 +20,6 @@ use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-const KEY_SCOPE_SESSION: u8 = 0b001;
-
 #[derive(Arbitrary, Debug)]
 struct FuzzInput {
     /// Use arbitrary bytes as the request label instead of the numeric seed.
@@ -34,8 +32,10 @@ struct FuzzInput {
     /// Session identifier supplied in place of the original MBOR request
     /// header's session id.
     request_header: FuzzRequestHeader,
-    /// Whether the command parameters should describe a valid request.
+    /// Whether non-scope parameters should describe a valid request.
     valid_request: bool,
+    /// Scope requested for the generated ECC key.
+    key_scope: common::KeyScope,
     /// Selects which one field is made invalid when `valid_request` is false.
     invalid_field: InvalidField,
     /// Valid curve choice used when constructing a valid request.
@@ -74,10 +74,30 @@ fuzz_target!(|input: FuzzInput| {
         // path and leaves the per-session masking key ready for key generation.
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
         let label = request_label(&input);
+        let key_scope_is_supported = matches!(
+            input.key_scope,
+            common::KeyScope::Session
+                | common::KeyScope::Ephemeral
+                | common::KeyScope::Local
+                | common::KeyScope::SecurityDomain
+        );
+
+        if input.valid_request || !matches!(&input.invalid_field, InvalidField::Scope) {
+            match input.key_scope {
+                common::KeyScope::Session => {}
+                common::KeyScope::Ephemeral | common::KeyScope::Local => {
+                    common::finalize_partition(ctx, &session)
+                }
+                common::KeyScope::SecurityDomain => {
+                    common::create_test_security_domain(ctx, &session)
+                }
+                common::KeyScope::Unspecified | common::KeyScope::Internal => {}
+            }
+        }
 
         let mut req = TborEccGenerateKeyReq {
             session_id: session.session_id,
-            scope: KEY_SCOPE_SESSION,
+            scope: input.key_scope.to_tbor(),
             curve: input.curve.to_tbor(),
             key_usage: KEY_USAGE_SIGN,
             key_label: label,
@@ -107,7 +127,8 @@ fuzz_target!(|input: FuzzInput| {
         }
 
         let result = ctx.tbor(&req);
-        if input.valid_request {
+        let expect_success = input.valid_request && key_scope_is_supported;
+        if expect_success {
             let resp = result.expect("valid EccGenerateKey request should succeed");
             let wire_coord_len = match req.curve {
                 ECC_CURVE_P256 => 32,
