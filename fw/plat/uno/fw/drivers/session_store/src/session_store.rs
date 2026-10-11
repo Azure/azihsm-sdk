@@ -179,6 +179,14 @@ impl SessionTable {
 
     /// Looks up the physical vault key ID for a logical session.
     ///
+    /// This is a raw slot→key lookup and does **not** enforce renegotiation
+    /// state. Renegotiation is gated centrally in the IO dispatch path
+    /// (`classify_session_state`): crypto/in-session ops on a migrated slot are
+    /// rejected with [`HsmError::SessionNeedsRenegotiation`] before they reach
+    /// the vault, while `CloseSession` is allowed through so the slot can be
+    /// torn down (post-migration cleanup). A migrated slot carries a zeroed
+    /// physical id, which `session_destroy` never dereferences.
+    ///
     /// # Errors
     ///
     /// - [`HsmError::SessionNotFound`] — `id` is not an allocated slot.
@@ -205,6 +213,31 @@ impl SessionTable {
         self.region_mut()[RENEGO_MASK] &= !(1u8 << slot);
         self.set_phys_id(slot, u16::from(new_physical));
         Ok(id)
+    }
+
+    /// Rolls back a [`recreate`](Self::recreate): restores the
+    /// renegotiation flag and clears the physical vault mapping.
+    ///
+    /// The caller must delete the orphaned vault entry (resolved via
+    /// [`physical_id`](Self::physical_id)) before calling this, so the
+    /// physical mapping is read while still intact.
+    ///
+    /// This is the slot-table half of the reference firmware's
+    /// `rollback_open_session` reopen branch
+    /// (`session_table().rollback_recreation(id)`): a `ReopenSession`
+    /// whose later steps fail must leave the slot exactly as a
+    /// freshly-migrated [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation)
+    /// slot — zeroed physical id — so the host can retry the reopen.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::SessionNotFound`] — `id` is not an allocated slot.
+    #[inline(never)]
+    pub fn rollback_recreation(&mut self, id: HsmSessId) -> HsmResult<()> {
+        let slot = self.active_slot(id)?;
+        self.region_mut()[RENEGO_MASK] |= 1 << slot;
+        self.set_phys_id(slot, 0);
+        Ok(())
     }
 
     /// Returns the persistent state of a session slot.
@@ -241,6 +274,46 @@ impl SessionTable {
         if slot < MAX_SESSIONS && (self.alloc_mask() & (1 << slot)) != 0 {
             self.region_mut()[RENEGO_MASK] |= 1 << slot;
         }
+    }
+
+    /// Snapshot the set of live session slots for a live-migration / NSSR
+    /// reset.
+    ///
+    /// Returns a bitmask of every currently-occupied slot that carries
+    /// reopenable credential state — i.e. `Active` and already
+    /// `NeedsRenegotiation` slots — excluding in-flight `Pending`
+    /// handshakes, which have no reopenable state. The result is handed to
+    /// [`restore`](Self::restore) *after* the partition's vault and
+    /// per-tenant state have been cleared, so a migrated tenant's sessions
+    /// survive as `NeedsRenegotiation` and can be re-keyed by a subsequent
+    /// `ReopenSession`. Mirrors the reference firmware's `backup`/`restore`
+    /// pair (`state.migrate()` / `state.disable()` do
+    /// `session_table().restore(session_table().backup())`).
+    #[inline(never)]
+    pub fn backup(&self) -> u8 {
+        self.alloc_mask() & !self.pending_mask()
+    }
+
+    /// Re-establish the session slots preserved across a reset, marking
+    /// every survivor as
+    /// [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation).
+    ///
+    /// `mask` is a snapshot taken by [`backup`](Self::backup) *before* the
+    /// partition's vault and session table were cleared. Every bit set in
+    /// `mask` becomes an allocated slot needing renegotiation; its physical
+    /// vault mapping is dropped (the key material did not survive the
+    /// reset) and a subsequent `ReopenSession` re-keys it via
+    /// [`recreate`](Self::recreate). Any leftover `Pending` / psk-change
+    /// state is discarded. Mirrors the reference firmware's `restore`.
+    #[inline(never)]
+    pub fn restore(&mut self, mask: u8) {
+        self.region_mut()[ALLOC_MASK] = mask;
+        self.region_mut()[RENEGO_MASK] = mask;
+        for slot in 0..MAX_SESSIONS {
+            self.set_phys_id(slot, 0);
+        }
+        self.set_pending_mask(0);
+        self.set_psk_change_mask(0);
     }
 
     /// Returns the physical vault key id of every occupied slot (Active,

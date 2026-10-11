@@ -46,7 +46,7 @@ fn preserves_provisioning_and_clears_tenant_state() {
         let p = Partition(pid);
         p.set_psk_co(buf(&psk_co)).unwrap();
         p.set_psk_cu(buf(&psk_cu)).unwrap();
-        p.set_vm_launch_guid(buf(&guid)).unwrap();
+        p.set_vm_launch_guid(&guid);
         p.set_pta_pub_key(buf(&pta)).unwrap();
         p.set_bk3_initialized(true);
 
@@ -198,7 +198,7 @@ fn clear_identity_zeros_id_handle_and_pub_key() {
 }
 
 #[test]
-fn sealed_bk3_is_write_once_until_cleared() {
+fn sealed_bk3_raw_setter_overwrites_and_bounds_length() {
     let p = Partition(10);
     let sealed = [0xA5u8; SEALED_BK3_DATA_LEN];
     let replacement = [0x5Au8; 16];
@@ -206,38 +206,42 @@ fn sealed_bk3_is_write_once_until_cleared() {
 
     p.set_sealed_bk3(buf(&[])).unwrap();
     p.set_sealed_bk3(buf(&sealed)).unwrap();
-    assert_eq!(
-        p.set_sealed_bk3(buf(&replacement)),
-        Err(HsmError::SealedBk3AlreadySet)
-    );
-    assert_eq!(
-        p.set_sealed_bk3(buf(&[])),
-        Err(HsmError::SealedBk3AlreadySet)
-    );
-    assert_eq!(p.set_sealed_bk3(buf(&oversized)), Err(HsmError::InvalidArg));
     assert_eq!(&p.sealed_bk3()[..], &sealed);
 
-    p.clear_sealed_bk3();
+    // The low-level setter is a raw store: write-once enforcement now lives in
+    // the PAL property layer, so repeated writes overwrite rather than
+    // returning `SealedBk3AlreadySet`.
     p.set_sealed_bk3(buf(&replacement)).unwrap();
     assert_eq!(&p.sealed_bk3()[..], &replacement);
+
+    // Oversized blobs are still rejected, leaving the prior value intact.
+    assert_eq!(p.set_sealed_bk3(buf(&oversized)), Err(HsmError::InvalidArg));
+    assert_eq!(&p.sealed_bk3()[..], &replacement);
+
+    p.clear_sealed_bk3();
+    assert!(p.sealed_bk3().is_empty());
+    p.set_sealed_bk3(buf(&sealed)).unwrap();
+    assert_eq!(&p.sealed_bk3()[..], &sealed);
 }
 
 #[test]
-fn sealed_bk3_stays_write_once_after_migrate() {
+fn sealed_bk3_survives_migrate_and_clears_on_disable() {
     let p = Partition(11);
     let sealed = [0xA5u8; 64];
     let replacement = [0x5Au8; 16];
 
     p.set_sealed_bk3(buf(&sealed)).unwrap();
+
+    // Sealed BK3 is write-once provisioning material: preserved across a
+    // migrate (NSSR) alongside the rest of the provisioning state.
     p.clear_state(PartResetKind::Migrate);
     assert_eq!(&p.sealed_bk3()[..], &sealed);
-    assert_eq!(
-        p.set_sealed_bk3(buf(&replacement)),
-        Err(HsmError::SealedBk3AlreadySet)
-    );
-    assert_eq!(&p.sealed_bk3()[..], &sealed);
 
-    p.clear_state(PartResetKind::Disable);
+    // The driver setter overwrites (write-once enforcement is in the PAL).
     p.set_sealed_bk3(buf(&replacement)).unwrap();
     assert_eq!(&p.sealed_bk3()[..], &replacement);
+
+    // A `Disable` reset deallocates the slot, wiping the sealed blob.
+    p.clear_state(PartResetKind::Disable);
+    assert!(p.sealed_bk3().is_empty());
 }

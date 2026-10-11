@@ -679,19 +679,15 @@ impl Partition {
         unsafe { DmaBuf::from_raw_mut(&mut self.slot_mut().vm_launch_guid) }
     }
 
-    /// Sets the VM-launch GUID.
+    /// Captures the host-provided VM-launch GUID.
     ///
-    /// # Errors
-    ///
-    /// - [`HsmError::InvalidArg`] — `v` is not exactly `GUID_LEN` bytes.
+    /// The GUID arrives as plain bytes in the `SetResource` IPC payload
+    /// (not DMA-sourced), so this takes a fixed-size array rather than a
+    /// [`DmaBuf`]. Mirrors the reference firmware's capture in
+    /// `part_init::handle_set_res_cnt`.
     #[inline(never)]
-    pub fn set_vm_launch_guid(mut self, v: &DmaBuf) -> HsmResult<()> {
-        let src: &[u8] = v;
-        if src.len() != GUID_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        self.slot_mut().vm_launch_guid.copy_from_slice(src);
-        Ok(())
+    pub fn set_vm_launch_guid(mut self, v: &[u8; GUID_LEN]) {
+        self.slot_mut().vm_launch_guid.copy_from_slice(v);
     }
 
     // ── masked boot key (variable length) ────────────────────────────────
@@ -752,9 +748,6 @@ impl Partition {
             return Err(HsmError::InvalidArg);
         }
         let slot = self.slot_mut();
-        if slot.sealed_bk3.len != 0 {
-            return Err(HsmError::SealedBk3AlreadySet);
-        }
         slot.sealed_bk3.len = src.len() as u32;
         slot.sealed_bk3.data[..src.len()].copy_from_slice(src);
         // Clear the unused tail of the storage slot.
