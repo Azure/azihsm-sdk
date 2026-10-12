@@ -599,10 +599,11 @@ pub fn new_ec_pkey_method<K: EcKeygenHandler, D: EcDeriveHandler>()
 }
 
 /// The NIDs this engine's pkey-method callback serves.
-static PKEY_NIDS: [c_int; 3] = [
+static PKEY_NIDS: [c_int; 4] = [
     ffi::EVP_PKEY_EC as c_int,
     ffi::NID_hkdf as c_int,
     ffi::EVP_PKEY_RSA as c_int,
+    ffi::EVP_PKEY_RSA_PSS as c_int,
 ];
 
 /// Per-`(ENGINE, NID)` method table shared by the EC and HKDF pkey methods
