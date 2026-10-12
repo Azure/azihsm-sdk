@@ -11,12 +11,13 @@
 //! - **Unknown key** (both backends): a MAC against a non-existent
 //!   `key_id` is rejected with `KeyNotFound`.
 //! - **Sign permission** (emu + real HW, not mock): a `derive`-only
-//!   HMAC key cannot generate a MAC. Real HW's firmware rejects the
-//!   `derive`-only key's creation outright (it requires `SignVerify`
-//!   on every HMAC-class key); emu permits creating the key and
-//!   rejects the MAC attempt instead. Both are accepted as proof the
-//!   permission is enforced (MAC generation is a PKCS#11 `C_Sign`
-//!   operation requiring `CKA_SIGN`).
+//!   HMAC key cannot generate a MAC (MAC generation is a PKCS#11
+//!   `C_Sign` operation requiring `CKA_SIGN`). Where this is rejected
+//!   depends on the firmware's reported API revision (queried via
+//!   `GetApiRev` at runtime): API rev 1.0 (today's real hardware)
+//!   requires `SignVerify` on every HMAC-class key and rejects the
+//!   `derive`-only key's creation outright; API rev >= 1.1 (emu)
+//!   permits creating the key and rejects the MAC attempt instead.
 
 #![cfg(test)]
 
@@ -117,18 +118,25 @@ fn test_hmac_requires_sign_permission_smoke() {
             // PKCS#11 `C_Sign` operation, so a key lacking `CKA_SIGN`
             // must be rejected.
             //
-            // The two backends reject this at different points:
-            // - emu (fw/core's software emulator) permits creating a
-            //   derive-only VarHmac key, then rejects the MAC attempt
-            //   with `InvalidPermissions` (the scenario this test was
-            //   originally written to exercise).
-            // - real hardware's firmware requires `SignVerify` usage
-            //   for every HMAC-class key, with no `derive`-only
-            //   carve-out, so it rejects the key creation itself with
-            //   `InvalidPermissions` before a MAC is ever attempted.
-            // Both are valid proof that a key without sign permission
-            // can't produce a MAC; accept either so this test is
-            // backend-agnostic rather than emu-only.
+            // Where this gets rejected depends on the firmware's
+            // reported API revision, so query it and assert strictly
+            // rather than accepting either outcome:
+            // - API rev 1.0 (today's real hardware): the firmware
+            //   requires `SignVerify` usage for every HMAC-class key,
+            //   with no `derive`-only carve-out, so it rejects the key
+            //   creation itself with `InvalidPermissions` before a MAC
+            //   is ever attempted.
+            // - API rev >= 1.1 (the emu / fw/core software emulator):
+            //   permits creating a derive-only VarHmac key, then
+            //   rejects the MAC attempt with `InvalidPermissions` (the
+            //   scenario this test was originally written to
+            //   exercise).
+            let api_rev = helper_get_api_rev(dev, None, None)
+                .expect("GetApiRev should succeed")
+                .data
+                .max;
+            let rejects_key_creation = api_rev < DdiApiRev { major: 1, minor: 1 };
+
             let (secret_id, _) = create_ecdh_secrets(session_id, dev, DdiKeyType::Secret256);
             let key_props = helper_key_properties(DdiKeyUsage::Derive, DdiKeyAvailability::Session);
             let derived = helper_hkdf_derive(
@@ -146,8 +154,18 @@ fn test_hmac_requires_sign_permission_smoke() {
             );
 
             let derived = match derived {
-                Ok(derived) => derived,
+                Ok(derived) => {
+                    assert!(
+                        !rejects_key_creation,
+                        "API rev {api_rev:?} should reject derive-only key creation, but it succeeded"
+                    );
+                    derived
+                }
                 Err(err) => {
+                    assert!(
+                        rejects_key_creation,
+                        "API rev {api_rev:?} should not reject derive-only key creation, got {err:?}"
+                    );
                     assert!(
                         matches!(err, DdiError::DdiStatus(DdiStatus::InvalidPermissions)),
                         "expected InvalidPermissions rejecting derive-only key creation, got {err:?}"
