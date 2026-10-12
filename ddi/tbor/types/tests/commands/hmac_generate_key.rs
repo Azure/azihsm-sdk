@@ -36,11 +36,11 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 use azihsm_ddi_tbor_types::{HASH_ALGO_SHA1, HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512};
 
+use crate::commands::common::CO;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
-use crate::commands::common::{CO, CU};
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// Masked-key envelope length for a given HMAC key length: `header(8) ‖
