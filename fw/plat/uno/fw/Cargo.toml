@@ -87,6 +87,7 @@ azihsm_fw_ddi_mbor_derive = { path = "../../../core/ddi/mbor/derive" }
 azihsm_fw_ddi_mbor_types = { path = "../../../core/ddi/mbor/types" }
 azihsm_fw_hsm_core = { default-features = false, path = "../../../core/lib" }
 azihsm_fw_hsm_core_tracing = { path = "../../../core/tracing" }
+azihsm_fw_hsm_io = { path = "../../../core/io" }
 azihsm_fw_hsm_pal_traits = { path = "../../../pal/traits" }
 
 bitfield-struct = "0.13.0"

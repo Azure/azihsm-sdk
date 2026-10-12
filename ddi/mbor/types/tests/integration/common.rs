@@ -1647,11 +1647,11 @@ pub fn secure_bk3_provision_and_seal(
     Ok(sealed)
 }
 
-/// Helper to check if firmware was not build with mcr_test_hooks
+/// Helper to check if firmware was not built with azihsm_test_hooks.
 #[allow(dead_code)]
 pub fn firmware_not_built_with_test_hooks(err: &DdiError) -> bool {
     if let DdiError::DdiStatus(DdiStatus::UnsupportedCmd) = err {
-        println!("Firmware is not built with mcr_test_hooks.");
+        println!("Firmware is not built with azihsm_test_hooks.");
         true
     } else {
         false

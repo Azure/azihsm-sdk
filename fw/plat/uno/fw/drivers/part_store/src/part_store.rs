@@ -739,11 +739,12 @@ impl Partition {
         unsafe { DmaBuf::from_raw(&slot.sealed_bk3.data[..len]) }
     }
 
-    /// Writes the sealed BK3 blob (stores length + data).
+    /// Stores a sealed BK3 blob once until explicitly cleared.
     ///
     /// # Errors
     ///
     /// - [`HsmError::InvalidArg`] — `v` exceeds `SEALED_BK3_DATA_LEN`.
+    /// - [`HsmError::SealedBk3AlreadySet`] — a non-empty blob is already stored.
     #[inline(never)]
     pub fn set_sealed_bk3(mut self, v: &DmaBuf) -> HsmResult<()> {
         let src: &[u8] = v;
@@ -751,10 +752,12 @@ impl Partition {
             return Err(HsmError::InvalidArg);
         }
         let slot = self.slot_mut();
+        if slot.sealed_bk3.len != 0 {
+            return Err(HsmError::SealedBk3AlreadySet);
+        }
         slot.sealed_bk3.len = src.len() as u32;
         slot.sealed_bk3.data[..src.len()].copy_from_slice(src);
-        // Zeroize any stale (sensitive) bytes left by a previously longer
-        // blob so nothing survives past the new length.
+        // Clear the unused tail of the storage slot.
         slot.sealed_bk3.data[src.len()..].fill(0);
         Ok(())
     }

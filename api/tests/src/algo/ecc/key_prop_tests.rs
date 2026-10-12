@@ -555,8 +555,8 @@ fn test_ecc_unwrap_usage_mismatch_fails(session: HsmSession) {
     assert!(matches!(result, Err(HsmError::InvalidKeyProps)));
 }
 
-// Ensures unwrap does NOT reject bits/curve mismatch at validation layer,
-// and instead fails in DDI (since blob is bogus).
+/// Verifies EX rejects inconsistent ECC properties before sending a command,
+/// while legacy unwrap retains its invalid-blob error behavior.
 #[session_test]
 fn test_ecc_unwrap_bits_curve_mismatch_fails(session: HsmSession) {
     let priv_prop = HsmKeyPropsBuilder::default()
@@ -572,11 +572,16 @@ fn test_ecc_unwrap_bits_curve_mismatch_fails(session: HsmSession) {
 
     let result = unwrap_ecc_with_props(&session, priv_prop, pub_prop);
 
-    // unwrap does not validate bits vs curve → reaches DDI
-    assert!(matches!(
-        result,
-        Err(HsmError::DdiCmdFailure) | Err(HsmError::InvalidArgument)
-    ));
+    #[cfg(feature = "session-ex-tests")]
+    let expected_error = matches!(result, Err(HsmError::InvalidKeyProps));
+    #[cfg(not(feature = "session-ex-tests"))]
+    let expected_error = matches!(result, Err(HsmError::DdiCmdFailure));
+
+    assert!(
+        expected_error,
+        "Unexpected ECC unwrap error for mismatched bits/curve: {:?}",
+        result.as_ref().err()
+    );
 }
 
 // Ensures unwrap rejects derive private + verify public combination.

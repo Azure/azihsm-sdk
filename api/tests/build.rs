@@ -23,6 +23,7 @@ fn main() {
     // vars changed since they impact the CMake configuration.
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_MOCK");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EMU");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_SESSION_EX_TESTS");
     println!("cargo:rerun-if-env-changed=CMAKE_GENERATOR");
     println!("cargo:rerun-if-env-changed=ProgramFiles(x86)");
     println!("cargo:rerun-if-env-changed=ProgramFiles");
@@ -45,6 +46,14 @@ fn try_main() -> anyhow::Result<()> {
     }
     let mut config = cmake::Config::new("cpp");
     config.define("TEST_FEATURES", features.join(" "));
+    config.define(
+        "SESSION_EX_TESTS",
+        if env::var("CARGO_FEATURE_SESSION_EX_TESTS").is_ok() {
+            "ON"
+        } else {
+            "OFF"
+        },
+    );
 
     // On Windows, use get_vs_gen helper method to select the appropriate CMake
     // generator unless CMAKE_GENERATOR is already set. Tried Ninja but it was

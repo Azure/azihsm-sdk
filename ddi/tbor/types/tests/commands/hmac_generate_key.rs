@@ -24,26 +24,24 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
+
+use azihsm_ddi_tbor_test_harness::{bootstrap_rotated_co, bootstrap_rotated_cu};
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
 use azihsm_ddi_tbor_types::TborStatus;
-use azihsm_ddi_tbor_types::HMAC_HASH_SHA256;
-use azihsm_ddi_tbor_types::HMAC_HASH_SHA384;
-use azihsm_ddi_tbor_types::HMAC_HASH_SHA512;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
+use azihsm_ddi_tbor_types::{HASH_ALGO_SHA1, HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512};
 
-use crate::commands::common::CO;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
+use crate::commands::common::{CO, CU};
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::bootstrap_rotated_cu;
-use crate::harness::TestCtx;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::ROTATED_CU_PSK;
 
 /// Masked-key envelope length for a given HMAC key length: `header(8) ‖
 /// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.
@@ -56,9 +54,9 @@ fn masked_len(key_len: usize) -> usize {
 /// where the exact length is not the focus of the test.
 fn default_key_len(hash: u8) -> usize {
     match hash {
-        HMAC_HASH_SHA256 => 32,
-        HMAC_HASH_SHA384 => 48,
-        HMAC_HASH_SHA512 => 64,
+        HASH_ALGO_SHA256 => 32,
+        HASH_ALGO_SHA384 => 48,
+        HASH_ALGO_SHA512 => 64,
         other => panic!("unexpected hash discriminant {other}"),
     }
 }
@@ -115,7 +113,7 @@ fn roundtrip(ctx: &TestCtx, session_id: u16, scope: u8, hash: u8, key_len: usize
 fn hmac_generate_key_roundtrip_all_hashes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+    for hash in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
         roundtrip(
             &ctx,
             session.session_id,
@@ -133,9 +131,9 @@ fn hmac_generate_key_variable_lengths() {
     let session = finalized_co_session(&ctx);
     // (hash, [min, mid, max]) across each variant's VarLenHmac range.
     let cases: &[(u8, [usize; 3])] = &[
-        (HMAC_HASH_SHA256, [32, 48, 64]),
-        (HMAC_HASH_SHA384, [48, 96, 128]),
-        (HMAC_HASH_SHA512, [64, 96, 128]),
+        (HASH_ALGO_SHA256, [32, 48, 64]),
+        (HASH_ALGO_SHA384, [48, 96, 128]),
+        (HASH_ALGO_SHA512, [64, 96, 128]),
     ];
     for &(hash, lens) in cases {
         for key_len in lens {
@@ -151,18 +149,18 @@ fn hmac_generate_key_rejects_out_of_range_length() {
     let session = finalized_co_session(&ctx);
     // (hash, key_length) pairs just outside the variant's [min, max].
     let cases: &[(u8, u8)] = &[
-        (HMAC_HASH_SHA256, 0),   // zero is always invalid
-        (HMAC_HASH_SHA256, 31),  // below min (32)
-        (HMAC_HASH_SHA256, 65),  // above max (64)
-        (HMAC_HASH_SHA384, 47),  // below min (48)
-        (HMAC_HASH_SHA384, 129), // above max (128)
-        (HMAC_HASH_SHA512, 63),  // below min (64)
-        (HMAC_HASH_SHA512, 129), // above max (128)
-        (HMAC_HASH_SHA384, 0),
-        (HMAC_HASH_SHA512, 0),
-        (HMAC_HASH_SHA256, u8::MAX),
-        (HMAC_HASH_SHA384, u8::MAX),
-        (HMAC_HASH_SHA512, u8::MAX),
+        (HASH_ALGO_SHA256, 0),   // zero is always invalid
+        (HASH_ALGO_SHA256, 31),  // below min (32)
+        (HASH_ALGO_SHA256, 65),  // above max (64)
+        (HASH_ALGO_SHA384, 47),  // below min (48)
+        (HASH_ALGO_SHA384, 129), // above max (128)
+        (HASH_ALGO_SHA512, 63),  // below min (64)
+        (HASH_ALGO_SHA512, 129), // above max (128)
+        (HASH_ALGO_SHA384, 0),
+        (HASH_ALGO_SHA512, 0),
+        (HASH_ALGO_SHA256, u8::MAX),
+        (HASH_ALGO_SHA384, u8::MAX),
+        (HASH_ALGO_SHA512, u8::MAX),
     ];
     for &(hash, key_length) in cases {
         let req = TborHmacGenerateKeyReq {
@@ -184,7 +182,7 @@ fn hmac_generate_key_roundtrip_all_scopes() {
     // Session / Ephemeral / Local masking keys all exist on an Initialized
     // partition with an Active session.
     for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
-        roundtrip(&ctx, session.session_id, scope, HMAC_HASH_SHA256, 32);
+        roundtrip(&ctx, session.session_id, scope, HASH_ALGO_SHA256, 32);
     }
 }
 
@@ -199,7 +197,7 @@ fn hmac_generate_key_session_scope_before_finalize() {
         &ctx,
         session.session_id,
         SCOPE_SESSION,
-        HMAC_HASH_SHA256,
+        HASH_ALGO_SHA256,
         32,
     );
 }
@@ -214,7 +212,7 @@ fn hmac_generate_key_rejects_security_domain_scope() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_SECURITY_DOMAIN,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
@@ -231,7 +229,7 @@ fn hmac_generate_key_rejects_non_session_scopes_before_finalize() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_EPHEMERAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
@@ -255,6 +253,7 @@ fn hmac_generate_key_rejects_unknown_hash() {
     }
 }
 
+/// Rejects unsupported HMAC key scope discriminants.
 #[test]
 fn hmac_generate_key_rejects_unknown_scope() {
     let ctx = TestCtx::new();
@@ -263,7 +262,7 @@ fn hmac_generate_key_rejects_unknown_scope() {
         let req = TborHmacGenerateKeyReq {
             session_id: session.session_id,
             scope,
-            hash_algo: HMAC_HASH_SHA256,
+            hash_algo: HASH_ALGO_SHA256,
             key_length: 32,
             key_label: Vec::new(),
         };
@@ -271,11 +270,12 @@ fn hmac_generate_key_rejects_unknown_scope() {
     }
 }
 
+/// CU: generates and uses SHA-256/384/512 HMAC keys with session scope.
 #[test]
 fn hmac_generate_key_crypto_user_session_scope() {
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
-    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+    for hash in [HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512] {
         roundtrip(
             &ctx,
             session.session_id,
@@ -285,8 +285,8 @@ fn hmac_generate_key_crypto_user_session_scope() {
         );
     }
 }
-/// Accepts a non-empty key label and returns a usable masked key.
 
+/// Accepts a non-empty key label and returns a usable masked key.
 #[test]
 fn hmac_generate_key_accepts_non_empty_key_label() {
     let ctx = TestCtx::new();
@@ -294,7 +294,7 @@ fn hmac_generate_key_accepts_non_empty_key_label() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: b"hmac-test-key".to_vec(),
     };
@@ -315,9 +315,10 @@ fn hmac_generate_key_accepts_non_empty_key_label() {
         .tbor(&mac_req)
         .expect("MAC with labeled generated key")
         .tag;
-    assert_eq!(tag.len(), default_key_len(HMAC_HASH_SHA256));
+    assert_eq!(tag.len(), default_key_len(HASH_ALGO_SHA256));
 }
 
+/// CO: rejects HMAC key generation before the default PSK is rotated.
 #[test]
 fn hmac_generate_key_rejects_default_psk() {
     let ctx = TestCtx::new();
@@ -327,13 +328,14 @@ fn hmac_generate_key_rejects_default_psk() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id(),
         scope: SCOPE_SESSION,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
 }
 
+/// Rejects HMAC key generation after the CO session is closed.
 #[test]
 fn hmac_generate_key_rejects_closed_session() {
     let ctx = TestCtx::new();
@@ -343,7 +345,7 @@ fn hmac_generate_key_rejects_closed_session() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_SESSION,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
@@ -367,20 +369,26 @@ fn hmac_generate_key_rejects_invalid_session_id() {
         .expect("close rotated CU session");
 
     assert_ne!(
-        session.session_id,
+        co_session.session_id,
         u16::MAX,
-        "test requires an unused session id",
+        "CO session ID must not be the invalid test ID",
+    );
+
+    assert_ne!(
+        cu_session.session_id,
+        u16::MAX,
+        "CU session ID must not be the invalid test ID",
     );
 
     let req = TborHmacGenerateKeyReq {
         session_id: u16::MAX,
         scope: SCOPE_SESSION,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
 
-    ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
+    ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
 }
 
 /// Accepts the exact minimum and maximum key length for every HMAC variant.
@@ -389,12 +397,12 @@ fn hmac_generate_key_accepts_exact_length_boundaries() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let cases = [
-        (HMAC_HASH_SHA256, 32usize),
-        (HMAC_HASH_SHA256, 64),
-        (HMAC_HASH_SHA384, 48),
-        (HMAC_HASH_SHA384, 128),
-        (HMAC_HASH_SHA512, 64),
-        (HMAC_HASH_SHA512, 128),
+        (HASH_ALGO_SHA256, 32usize),
+        (HASH_ALGO_SHA256, 64),
+        (HASH_ALGO_SHA384, 48),
+        (HASH_ALGO_SHA384, 128),
+        (HASH_ALGO_SHA512, 64),
+        (HASH_ALGO_SHA512, 128),
     ];
     for (hash, key_len) in cases {
         roundtrip(&ctx, session.session_id, SCOPE_EPHEMERAL, hash, key_len);
@@ -407,12 +415,12 @@ fn hmac_generate_key_accepts_non_digest_key_lengths() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let cases = [
-        (HMAC_HASH_SHA256, 33usize),
-        (HMAC_HASH_SHA256, 63),
-        (HMAC_HASH_SHA384, 49),
-        (HMAC_HASH_SHA384, 127),
-        (HMAC_HASH_SHA512, 65),
-        (HMAC_HASH_SHA512, 127),
+        (HASH_ALGO_SHA256, 33usize),
+        (HASH_ALGO_SHA256, 63),
+        (HASH_ALGO_SHA384, 49),
+        (HASH_ALGO_SHA384, 127),
+        (HASH_ALGO_SHA512, 65),
+        (HASH_ALGO_SHA512, 127),
     ];
     for (hash, key_len) in cases {
         roundtrip(&ctx, session.session_id, SCOPE_LOCAL, hash, key_len);
@@ -427,7 +435,7 @@ fn hmac_generate_key_accepts_empty_key_label() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
@@ -447,7 +455,7 @@ fn hmac_generate_key_accepts_binary_key_label() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: vec![0x00, 0x80, 0xff, 0x41],
     };
@@ -467,7 +475,7 @@ fn hmac_generate_key_accepts_max_key_label_length() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
     };
@@ -487,7 +495,7 @@ fn hmac_generate_key_rejects_oversized_key_label() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN + 1],
     };
@@ -504,7 +512,7 @@ fn hmac_generate_key_tampered_masked_key_rejected() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
@@ -536,7 +544,7 @@ fn hmac_generate_key_truncated_masked_key_rejected() {
     let req = TborHmacGenerateKeyReq {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
-        hash_algo: HMAC_HASH_SHA256,
+        hash_algo: HASH_ALGO_SHA256,
         key_length: 32,
         key_label: Vec::new(),
     };
@@ -551,4 +559,177 @@ fn hmac_generate_key_truncated_masked_key_rejected() {
     };
 
     ctx.expect_fw_reject(&mac_req, TborStatus::TborInvalidFixedLength);
+}
+
+/// CU: generate and use HMAC keys with variable valid key lengths.
+#[test]
+fn hmac_generate_key_cu_variable_lengths() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    let cases = [
+        (HASH_ALGO_SHA256, 32usize),
+        (HASH_ALGO_SHA256, 48),
+        (HASH_ALGO_SHA256, 64),
+        (HASH_ALGO_SHA384, 48),
+        (HASH_ALGO_SHA384, 96),
+        (HASH_ALGO_SHA384, 128),
+        (HASH_ALGO_SHA512, 64),
+        (HASH_ALGO_SHA512, 96),
+        (HASH_ALGO_SHA512, 128),
+    ];
+
+    for (hash, key_len) in cases {
+        roundtrip(&ctx, session.session_id, SCOPE_SESSION, hash, key_len);
+    }
+}
+
+/// CU: reject key lengths outside the supported range.
+#[test]
+fn hmac_generate_key_cu_rejects_invalid_lengths() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    let cases = [
+        (HASH_ALGO_SHA256, 0u8),
+        (HASH_ALGO_SHA256, 31),
+        (HASH_ALGO_SHA256, 65),
+        (HASH_ALGO_SHA384, 47),
+        (HASH_ALGO_SHA384, 129),
+        (HASH_ALGO_SHA512, 63),
+        (HASH_ALGO_SHA512, 129),
+    ];
+
+    for (hash_algo, key_length) in cases {
+        let req = TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_SESSION,
+            hash_algo,
+            key_length,
+            key_label: Vec::new(),
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidKeyLength);
+    }
+}
+
+/// CU: reject unsupported hash algorithm discriminants.
+#[test]
+fn hmac_generate_key_cu_rejects_unknown_hash() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    for hash_algo in [0u8, 4, u8::MAX] {
+        let req = TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope: SCOPE_SESSION,
+            hash_algo,
+            key_length: 32,
+            key_label: Vec::new(),
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    }
+}
+
+/// CU: accept a binary key label and generate a usable key.
+#[test]
+fn hmac_generate_key_cu_accepts_binary_key_label() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_SESSION,
+        hash_algo: HASH_ALGO_SHA256,
+        key_length: 32,
+        key_label: vec![0x00, 0x80, 0xff, 0x41],
+    };
+
+    let generated = ctx
+        .tbor(&req)
+        .expect("CU HmacGenerateKey with binary label");
+
+    assert_eq!(generated.masked_key.len(), masked_len(32));
+
+    let mac_req = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: generated.masked_key,
+        msg: b"CU binary label test".to_vec(),
+    };
+
+    let tag = ctx.tbor(&mac_req).expect("CU HMAC using labeled key").tag;
+
+    assert_eq!(tag.len(), 32);
+}
+
+/// CU: reject HmacGenerateKey after its session is closed.
+#[test]
+fn hmac_generate_key_cu_rejects_closed_session() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    ctx.session_close(session.session_id)
+        .expect("close CU session");
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_SESSION,
+        hash_algo: HASH_ALGO_SHA256,
+        key_length: 32,
+        key_label: Vec::new(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
+}
+
+/// Rejects a 20-byte SHA-256 HMAC key below the minimum supported length.
+#[test]
+fn hmac_generate_key_sha256_rejects_sha1_sized_key() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_LOCAL,
+        hash_algo: HASH_ALGO_SHA256,
+        key_length: 20,
+        key_label: b"sha1-sized-key".to_vec(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidKeyLength);
+}
+
+/// CO: rejects SHA-1 HMAC key generation.
+#[test]
+fn hmac_generate_key_co_sha1_rejected() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_SESSION,
+        hash_algo: HASH_ALGO_SHA1,
+        key_length: 32,
+        key_label: b"co-sha1-rejected".to_vec(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// CU: rejects SHA-1 HMAC key generation.
+#[test]
+fn hmac_generate_key_cu_sha1_rejected() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: session.session_id,
+        scope: SCOPE_SESSION,
+        hash_algo: HASH_ALGO_SHA1,
+        key_length: 32,
+        key_label: b"cu-sha1-rejected".to_vec(),
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 }

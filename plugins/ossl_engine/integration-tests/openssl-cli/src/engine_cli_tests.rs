@@ -81,6 +81,24 @@ fn sign_ec_key_via_engine() {
 
 #[test]
 #[serial]
+fn sign_rsa_key_via_engine() {
+    run_cli_suite("rsa_sign", "testfiles/rsa_sign");
+}
+
+#[test]
+#[serial]
+fn sign_rsa_pss_key_via_engine() {
+    run_cli_suite("rsa_pss", "testfiles/rsa_pss");
+}
+
+#[test]
+#[serial]
+fn decrypt_rsa_key_via_engine() {
+    run_cli_suite("rsa_decrypt", "testfiles/rsa_decrypt");
+}
+
+#[test]
+#[serial]
 fn derive_ec_key_via_engine() {
     run_cli_suite("derive", "testfiles/derive");
 }

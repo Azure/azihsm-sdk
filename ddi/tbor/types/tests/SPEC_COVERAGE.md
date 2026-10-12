@@ -16,8 +16,8 @@ preconditions: [`docs/tbor-ddi/`](../../../../docs/tbor-ddi/).
 Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
-Test counts (last updated 2026-09-16):
-* emu: 117 tests
+Test counts:
+* emu: 222 tests
 * mock: 6 tests
 
 ## Legend
@@ -176,32 +176,146 @@ role's partition PSK still matches the compiled-in default.
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 
+## 'Hash' (opcode in-session, gated)
 
-## `HmacGenerateKey` (opcode in-session, gated)
+Firmware integration coverage for the TBOR `Hash` command. These tests exercise
+SHA-1, SHA-256, SHA-384, and SHA-512 through `TestCtx::tbor` and validate successful
+responses byte-for-byte against `azihsm_crypto`. Supported discriminants are
+`0` = SHA-1, `1` = SHA-256, `2` = SHA-384, and `3` = SHA-512.
 
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
-| Happy path for SHA-256 / SHA-384 / SHA-512 | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_hashes` | Generates a key for every supported HMAC hash and verifies it can be used by `Hmac` |
-| Generated keys are fresh across repeated generations | ✅ | `hmac_generate_key::hmac_generate_key_roundtrip_all_hashes` | A second generation produces a distinct masked key and a distinct tag for the same message |
-| Variable key lengths within each algorithm's supported range | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_variable_lengths` | SHA-256: 32–64 B; SHA-384: 48–128 B; SHA-512: 64–128 B |
-| Exact minimum / maximum key lengths are accepted | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_exact_length_boundaries` | Exercises both boundaries for every supported hash |
-| Non-boundary key lengths are accepted | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_non_digest_key_lengths` | Exercises values immediately inside each supported range |
-| Key length below minimum / above maximum → `InvalidKeyLength` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_out_of_range_length` | Includes zero, adjacent out-of-range values, and `u8::MAX` |
-| Session / Ephemeral / Local scopes succeed after finalization | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_scopes` | Exercises all currently usable masking-key scopes |
-| Session scope succeeds before `PartFinal` | ✅ | `hmac_generate_key::hmac_generate_key_session_scope_before_finalize` | Session masking key is available once the session is Active |
-| Ephemeral scope before `PartFinal` → `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_non_session_scopes_before_finalize` | Ephemeral masking key is not provisioned until partition finalization |
-| SecurityDomain scope without a created SD → `UnsupportedKeyScope` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_security_domain_scope` | No SD masking key is available |
-| Unsupported hash discriminant → `InvalidArg` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_hash` | Exercises `0`, `4`, and `u8::MAX` |
-| Unsupported scope discriminant → `UnsupportedKeyScope` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_scope` | Exercises invalid wire scope values |
-| Crypto-User can generate and use Session-scoped keys | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_crypto_user_session_scope` | Exercises SHA-256 / SHA-384 / SHA-512 under rotated CU PSK |
-| Empty key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_empty_key_label` | Covers the default empty `key_label` request value |
-| Non-empty key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_non_empty_key_label` | Generates a usable HMAC key with a caller-supplied label |
-| Binary key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_binary_key_label` | Covers arbitrary label bytes including `0x00`, `0x80`, and `0xff` |
-| Maximum key-label length is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_max_key_label_length` | Exercises `TBOR_KEY_LABEL_MAX_LEN` |
-| Key label longer than the maximum → `TborInvalidFixedLength` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_oversized_key_label` | Exercises `TBOR_KEY_LABEL_MAX_LEN + 1` |
-| CO default PSK → `DefaultPskMustRotate` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_default_psk` | Proves `HmacGenerateKey` is subject to the dispatcher default-PSK gate |
-| Closed session → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_closed_session` | Request is issued after the originating session is explicitly closed |
-| Unknown session id → `SessionNotFound` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_invalid_session_id` | Exercises invalid session identifiers |
+| SHA-1, SHA-256, SHA-384, and SHA-512 match the host implementation for empty, short, and longer messages | ✅ 🔁 | `hash::hash_matches_host_all_algos` | Loops over all four algorithms via `HASH_ALGOS` and varied message sizes |
+| Unsupported hash algorithm is rejected with `InvalidArg` | ✅ | `hash::hash_unknown_algo_rejected` | Uses unsupported discriminant `255` (`u8::MAX`) |
+| Unknown session id is rejected with `SessionNotFound` | ✅ | `hash::hash_invalid_session_id_rejected` | Rotates the CU PSK and closes the bootstrap session before sending `u16::MAX` with no active session |
+| Multiple invalid algorithm discriminants are rejected with `InvalidArg` | ✅ 🔁 | `hash::hash_invalid_algos_rejected` | Rejects unsupported discriminants `4`, `127`, and `255`; `0` is SHA-1 |
+| Arbitrary binary input hashes correctly | ✅ 🔁 | `hash::hash_binary_message_matches_host` | Includes `0x00`, `0x80`, and `0xff` bytes |
+| Different messages produce different digests | ✅ 🔁 | `hash::hash_different_messages_produce_different_digests` | Exercises all four supported algorithms |
+| SHA padding and compression-block boundaries match the host | ✅ 🔁 | `hash::hash_block_boundary_lengths_match_host` | Covers 55/56, 63/64/65, 111/112, and 127/128/129-byte boundaries |
+| Closed session is rejected with `SessionNotFound` | ✅ | `hash::hash_closed_session_rejected` | Hash request is sent after closing the CO session |
+| Same message hashes correctly under each supported algorithm | ✅ 🔁 | `hash::hash_same_message_different_algos` | Also verifies 20/32/48/64-byte digest lengths |
+| One-bit input change produces a different digest | ✅ 🔁 | `hash::hash_one_bit_message_change_changes_digest` | Both results are independently checked against the host |
+| Rotated Crypto-User session may execute Hash | ✅ 🔁 | `hash::hash_crypto_user_session_matches_host` | Exercises SHA-1, SHA-256, SHA-384, and SHA-512 |
+| SHA-1, SHA-256, SHA-384, and SHA-512 known-answer vectors match | ✅ | `hash::hash_known_answer_vectors` | Uses the standard `"abc"` vectors |
+| Crypto-User session using the default PSK is rejected with `DefaultPskMustRotate` | ✅ | `hash::hash_default_psk_cu_rejected` | Verifies the dispatcher default-PSK gate |
+| Repeated identical requests are deterministic | ✅ 🔁 | `hash::hash_same_request_is_deterministic` | Same session, message, and algorithm return identical digests |
+| Full `0x00..=0xff` byte range hashes correctly | ✅ 🔁 | `hash::hash_all_byte_values_matches_host` | Exercises every possible byte value |
+| Rejected invalid-algorithm request does not poison the active session | ✅ 🔁 | `hash::hash_session_usable_after_invalid_algo` | Valid requests succeed after `InvalidArg` |
+| Consecutive messages of different lengths do not retain prior Hash state | ✅ 🔁 | `hash::hash_consecutive_different_length_messages_match_host` | Includes 1, 17, 513, 1000, and 0-byte messages |
+| Switching algorithms on one active session does not leak Hash state | ✅ 🔁 | `hash::hash_alternating_algorithms_match_host` | Switches among all four algorithms using an explicit repeated sequence |
+| Leading, embedded, trailing, and repeated zero bytes are preserved as message data | ✅ 🔁 | `hash::hash_zero_byte_positions_match_host` | Guards against accidental zero-termination/truncation behavior |
+| CO and rotated-CU sessions produce identical digests for identical requests | ✅ 🔁 | `hash::hash_matches_across_co_and_cu_sessions` | Sessions are exercised sequentially because the fixture may not permit concurrent authenticated CO/CU sessions |
+| Invalid-session request does not affect a separate valid session | ✅ 🔁 | `hash::hash_valid_session_usable_after_invalid_session_request` | Rotates and closes the CU bootstrap session before CO setup; `u16::MAX` returns `FileHandleSessionIdDoesNotMatch`, and the active CO session remains usable |
+| Closing a CO session releases it and a subsequently opened CU session can Hash normally | ✅ 🔁 | `hash::hash_new_session_works_after_previous_session_closed` | Also confirms the closed session id is rejected |
+| Maximum 2048-byte Hash message succeeds | ✅ 🔁 | `hash::hash_max_message_length_matches_host` | Exercises the protocol maximum for all four supported algorithms |
+| 2049-byte Hash message is rejected | ✅ 🔁 | `hash::hash_over_max_message_length_rejected` | Exercises all four algorithms; accepts rejection at the TBOR/firmware boundary without pinning where length validation occurs |
+
+
+## `GetCertChainInfo` (opcode out-of-session)
+
+Integration and host-side response-codec coverage for the TBOR
+`GetCertChainInfo` command. The command reports the certificate count
+and leaf-certificate SHA-256 thumbprint for a certificate-chain slot
+without requiring an active session.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Valid slot returns a non-empty certificate chain and a populated SHA-256 thumbprint | ✅ | `get_cert_chain_info::round_trip` | Exercises provisioned slot 0 and verifies `num_certs > 0`, fixed thumbprint length, and non-zero thumbprint data |
+| `TborGetCertChainInfoReq::new` preserves `slot_id` across representative boundary values | ✅ 🔁 | `get_cert_chain_info::request_constructor_preserves_slot_id` | Covers `0`, `1`, `2`, `127`, `254`, and `u8::MAX` |
+| Default request targets slot 0 | ✅ | `get_cert_chain_info::default_request_targets_slot_zero` | Verifies the derived `Default` request value |
+| Default request is equivalent to explicit slot 0 | ✅ | `get_cert_chain_info::default_request_matches_explicit_slot_zero` | Compares complete FW responses |
+| Repeated calls return stable metadata | ✅ | `get_cert_chain_info::repeated_stable` | Two consecutive calls return identical responses |
+| Multiple consecutive calls remain stable | ✅ 🔁 | `get_cert_chain_info::repeated_calls_remain_stable` | Repeats the command several times to detect accidental mutable state |
+| TBOR result matches MBOR `GetCertChainInfo` | ✅ | `get_cert_chain_info::matches_mbor_path` | Cross-checks both `num_certs` and leaf thumbprint against the shared certificate store |
+| Reported `num_certs` defines the valid `GetCert` index range | ✅ 🔁 | `get_cert_chain_info::reported_count_defines_certificate_bounds` | Every advertised certificate is readable; index `num_certs` is rejected with `InvalidArg` |
+| Maximum certificate index is rejected | ✅ | `get_cert_chain_info::maximum_certificate_index_rejected` | `u8::MAX` is outside the valid `0..num_certs` certificate index range |
+| Reading certificates does not mutate chain metadata | ✅ | `get_cert_chain_info::certificate_reads_do_not_change_chain_info` | Compares metadata before and after reading every advertised certificate |
+| Certificate bytes are stable across repeated reads | ✅ 🔁 | `get_cert_chain_info::certificates_are_stable_across_reads` | Reads every advertised certificate twice |
+| Distinct certificate indices do not alias identical certificate bytes | ✅ 🔁 | `get_cert_chain_info::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain |
+| Unsupported slot IDs are rejected with `InvalidArg` | ✅ 🔁 | `get_cert_chain_info::unsupported_slot_boundaries_rejected` | Covers `1`, `2`, `127`, `254`, and `u8::MAX` |
+| First unsupported slot is rejected | ✅ | `get_cert_chain_info::first_unsupported_slot_rejected` | Explicit boundary test for slot 1 |
+| Maximum `slot_id` is rejected | ✅ | `get_cert_chain_info::maximum_slot_id_rejected` | Explicit request-field boundary test for `u8::MAX` |
+| A rejected slot request does not affect valid slot 0 | ✅ | `get_cert_chain_info::invalid_slot_does_not_affect_valid_slot` | Metadata before and after the rejected request must match |
+| Repeated rejected slot requests do not affect valid slot 0 | ✅ 🔁 | `get_cert_chain_info::repeated_invalid_slots_do_not_affect_valid_slot` | Exercises several unsupported IDs before re-reading slot 0 |
+| Out-of-session command remains stable across CO session activity | ✅ | `get_cert_chain_info::stable_across_co_session_activity` | Opens and closes a CO Authenticated session between reads |
+| Out-of-session command remains callable while a CO session is active | ✅ | `get_cert_chain_info::callable_while_co_session_active` | Validates session independence while the CO session remains open |
+| Out-of-session command remains stable across CU session activity | ✅ | `get_cert_chain_info::stable_across_cu_session_activity` | Uses the supported CU PlainText bootstrap session |
+| Out-of-session command remains callable while a CU session is active | ✅ | `get_cert_chain_info::callable_while_cu_session_active` | Uses the supported CU PlainText bootstrap session |
+| Response missing the thumbprint field is rejected as truncated | ✅ | `get_cert_chain_info::truncated_response_rejected` | Expects `DecodeError::MessageTruncated` |
+| Response with maximum TOC entries decodes the known prefix | ✅ | `get_cert_chain_info::max_toc_response_decodes_known_fields` | Verifies forward compatibility with trailing unknown TOC fields |
+| Single unknown trailing response field is ignored | ✅ | `get_cert_chain_info::trailing_unknown_toc_type_is_ignored` | Known `num_certs` and thumbprint fields remain intact |
+| Wrong TOC type for `num_certs` is rejected | ✅ | `get_cert_chain_info::wrong_num_certs_type_rejected` | Encodes `num_certs` as `Uint16`; expects `UnexpectedTocType` |
+| Wrong TOC type for `thumbprint` is rejected | ✅ | `get_cert_chain_info::wrong_thumbprint_type_rejected` | Encodes the thumbprint as `Uint8`; expects `UnexpectedTocType` |
+| Thumbprint buffer shorter than `CERT_THUMBPRINT_LEN` is rejected with `InvalidFixedLength` | ✅ | `get_cert_chain_info::wrong_thumbprint_length_rejected` | Uses a correctly typed `Buffer` with `CERT_THUMBPRINT_LEN - 1` bytes. |
+| Thumbprint buffer longer than `CERT_THUMBPRINT_LEN` is rejected with `InvalidFixedLength` | ✅ | `get_cert_chain_info::oversized_thumbprint_rejected` | Uses a correctly typed `Buffer` with `CERT_THUMBPRINT_LEN + 1` bytes. |
+
+## `GetCertificate` (opcode out-of-session)
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Every certificate index advertised by `GetCertChainInfo` returns non-empty, valid DER/X.509 within `CERT_MAX_LEN` | ✅ 🔁 | `get_cert::all_indices_round_trip` | Iterates over the full advertised chain and verifies DER SEQUENCE encoding and X.509 parsing. |
+| TBOR certificate bytes match the MBOR certificate path at every index | ✅ 🔁 | `get_cert::matches_mbor_path` | Both interfaces read the same underlying certificate store. |
+| Repeated reads of every advertised certificate are stable | ✅ 🔁 | `get_cert::repeated_reads_are_stable` | Reads each certificate twice and compares the full response. |
+| Distinct certificate indices do not alias the same certificate bytes | ✅ 🔁 | `get_cert::certificate_indices_do_not_alias` | Pairwise comparison across the advertised chain. |
+| First index beyond the advertised chain and `u8::MAX` are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_indices_rejected` | Covers the immediate boundary and maximum representable certificate id. |
+| Non-zero / unsupported certificate slots are rejected with `InvalidArg` | ✅ 🔁 | `get_cert::invalid_slots_rejected` | Covers slots `1`, `2`, `127`, `254`, and `u8::MAX`. |
+| Invalid requests do not alter a valid certificate | ✅ | `get_cert::rejected_requests_do_not_affect_valid_certificate` | Valid certificate is identical before and after invalid slot/index requests. |
+| Out-of-session `GetCertificate` remains callable while a CO Authenticated session is active | ✅ | `get_cert::callable_while_session_active` | Uses shared `common::CO`; active in-session state must not gate the command. |
+| `GetCertChainInfo::num_certs` exactly matches the readable `GetCertificate` boundary | ✅ | `get_cert::chain_info_count_matches_get_certificate_boundary` | Every advertised index succeeds and index `num_certs` is rejected with `InvalidArg`. |
+| Interleaved reads of other certificate indices do not alter certificate 0 | ✅ | `get_cert::interleaved_reads_are_stable` | Exercises non-isolated read ordering. |
+| Certificate reads are stable before, during, and after a CO Authenticated-session lifecycle | ✅ | `get_cert::stable_across_session_lifecycle` | Verifies session open/close does not affect this out-of-session command. |
+| A rejected request does not affect any certificate in the valid chain | ✅ 🔁 | `get_cert::rejected_request_does_not_affect_entire_chain` | Snapshots the entire chain before an invalid request and compares afterward. |
+| Reading certificates does not change `GetCertChainInfo` metadata | ✅ | `get_cert::certificate_reads_do_not_change_chain_info` | Compares chain-info response before and after reading every certificate. |
+| Certificates can be fetched in reverse order | ✅ 🔁 | `get_cert::certificates_can_be_read_in_reverse_order` | Confirms reads do not depend on sequential traversal. |
+| First and last advertised certificate indices are readable | ✅ | `get_cert::first_and_last_valid_indices_succeed` | Explicit lower/upper valid-boundary coverage. |
+| Interleaving MBOR and TBOR reads preserves byte-identical certificate results | ✅ 🔁 | `get_cert::mbor_tbor_interleaved_reads_remain_identical` | TBOR-before, MBOR, and TBOR-after remain consistent for every certificate. |
+| Invalid slot and invalid certificate-index failures preserve the entire valid chain | ✅ | `get_cert::all_reject_classes_preserve_entire_chain` | Covers both rejection classes against a full-chain snapshot. |
+| Out-of-session `GetCertificate` remains callable while a CU PlainText session is active | ✅ | `get_cert::callable_while_cu_session_active` | Uses shared `common::CU`; CU uses the supported `SessionType::PlainText` pairing. |
+| `GetCertificate` remains stable across both supported CO Authenticated and CU PlainText session lifecycles | ✅ | `get_cert::entire_chain_stable_across_co_and_cu_session_lifecycles` | Verifies every advertised certificate before, during, and after each supported role/session pairing. |
+
+
+## `HmacGenerateKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `HmacGenerateKey` command.
+Tests generate masked HMAC keys using SHA-256, SHA-384, and SHA-512
+under Crypto-Officer (CO) and Crypto-User (CU) sessions.
+
+Coverage includes supported hash algorithms, key-length boundaries,
+masking-key scopes, key labels, session validation, default-PSK gating,
+masked-key integrity, and unsupported SHA-1 generation.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Generate usable HMAC keys for SHA-256/384/512 | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_hashes` | CO; verifies masked-key length, nonzero output, HMAC usage, deterministic MACs, and fresh random keys |
+| Accept minimum, intermediate, and maximum key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_variable_lengths` | SHA-256: 32/48/64; SHA-384: 48/96/128; SHA-512: 64/96/128 |
+| Reject out-of-range key lengths with `InvalidKeyLength` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_out_of_range_length` | Covers zero, below-minimum, above-maximum, and `u8::MAX` lengths |
+| Generate keys under Session, Ephemeral, and Local scopes | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_scopes` | CO; verifies all three supported provisioned scopes |
+| Session-scoped generation succeeds before partition finalization | ✅ | `hmac_generate_key::hmac_generate_key_session_scope_before_finalize` | Uses rotated CO session before `PartFinal` |
+| SecurityDomain scope without a provisioned masking key → `UnsupportedKeyScope` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_security_domain_scope` | SecurityDomain masking key is unavailable |
+| Ephemeral scope before partition finalization → `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_non_session_scopes_before_finalize` | Tests Ephemeral scope before `PartFinal` |
+| Unsupported HMAC hash algorithms → `InvalidArg` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_hash` | CO; covers SHA-1 discriminant `0` and unsupported values `4` and `255` |
+| Unsupported key scopes → `UnsupportedKeyScope` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_scope` | Tests scope values `0`, `5`, and `255` |
+| CU can generate and use SHA-256/384/512 HMAC keys | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_crypto_user_session_scope` | Rotated CU session; Session scope |
+| Accept non-empty key label and generate usable key | ✅ | `hmac_generate_key::hmac_generate_key_accepts_non_empty_key_label` | Verifies successful generation and subsequent HMAC usage |
+| Default CO PSK → `DefaultPskMustRotate` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_default_psk` | Verifies dispatcher gate before PSK rotation |
+| Closed CO session → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_closed_session` | Request submitted after session close |
+| Unknown session ID → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_invalid_session_id` | Rotates and closes CO/CU sessions before using `u16::MAX` |
+| Accept exact minimum and maximum key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_exact_length_boundaries` | Covers all six SHA-256/384/512 length boundaries |
+| Accept non-digest-sized valid key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_non_digest_key_lengths` | Tests lengths immediately inside supported boundaries |
+| Empty key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_empty_key_label` | Uses an empty `key_label` buffer |
+| Binary key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_binary_key_label` | Includes `0x00`, `0x80`, and `0xff` bytes |
+| Maximum supported key-label length is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_max_key_label_length` | Uses `TBOR_KEY_LABEL_MAX_LEN` |
+| Oversized key label → `TborInvalidFixedLength` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_oversized_key_label` | Uses `TBOR_KEY_LABEL_MAX_LEN + 1` |
+| Tampered masked-key envelope → `AesGcmDecryptTagDoesNotMatch` | ✅ | `hmac_generate_key::hmac_generate_key_tampered_masked_key_rejected` | Generates key, modifies authentication tag, then attempts HMAC |
+| Truncated masked-key envelope → `TborInvalidFixedLength` | ✅ | `hmac_generate_key::hmac_generate_key_truncated_masked_key_rejected` | Removes one byte before HMAC usage |
+| CU accepts valid variable HMAC key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_cu_variable_lengths` | Tests nine SHA-256/384/512 key-length combinations |
+| CU rejects invalid key lengths with `InvalidKeyLength` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_cu_rejects_invalid_lengths` | Tests zero, below-minimum, and above-maximum values |
+| CU rejects unsupported algorithms with `InvalidArg` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_cu_rejects_unknown_hash` | Covers SHA-1 discriminant `0` and unsupported values `4` and `255` |
+| CU accepts binary key labels | ✅ | `hmac_generate_key::hmac_generate_key_cu_accepts_binary_key_label` | Verifies generated key can be used for HMAC |
+| Closed CU session → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_cu_rejects_closed_session` | Rotated CU session closed before command |
+| SHA-256 rejects a 20-byte key with `InvalidKeyLength` | ✅ | `hmac_generate_key::hmac_generate_key_sha256_rejects_sha1_sized_key` | Verifies SHA-256 minimum length of 32 bytes |
+| CO rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_co_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key |
+| CU rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_cu_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key under rotated CU session |
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
@@ -277,7 +391,42 @@ the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
 | Non-empty error response surfaces FW status before schema decode | ✅ | `fw_error_decode::fields_response_surfaces_fw_status_before_schema_decode` | Mock + emu |
 | `status == 0` with a valid body still decodes the body | ✅ | `fw_error_decode::zero_status_with_valid_body_still_decodes` | Mock + emu |
 | TOC entry of wrong type yields `TborDecodeError::UnexpectedTocType` | ✅ | `unexpected_toc_type::wrong_toc_entry_type_yields_unexpected_toc_type` | Mock + emu |
-| `mach_seed` AAD wire-layout encoder stability | ✅ | `harness::session::part_init::tests::mach_seed_aad_layout` | Unit test; pure host-side |
+| `mach_seed` AAD wire-layout encoder stability | ✅ | `part_init::success_path::mach_seed_aad_layout` | Unit test; pure host-side |
+
+## `HkdfDerive` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `HkdfDerive` command.
+Tests derive masked AES and HMAC keys from ECDH shared secrets using
+SHA-1, SHA-256, SHA-384, and SHA-512. Coverage includes key types,
+scopes, salt/info handling, deterministic derivation, and invalid requests.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| All supported fixed and variable-length AES/HMAC key types derive successfully | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_key_types` | Tests all 12 key-type/length cases with SHA-1, SHA-256, SHA-384, and SHA-512 (48 combinations) |
+| ECDH secrets from all supported curves can be used as HKDF input | ✅ 🔁 | `hkdf_derive::hkdf_derive_accepts_all_ecdh_secret_sizes` | Covers P-256, P-384, and P-521 |
+| All supported hash algorithms and provisioned output scopes succeed | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_hashes_and_scopes` | SHA-1/256/384/512 across Session, Ephemeral, and Local scopes |
+| Empty and non-empty salt/info combinations are accepted | ✅ 🔁 | `hkdf_derive::hkdf_derive_optional_salt_info` | Covers all four combinations using SHA-1 and SHA-256 |
+| Maximum supported salt and info lengths are accepted | ✅ | `hkdf_derive::hkdf_derive_maximum_salt_and_info` | Uses SHA-512 and maximum-length salt/info buffers |
+| Identical inputs derive stable key material; changing salt or info changes the key | ✅ 🔁 | `hkdf_derive::hkdf_derive_is_stable_and_salt_info_separate_outputs` | Covers SHA-1 and SHA-256 using HMAC tags |
+| Unknown hash algorithm → `InvalidArg` | ✅ | `hkdf_derive::hkdf_derive_unknown_hash_rejected` | Uses unsupported discriminant `u8::MAX` |
+| Unknown derived-key type → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_unknown_key_type_rejected` | Uses key type `99` |
+| SecurityDomain output scope → `UnsupportedKeyScope` | ✅ | `hkdf_derive::hkdf_derive_unsupported_scope_rejected` | Requests unsupported SecurityDomain scope |
+| Variable-length HMAC without explicit length → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_missing_length_rejected` | Uses `key_length = 0` |
+| Variable-length HMAC below minimum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_out_of_range_length_rejected` | Uses VarHmac256 with length `16` |
+| Non-ECDH masked key supplied as IKM → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_non_secret_ikm_rejected` | Supplies a masked ECC private key |
+| Tampered masked ECDH secret → `AesGcmDecryptTagDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_tampered_masked_secret_rejected` | Flips one byte in the masked-secret authentication tag |
+| Fixed-size key types ignore the supplied key length | ✅ 🔁 | `hkdf_derive::hkdf_derive_fixed_key_type_key_length_is_ignored` | AES-256 output remains 32 bytes across different `key_length` values |
+| Invalid session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_invalid_session_id_rejected` | Uses `u16::MAX` |
+| Different HKDF hash algorithms produce different derived keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_different_hashes_produce_different_keys` | Pairwise comparison of SHA-1/256/384/512 using HMAC tags |
+| Different ECDH secrets produce different derived keys | ✅ | `hkdf_derive::hkdf_derive_different_ikm_produces_different_keys` | Same SHA-256 HKDF parameters with two independently generated ECDH secrets |
+| Variable-length HMAC above maximum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_above_max_length_rejected` | Uses VarHmac256 with length `65` |
+
+| Rotated Crypto-User session may derive HKDF keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_allowed_on_cu_session` | Tests SHA-1/256/384/512 under a rotated CU session after partition finalization |
+| Default CU PSK → `DefaultPskMustRotate` | ✅ | `hkdf_derive::hkdf_derive_default_cu_psk_rejected` | Verifies the dispatcher default-PSK gate for CU |
+| Mismatched CU session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_session_id_rejected` | Uses a rotated CU session and `u16::MAX` |
+| CU can use HKDF-derived HMAC keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_key_usable_for_hmac` | SHA-1/256/384/512; verifies HMAC determinism and message sensitivity |
+| CU derives keys under all provisioned output scopes | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_all_output_scopes` | Tests Session, Ephemeral, and Local scopes across SHA-1/256/384/512 (12 combinations) |
+| Invalid HKDF request does not corrupt the active CU session | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_request_preserves_session` | Invalid hash returns `InvalidArg`; subsequent valid HKDF derivation succeeds |
 
 ---
 

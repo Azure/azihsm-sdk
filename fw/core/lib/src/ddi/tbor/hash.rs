@@ -3,7 +3,7 @@
 
 //! TBOR `Hash` command handler.
 //!
-//! Within an open session, compute a SHA-256 / 384 / 512 digest of a
+//! Within an open session, compute a SHA-1 / 256 / 384 / 512 digest of a
 //! host-supplied message and return it.  A pure hashing utility — no key,
 //! no scope, no partition state — the TBOR analogue of MBOR `ShaDigest`.
 //!
@@ -28,6 +28,7 @@ use super::validate_active_session;
 /// Map the wire [`HashAlgo`] onto the firmware hash algorithm.
 fn hsm_hash_algo(algo: HashAlgo) -> HsmResult<HsmHashAlgo> {
     match algo {
+        HashAlgo::Sha1 => Ok(HsmHashAlgo::Sha1),
         HashAlgo::Sha256 => Ok(HsmHashAlgo::Sha256),
         HashAlgo::Sha384 => Ok(HsmHashAlgo::Sha384),
         HashAlgo::Sha512 => Ok(HsmHashAlgo::Sha512),

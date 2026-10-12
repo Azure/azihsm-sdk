@@ -196,3 +196,48 @@ fn clear_identity_zeros_id_handle_and_pub_key() {
         "id public key must be zeroed"
     );
 }
+
+#[test]
+fn sealed_bk3_is_write_once_until_cleared() {
+    let p = Partition(10);
+    let sealed = [0xA5u8; SEALED_BK3_DATA_LEN];
+    let replacement = [0x5Au8; 16];
+    let oversized = [0u8; SEALED_BK3_DATA_LEN + 1];
+
+    p.set_sealed_bk3(buf(&[])).unwrap();
+    p.set_sealed_bk3(buf(&sealed)).unwrap();
+    assert_eq!(
+        p.set_sealed_bk3(buf(&replacement)),
+        Err(HsmError::SealedBk3AlreadySet)
+    );
+    assert_eq!(
+        p.set_sealed_bk3(buf(&[])),
+        Err(HsmError::SealedBk3AlreadySet)
+    );
+    assert_eq!(p.set_sealed_bk3(buf(&oversized)), Err(HsmError::InvalidArg));
+    assert_eq!(&p.sealed_bk3()[..], &sealed);
+
+    p.clear_sealed_bk3();
+    p.set_sealed_bk3(buf(&replacement)).unwrap();
+    assert_eq!(&p.sealed_bk3()[..], &replacement);
+}
+
+#[test]
+fn sealed_bk3_stays_write_once_after_migrate() {
+    let p = Partition(11);
+    let sealed = [0xA5u8; 64];
+    let replacement = [0x5Au8; 16];
+
+    p.set_sealed_bk3(buf(&sealed)).unwrap();
+    p.clear_state(PartResetKind::Migrate);
+    assert_eq!(&p.sealed_bk3()[..], &sealed);
+    assert_eq!(
+        p.set_sealed_bk3(buf(&replacement)),
+        Err(HsmError::SealedBk3AlreadySet)
+    );
+    assert_eq!(&p.sealed_bk3()[..], &sealed);
+
+    p.clear_state(PartResetKind::Disable);
+    p.set_sealed_bk3(buf(&replacement)).unwrap();
+    assert_eq!(&p.sealed_bk3()[..], &replacement);
+}

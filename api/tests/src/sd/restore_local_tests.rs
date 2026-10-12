@@ -36,17 +36,19 @@ fn sd_restore_local_backup_roundtrip() {
     // Device 1: finalize + create the SD, capturing the device-local backups
     // and the local_mk backup needed to restore PartLocalMK after reboot.
     let (session1, policy, pid_pub, local_mk) = provision_backing(&sata, &pota, None, None);
-    let (masked, report) = masked_key_and_report(&session1);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session1);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session1.sd_create_remote_backup(&policy, &masked, rcvr_chain, ev)
+        })
         .expect("create remote backup");
     drop(session1);
 
     // Device 2 (reboot, same seed): restore PartLocalMK from device 1's
     // backup, then restore the security domain from the device-local backups.
     let (session2, _policy2, _pid_pub2, _lmk2) =
-        provision_backing(&sata, &pota, Some(policy), Some(&local_mk));
+        provision_backing(&sata, &pota, Some(&policy), Some(&local_mk));
     let restored = session2
         .sd_restore_local_backup(&created.pok_local_backup, &created.sd_mk_backup)
         .expect("restore local backup");
@@ -75,10 +77,12 @@ fn sd_restore_local_backup_is_one_shot() {
     let pota = CaKey::generate();
 
     let (session, policy, pid_pub, _local_mk) = provision_backing(&sata, &pota, None, None);
-    let (masked, report) = masked_key_and_report(&session);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session.sd_create_remote_backup(&policy, &masked, rcvr_chain, ev)
+        })
         .expect("create remote backup");
 
     let restored =

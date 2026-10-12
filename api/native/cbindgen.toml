@@ -3,11 +3,11 @@
 
 language = "C"
 
-header = "/*\r * Copyright (c) Microsoft Corporation.\r * Licensed under the MIT License\r */"
+header = "/*\n * Copyright (c) Microsoft Corporation.\n * Licensed under the MIT License.\n */"
 
 cpp_compat = true
 
-include_guard = "__AZIHSM_API_H__"
+include_guard = "AZIHSM_API_H"
 
 documentation_style = "c"
 
@@ -32,7 +32,7 @@ usize_is_size_t = true
 
 # A list of items to not include in the generated bindings
 # default: []
-exclude = []
+exclude = ["AzihsmWideChar"]
 include = [
   "AzihsmAlgoAesCbcParams",
   "AzihsmAlgoAesGcmParams",
@@ -67,7 +67,14 @@ include = [
   "HsmPartType",
 ]
 
-item_types = ["constants", "enums", "functions", "structs", "typedefs"]
+item_types = [
+  "constants",
+  "enums",
+  "functions",
+  "opaque",
+  "structs",
+  "typedefs",
+]
 
 [export.rename]
 "AES_GCM_IV_SIZE" = "AZIHSM_AES_GCM_IV_SIZE"
@@ -100,6 +107,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmOwnerBackupKeyConfig" = "azihsm_owner_backup_key_config"
 "AzihsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
 "AzihsmPartInfo" = "azihsm_part_info"
+"AzihsmPartPolicyBuilder" = "azihsm_part_policy_builder"
 "AzihsmPartProp" = "azihsm_part_prop"
 "AzihsmPartPropId" = "azihsm_part_prop_id"
 "AzihsmPartType" = "azihsm_part_type"
@@ -126,7 +134,6 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "AzihsmSessionPsk" = "azihsm_session_psk"
 "AzihsmStatus" = "azihsm_status"
 "AzihsmStr" = "azihsm_str"
-"AzihsmWideChar" = "azihsm_char"
 "HsmEccCurve" = "azihsm_ecc_curve"
 "HsmError" = "azihsm_status"
 "HsmKeyClass" = "azihsm_key_class"
@@ -135,6 +142,7 @@ item_types = ["constants", "enums", "functions", "structs", "typedefs"]
 "HsmPartType" = "azihsm_part_type"
 "HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 "HsmSessionExType" = "azihsm_session_ex_type"
+"PSK_LEN" = "AZIHSM_PSK_LEN"
 
 [defines]
 "target_os = linux" = "__linux__ "

@@ -13,6 +13,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborGetCertReq;
@@ -23,7 +24,6 @@ use x509::X509CertificateOp;
 
 use crate::commands::common::CO;
 use crate::commands::common::CU;
-use crate::harness::TestCtx;
 
 /// Fetch the chain length via TBOR `GetCertChainInfo`.
 fn num_certs(ctx: &TestCtx) -> u8 {

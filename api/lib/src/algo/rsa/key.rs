@@ -120,6 +120,12 @@ impl HsmRsaPrivateKey {
             Err(HsmError::InvalidKeyProps)?;
         }
 
+        // Both halves must resolve to the same effective masking scope so
+        // an explicit public scope cannot diverge from the private key.
+        if priv_props.tbor_scope() != pub_props.tbor_scope() {
+            Err(HsmError::InvalidKeyProps)?;
+        }
+
         Ok(())
     }
 }

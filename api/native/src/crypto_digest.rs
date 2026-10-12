@@ -16,7 +16,7 @@ use super::*;
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 ///
 /// @internal
 /// # Safety
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn azihsm_crypt_digest_update(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// AZIHSM_STATUS_INSUFFICIENT_BUFFER is returned.
+/// AZIHSM_STATUS_BUFFER_TOO_SMALL is returned.
 ///
 /// @internal
 /// # Safety

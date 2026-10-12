@@ -13,13 +13,29 @@ use tracing::*;
 
 use crate::utils::partition::*;
 
-/// Executes a test function with an initialized HSM session.
+const SESSION_EX_MIN_TEST_API_REV: HsmApiRev = HsmApiRev { major: 1, minor: 1 };
+#[cfg(feature = "session-ex-tests")]
+const ROTATED_CO_PSK: [u8; PSK_LEN] = [0xA5; PSK_LEN];
+
+/// Executes a test function with the compile-time-selected HSM session API.
 ///
-/// This utility function discovers available HSM partitions, opens each one,
-/// initializes it with test credentials, creates a session with the maximum
-/// supported API revision, and executes the provided test closure with the
-/// session as a parameter. This allows tests to run against sessions on all
-/// available partitions sequentially.
+/// This fixture calls `open_session` by default and `open_session_ex` when
+/// `session-ex-tests` is enabled.
+///
+/// # Partition State
+///
+/// Each discovered partition is reset before the test, including on hardware.
+/// Use only dedicated test partitions. The partition lock covers setup and the
+/// test closure within this process; it does not coordinate separate processes.
+///
+/// Legacy setup initializes credentials and reuses a cached MOBK when available.
+/// Hardware reset does not clear the one-time BK3 initialization state, so warm
+/// hardware runs in separate processes need a matching `AZIHSM_MOBK_PATH` cache.
+/// The default cache path is process-specific.
+///
+/// EX setup opens a CO session, rotates its default PSK, and calls
+/// `part_init_ex` and `part_final_ex` to provision partition-local masking keys.
+/// Security-domain operations still require their own provisioning.
 ///
 /// # Type Parameters
 ///
@@ -29,59 +45,147 @@ use crate::utils::partition::*;
 ///
 /// Panics if:
 /// - No partitions are found in the system
+/// - A partition does not advertise a compatible API revision range
 /// - A partition fails to open
-/// - Partition initialization fails
+/// - Partition reset or legacy initialization fails
 /// - Session creation fails
+/// - EX setup cannot rotate the default CO PSK
+/// - EX partition initialization or finalization fails
 #[allow(unused)]
 #[allow(clippy::expect_used)]
 pub(crate) fn with_session<F>(mut test: F)
 where
     F: FnMut(HsmSession),
 {
+    let _partition_guard = PARTITION_LOCK.lock();
     let part_mgr = HsmPartitionManager::partition_info_list();
     assert!(!part_mgr.is_empty(), "No partitions found.");
-    for part_info in part_mgr.iter() {
-        let part = HsmPartitionManager::open_partition(&part_info.path, test_api_rev())
-            .expect("Failed to open the partition");
 
-        //reset before init
-        part.reset().expect("Partition reset failed");
+    for part_info in part_mgr {
+        let range = part_info
+            .api_rev_range
+            .expect("Partition did not advertise an API revision range");
 
-        //init with test creds
-        let creds = HsmCredentials::new(&[1u8; 16], &[2u8; 16]);
-        let rev = part.api_rev();
-        let (obk_info, pota_endorsement) = make_init_params(&part);
-        init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
-        let mut session = part
-            .open_session(rev, &creds, None)
-            .expect("Failed to open session");
+        #[cfg(not(feature = "session-ex-tests"))]
+        let (session_api, rev, session) = {
+            let rev = session_revision(range);
+            let session = open_session_test_session(&part_info.path);
+            ("session", rev, session)
+        };
+
+        #[cfg(feature = "session-ex-tests")]
+        let (session_api, rev, session) = {
+            let rev = session_ex_revision(range);
+            let session = open_session_ex_test_session(&part_info.path, rev);
+            ("session_ex", rev, session)
+        };
+
+        let span = info_span!(
+            "api_test_session",
+            session_api,
+            api_rev = ?rev,
+            partition_path = %part_info.path
+        );
+        let _span_guard = span.enter();
         test(session);
     }
 }
 
-/// Executes a dual-protocol test with V1/MBOR under `mock`.
-#[cfg(feature = "mock")]
-pub(crate) fn with_dual_session<F>(test: F)
-where
-    F: FnMut(HsmSession),
-{
-    with_session(test);
+#[allow(clippy::expect_used)]
+#[cfg(not(feature = "session-ex-tests"))]
+fn open_session_test_session(path: &str) -> HsmSession {
+    let part = HsmPartitionManager::open_partition(path, SESSION_TEST_API_REV)
+        .expect("Failed to open the partition for an open_session test");
+    let creds = HsmCredentials::new(&APP_ID, &APP_PIN);
+
+    part.reset().expect("Partition reset failed");
+    let (obk_info, pota_endorsement) = make_init_params(&part);
+    init_with_mobk_fallback(&part, creds, obk_info, pota_endorsement, None);
+
+    part.open_session(SESSION_TEST_API_REV, &creds, None)
+        .expect("Failed to call open_session for a test")
 }
 
-/// Executes a dual-protocol test with a fresh V2/TBOR session.
-#[allow(unused)]
 #[allow(clippy::expect_used)]
-#[cfg(not(feature = "mock"))]
-pub(crate) fn with_dual_session<F>(mut test: F)
-where
-    F: FnMut(HsmSession),
-{
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
+#[cfg(feature = "session-ex-tests")]
+fn open_session_ex_test_session(path: &str, rev: HsmApiRev) -> HsmSession {
+    let part = HsmPartitionManager::open_partition(path, rev)
+        .expect("Failed to open the partition for an open_session_ex test");
+
+    part.reset().expect("Partition reset failed");
+    let session = part
+        .open_session_ex(
+            rev,
+            HsmSessionPsk::new(HsmPskId::CO),
+            HsmSessionExType::Authenticated,
+        )
+        .expect("Failed to call open_session_ex for a test");
     session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-    test(session);
+        .change_psk(&ROTATED_CO_PSK)
+        .expect("Failed to rotate the default CO PSK");
+    crate::utils::sd_provision::provision_partition(&session);
+    session
+}
+
+fn session_revision(range: HsmApiRevRange) -> HsmApiRev {
+    assert!(
+        range.min() <= SESSION_TEST_API_REV && SESSION_TEST_API_REV <= range.max(),
+        "open_session tests require API revision {SESSION_TEST_API_REV:?}, but the advertised range is {range:?}"
+    );
+    SESSION_TEST_API_REV
+}
+
+fn session_ex_revision(range: HsmApiRevRange) -> HsmApiRev {
+    assert!(
+        range.max() >= SESSION_EX_MIN_TEST_API_REV,
+        "open_session_ex tests require API revision {SESSION_EX_MIN_TEST_API_REV:?} or newer, but the advertised range is {range:?}"
+    );
+    range.max()
+}
+
+#[test]
+fn test_session_revisions_follow_capabilities() {
+    let rev_1_0 = HsmApiRev { major: 1, minor: 0 };
+    let rev_1_1 = HsmApiRev { major: 1, minor: 1 };
+    // Synthetic future maximum: verifies that session_ex follows the advertised max
+    // instead of pinning every capable target to revision 1.1.
+    let rev_1_2 = HsmApiRev { major: 1, minor: 2 };
+
+    assert_eq!(
+        session_revision(HsmApiRevRange::new(rev_1_0, rev_1_0)),
+        rev_1_0
+    );
+    assert_eq!(
+        session_ex_revision(HsmApiRevRange::new(rev_1_0, rev_1_1)),
+        rev_1_1
+    );
+    assert_eq!(
+        session_ex_revision(HsmApiRevRange::new(rev_1_0, rev_1_2)),
+        rev_1_2
+    );
+}
+
+#[test]
+fn test_with_session_uses_compiled_revision() {
+    let expected = HsmPartitionManager::partition_info_list()
+        .into_iter()
+        .map(|part_info| {
+            let range = part_info
+                .api_rev_range
+                .expect("Partition did not advertise an API revision range");
+
+            #[cfg(not(feature = "session-ex-tests"))]
+            return session_revision(range);
+
+            #[cfg(feature = "session-ex-tests")]
+            return session_ex_revision(range);
+        })
+        .collect::<Vec<_>>();
+    let mut observed = Vec::new();
+
+    with_session(|session| observed.push(session.api_rev()));
+
+    assert_eq!(observed, expected);
 }
 
 #[session_test]

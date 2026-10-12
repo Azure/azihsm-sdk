@@ -68,13 +68,16 @@ impl RsaImportHandler for AzihsmRsaImport {
 
         match params.key_usage {
             RsaKeyUsage::KeyWrapping => export_unwrapping_key(data, params, pkey),
-            RsaKeyUsage::DigitalSignature => import_private(engine, data, params, pkey),
+            RsaKeyUsage::DigitalSignature | RsaKeyUsage::KeyEncipherment => {
+                import_private(engine, data, params, pkey)
+            }
         }
     }
 }
 
-/// Build the imported key's private/public properties: exclusive
-/// digitalSignature usage (sign on the private half, verify on the public).
+/// Build the imported key's private/public properties from the requested usage:
+/// `digitalSignature` → sign on the private half, verify on the public;
+/// `keyEncipherment` → decrypt on the private half, encrypt on the public.
 /// RSA-CRT (unless plain RSA was requested) applies to the private half only;
 /// the public half is always kind `Rsa`.
 fn import_props(params: &RsaImportParams) -> EngineResult<(HsmKeyProps, HsmKeyProps)> {
@@ -83,20 +86,38 @@ fn import_props(params: &RsaImportParams) -> EngineResult<(HsmKeyProps, HsmKeyPr
     } else {
         HsmKeyKind::Rsa
     };
-    let priv_props = HsmKeyPropsBuilder::default()
+    // Key usage maps to the HSM capability bits: digitalSignature → sign/verify,
+    // keyEncipherment → decrypt/encrypt. (keyWrapping takes the export path and
+    // never reaches an import.)
+    let mut priv_builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(priv_kind)
         .bits(params.bits)
-        .is_session(false)
-        .can_sign(true)
-        .build()
-        .map_err(|e| EngineError::wrap("build imported private props", e))?;
-    let pub_props = HsmKeyPropsBuilder::default()
+        .is_session(false);
+    let mut pub_builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
         .bits(params.bits)
-        .is_session(false)
-        .can_verify(true)
+        .is_session(false);
+    match params.key_usage {
+        RsaKeyUsage::DigitalSignature => {
+            priv_builder = priv_builder.can_sign(true);
+            pub_builder = pub_builder.can_verify(true);
+        }
+        RsaKeyUsage::KeyEncipherment => {
+            priv_builder = priv_builder.can_decrypt(true);
+            pub_builder = pub_builder.can_encrypt(true);
+        }
+        RsaKeyUsage::KeyWrapping => {
+            return Err(EngineError::Other(
+                "keyWrapping does not import a key (it exports the unwrapping key)".into(),
+            ));
+        }
+    }
+    let priv_props = priv_builder
+        .build()
+        .map_err(|e| EngineError::wrap("build imported private props", e))?;
+    let pub_props = pub_builder
         .build()
         .map_err(|e| EngineError::wrap("build imported public props", e))?;
     Ok((priv_props, pub_props))

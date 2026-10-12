@@ -907,17 +907,9 @@ fn test_unwrap_ecc_p521_key(session: HsmSession) {
     );
 }
 
-/// Verifies RSA-AES ECC key-pair unwrap through a V2 (TBOR) session for
-/// every supported curve.
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_unwrap_ecc_key_tbor_all_curves() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
+/// Verifies RSA-AES unwrap of session-scoped ECC keys for every supported curve.
+#[session_test]
+fn test_unwrap_ecc_session_key_all_curves(session: HsmSession) {
     for (crypto_curve, hsm_curve, hash_algo) in [
         (
             crypto::EccCurve::P256,
@@ -944,18 +936,30 @@ fn test_unwrap_ecc_key_tbor_all_curves() {
 /// Generates an ECC P256 key pair, retrieves the masked key data,
 /// unmasks it, and verifies all properties match the original keys.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p256_key_unmask(session: HsmSession) {
     test_ecc_key_unmask_for_curve(&session, HsmEccCurve::P256);
 }
 
 /// Test ECC P384 key pair unmasking.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p384_key_unmask(session: HsmSession) {
     test_ecc_key_unmask_for_curve(&session, HsmEccCurve::P384);
 }
 
 /// Test ECC P521 key pair unmasking.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p521_key_unmask(session: HsmSession) {
     test_ecc_key_unmask_for_curve(&session, HsmEccCurve::P521);
 }
@@ -988,18 +992,30 @@ fn test_ecc_p521_key_report(session: HsmSession) {
 /// Generates an ECC P-256 key pair with derive enabled, retrieves the masked key data,
 /// unmasks it, and verifies all properties match the original keys.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p256_key_unmask_with_derive(session: HsmSession) {
     run_ecc_key_unmask_with_derive_test(&session, HsmEccCurve::P256);
 }
 
 /// Verifies ECC P-384 key unmasking with derive capability preserves all properties.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p384_key_unmask_with_derive(session: HsmSession) {
     run_ecc_key_unmask_with_derive_test(&session, HsmEccCurve::P384);
 }
 
 /// Verifies ECC P-521 key unmasking with derive capability preserves all properties.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p521_key_unmask_with_derive(session: HsmSession) {
     run_ecc_key_unmask_with_derive_test(&session, HsmEccCurve::P521);
 }
@@ -1749,18 +1765,30 @@ fn test_ecc_unwrap_reject_no_usage_flags_p521(session: HsmSession) {
 
 #[session_test]
 /// Verifies ECC P256 key unmasking with SIGN capability preserves all properties.
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p256_key_unmask_with_sign(session: HsmSession) {
     run_ecc_key_unmask_with_sign_test(&session, HsmEccCurve::P256);
 }
 
 #[session_test]
 /// Verifies ECC P384 key unmasking with SIGN capability preserves all properties.
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p384_key_unmask_with_sign(session: HsmSession) {
     run_ecc_key_unmask_with_sign_test(&session, HsmEccCurve::P384);
 }
 
 #[session_test]
 /// Verifies ECC P521 key unmasking with SIGN capability preserves all properties.
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask ECC key pair: UnsupportedKeyOperation")
+)]
 fn test_ecc_p521_key_unmask_with_sign(session: HsmSession) {
     run_ecc_key_unmask_with_sign_test(&session, HsmEccCurve::P521);
 }

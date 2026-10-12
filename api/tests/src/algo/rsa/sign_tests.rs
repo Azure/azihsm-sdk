@@ -24,17 +24,11 @@ fn import_rsa_key(
 // test case section
 // ============================================================
 
-/// RSA import → PKCS#1 sign → verify through a V2 (TBOR) session for
-/// every supported key size, exercising masked non-CRT private keys.
+/// Verify labeled, session-scoped RSA keys through PKCS#1 signing for every key size.
+/// The mock backend does not preserve caller-supplied key labels.
 #[cfg(not(feature = "mock"))]
-#[test]
-fn test_rsa_sign_verify_tbor_all_key_sizes() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-    let session = crate::utils::partition_ex_helpers::new_co_session();
-    session
-        .change_psk(&[0xA5; PSK_LEN])
-        .expect("rotate the default CO PSK before using crypto commands");
-
+#[session_test]
+fn test_rsa_sign_verify_labeled_session_keys(session: HsmSession) {
     for (bits, modulus_bytes, hash_algo) in [
         (2048, 256, HsmHashAlgo::Sha256),
         (3072, 384, HsmHashAlgo::Sha384),
@@ -53,12 +47,12 @@ fn test_rsa_sign_verify_tbor_all_key_sizes() {
             ImportedRsaKeyUsage::SignVerify,
             true,
         )
-        .expect("Failed to import RSA sign/verify key pair over TBOR");
+        .expect("Failed to import RSA sign/verify key pair");
         assert_eq!(priv_key.label(), label.to_vec());
         assert_eq!(pub_key.label(), label.to_vec());
 
         let mut hasher = hash_algo;
-        let hash = HsmHasher::hash_vec(&session, &mut hasher, b"RSA TBOR sign/verify")
+        let hash = HsmHasher::hash_vec(&session, &mut hasher, b"RSA sign/verify")
             .expect("Failed to hash message");
         let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
         let signature =

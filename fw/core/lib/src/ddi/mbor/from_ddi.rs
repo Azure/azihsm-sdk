@@ -49,13 +49,29 @@ pub(crate) fn curve(curve: DdiEccCurve) -> HsmResult<HsmEccCurve> {
 
 /// Map a [`DdiAesKeySize`] to its raw byte length and the matching
 /// non-bulk AES vault kind.  Bulk AES variants (XTS / GCM) are
-/// rejected with [`HsmError::InvalidArg`] — handled by separate
-/// future handlers.
+/// rejected with [`HsmError::InvalidArg`]; use [`aes_bulk`] for the
+/// GCM bulk kinds.
 pub(crate) fn aes(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
     match size {
         DdiAesKeySize::Aes128 => Ok((16, HsmVaultKeyKind::Aes128)),
         DdiAesKeySize::Aes192 => Ok((24, HsmVaultKeyKind::Aes192)),
         DdiAesKeySize::Aes256 => Ok((32, HsmVaultKeyKind::Aes256)),
+        _ => Err(HsmError::InvalidArg),
+    }
+}
+
+/// Map a bulk [`DdiAesKeySize`] to its raw AES-256 byte length and the
+/// matching bulk GCM vault kind.  The two variants differ only in FIPS
+/// posture: `AesGcmBulk256` is FIPS-approved (the device generates the
+/// IV internally on encrypt), `AesGcmBulk256Unapproved` uses the
+/// host-supplied IV.  Non-GCM-bulk sizes return
+/// [`HsmError::InvalidArg`].
+pub(crate) fn aes_bulk(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
+    match size {
+        DdiAesKeySize::AesGcmBulk256 => Ok((32, HsmVaultKeyKind::AesGcmBulk256)),
+        DdiAesKeySize::AesGcmBulk256Unapproved => {
+            Ok((32, HsmVaultKeyKind::AesGcmBulk256Unapproved))
+        }
         _ => Err(HsmError::InvalidArg),
     }
 }
@@ -66,7 +82,9 @@ pub(crate) fn aes(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
 /// Public, internal, and non-maskable kinds return
 /// [`HsmError::InvalidKeyType`].  [`DdiKeyType::RsaUnwrap`] is
 /// intentionally rejected here — the partition unwrapping key must not
-/// be re-imported as a general RSA key.
+/// be re-imported as a general RSA key. Fixed `HmacSha*` tags are accepted
+/// as exact-length aliases and normalized to the corresponding
+/// `VarLenHmacSha*` vault kind.
 pub(crate) fn vault_kind_from_ddi(key_type: DdiKeyType) -> HsmResult<HsmVaultKeyKind> {
     match key_type {
         DdiKeyType::Rsa2kPrivate => Ok(HsmVaultKeyKind::Rsa2kPrivate),
@@ -87,9 +105,29 @@ pub(crate) fn vault_kind_from_ddi(key_type: DdiKeyType) -> HsmResult<HsmVaultKey
         DdiKeyType::Secret256 => Ok(HsmVaultKeyKind::Secret256),
         DdiKeyType::Secret384 => Ok(HsmVaultKeyKind::Secret384),
         DdiKeyType::Secret521 => Ok(HsmVaultKeyKind::Secret521),
+        DdiKeyType::HmacSha256 => Ok(HsmVaultKeyKind::VarLenHmacSha256),
+        DdiKeyType::HmacSha384 => Ok(HsmVaultKeyKind::VarLenHmacSha384),
+        DdiKeyType::HmacSha512 => Ok(HsmVaultKeyKind::VarLenHmacSha512),
         DdiKeyType::VarHmac256 => Ok(HsmVaultKeyKind::VarLenHmacSha256),
         DdiKeyType::VarHmac384 => Ok(HsmVaultKeyKind::VarLenHmacSha384),
         DdiKeyType::VarHmac512 => Ok(HsmVaultKeyKind::VarLenHmacSha512),
         _ => Err(HsmError::InvalidKeyType),
     }
+}
+
+/// Preserve the exact-length contract of fixed HMAC request aliases after
+/// normalizing them to variable-length vault kinds.
+pub(crate) fn validate_fixed_hmac_length(key_type: DdiKeyType, key_len: usize) -> HsmResult<()> {
+    let expected = match key_type {
+        DdiKeyType::HmacSha256 => Some(32),
+        DdiKeyType::HmacSha384 => Some(48),
+        DdiKeyType::HmacSha512 => Some(64),
+        _ => None,
+    };
+
+    if expected.is_some_and(|expected| key_len != expected) {
+        return Err(HsmError::InvalidArg);
+    }
+
+    Ok(())
 }

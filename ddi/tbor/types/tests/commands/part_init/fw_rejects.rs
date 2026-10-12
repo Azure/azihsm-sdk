@@ -5,10 +5,19 @@
 //! mutation: default-PSK dispatcher gate, CU-role handler gate, and
 //! malformed-policy decode gate.  Each test asserts the canonical
 //! [`TborStatus`] surfaced by the FW and relies on
-//! [`crate::harness::bootstrap_rotated_co`] or
-//! [`crate::harness::bootstrap_rotated_cu`] (where needed) to clear the
+//! [`azihsm_ddi_tbor_test_harness::bootstrap_rotated_co`] or
+//! [`azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu`] (where needed) to clear the
 //! default-PSK arm before reaching the path under test.
 
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::session_guard::SessionGuard;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
@@ -16,15 +25,6 @@ use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use super::known_good_part_policy;
 use super::mach_seed;
 use super::pota_thumbprint;
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::bootstrap_rotated_cu;
-use crate::harness::session_guard::SessionGuard;
-use crate::harness::TestCtx;
-use crate::harness::CO_PSK_ID as CO;
-use crate::harness::CU_PSK_ID as CU;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::ROTATED_CU_PSK;
 
 // Replace these with the canonical offsets/constants from the PartPolicy
 // encoder or firmware policy structure.

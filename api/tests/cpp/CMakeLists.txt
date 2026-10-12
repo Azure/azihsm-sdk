@@ -17,6 +17,7 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
 endif()
 
 SET(TEST_FEATURES "" CACHE STRING "Test features to enable")
+set(SESSION_EX_TESTS OFF CACHE BOOL "Build tests with open_session_ex")
 
 
 include(FetchContent)
@@ -65,62 +66,84 @@ set(SOURCE
     utils/shared_secret.cpp
     utils/part_init_config.cpp
     utils/resiliency_config.cpp
-    utils/sd_provision.cpp
-    partition_tests.cpp 
-    session_tests.cpp 
-    session_ex_tests.cpp 
-    handle_mgmt_tests.cpp
-    multi_process_tests.cpp
     algo/aes/cbc_enc_dec_tests.cpp
-    algo/aes/gcm_enc_dec_tests.cpp
-    algo/aes/xts_enc_dec_tests.cpp
-    algo/ecc/ecc_static_der.cpp
-    algo/aes/keygen_tests.cpp
     algo/aes/helpers.cpp
-    algo/ecc/keygen_tests.cpp
-    algo/ecc/unwrap_tests.cpp
-    algo/ecc/unwrap_property_tests.cpp
-    algo/ecc/unwrap_semantic_tests.cpp
-    algo/ecc/helpers.cpp
-    algo/ecc/sign_verify_tests.cpp
-    algo/ecc/keyreport_tests.cpp
-    algo/rsa/keygen_tests.cpp
-    algo/rsa/keyreport_tests.cpp
-    algo/rsa/enc_dec_tests.cpp
-    algo/rsa/rsa_static_der.cpp
-    algo/rsa/sign_verify_tests.cpp
-    algo/rsa/unwrap_tests.cpp
-    algo/sha/digest_tests.cpp
-    algo/hmac/sign_verify_tests.cpp
-    algo/hmac/keygen_tests.cpp
-    algo/secret/unmask_tests.cpp
-    algo/kdf/hkdf_tests.cpp
-    algo/kdf/kbkdf_tests.cpp
-    algo/sealing/keygen_tests.cpp
-    sd/create_backup_tests.cpp
-    sd/create_peer_tests.cpp
-    sd/reseal_tests.cpp
-    sd/restore_local_tests.cpp
-    sd/restore_peer_tests.cpp
-    sd/restore_tests.cpp
-    resiliency/init_stress_tests.cpp
-    resiliency/aes_stress_tests.cpp
-    resiliency/ecc_stress_tests.cpp
-    resiliency/mixed_stress_tests.cpp
 )
+
+if(SESSION_EX_TESTS)
+    list(APPEND SOURCE
+        utils/sd_provision.cpp
+        session_ex_tests.cpp
+        algo/sealing/keygen_tests.cpp
+        sd/create_backup_tests.cpp
+        sd/create_peer_tests.cpp
+        sd/reseal_tests.cpp
+        sd/restore_local_tests.cpp
+        sd/restore_peer_tests.cpp
+        sd/restore_tests.cpp
+    )
+else()
+    list(APPEND SOURCE
+        partition_tests.cpp
+        session_tests.cpp
+        handle_mgmt_tests.cpp
+        multi_process_tests.cpp
+        algo/aes/gcm_enc_dec_tests.cpp
+        algo/aes/xts_enc_dec_tests.cpp
+        algo/ecc/ecc_static_der.cpp
+        algo/aes/keygen_tests.cpp
+        algo/ecc/keygen_tests.cpp
+        algo/ecc/unwrap_tests.cpp
+        algo/ecc/unwrap_property_tests.cpp
+        algo/ecc/unwrap_semantic_tests.cpp
+        algo/ecc/helpers.cpp
+        algo/ecc/sign_verify_tests.cpp
+        algo/ecc/keyreport_tests.cpp
+        algo/rsa/keygen_tests.cpp
+        algo/rsa/keyreport_tests.cpp
+        algo/rsa/enc_dec_tests.cpp
+        algo/rsa/rsa_static_der.cpp
+        algo/rsa/sign_verify_tests.cpp
+        algo/rsa/unwrap_tests.cpp
+        algo/sha/digest_tests.cpp
+        algo/hmac/sign_verify_tests.cpp
+        algo/hmac/keygen_tests.cpp
+        algo/secret/unmask_tests.cpp
+        algo/kdf/hkdf_tests.cpp
+        algo/kdf/kbkdf_tests.cpp
+        resiliency/init_stress_tests.cpp
+        resiliency/aes_stress_tests.cpp
+        resiliency/ecc_stress_tests.cpp
+        resiliency/mixed_stress_tests.cpp
+    )
+endif()
+
 add_executable(azihsm_api_cpp_tests ${SOURCE})
 target_include_directories(azihsm_api_cpp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Expose the selected DDI backend to the C++ sources as a compile definition.
+# Expose the selected DDI backend and session-test mode to the C++ sources as
+# compile definitions.
 # `CARGO_FEATURE_*` env vars only exist during the Rust build script, not during
-# C++ compilation, so tests that require a specific backend gate on this macro.
-# `AZIHSM_FEATURE_MOCK` is defined only when the mock backend is built; tests
-# that exercise the TBOR transport gate on `#if !defined(AZIHSM_FEATURE_MOCK)` so
-# they run on the emu and hardware backends but are excluded from the mock lane
-# (mock does not implement `exec_op_tbor`).
+# C++ compilation. Backend-specific setup uses `AZIHSM_FEATURE_MOCK` and
+# `AZIHSM_FEATURE_EMU`; suite selection uses `SESSION_EX_TESTS`.
 if(TEST_FEATURES MATCHES "(^| )mock($| )")
     target_compile_definitions(azihsm_api_cpp_tests PRIVATE AZIHSM_FEATURE_MOCK)
 endif()
+
+if(TEST_FEATURES MATCHES "(^| )emu($| )")
+    target_compile_definitions(azihsm_api_cpp_tests PRIVATE AZIHSM_FEATURE_EMU)
+endif()
+
+if(SESSION_EX_TESTS)
+    if(TEST_FEATURES MATCHES "(^| )mock($| )")
+        message(FATAL_ERROR "mock and session_ex tests cannot be enabled together")
+    endif()
+endif()
+
+target_compile_definitions(
+    azihsm_api_cpp_tests
+    PRIVATE SESSION_EX_TESTS=$<BOOL:${SESSION_EX_TESTS}>
+)
 
 if(UNIX)
     find_package(OpenSSL REQUIRED)
