@@ -2231,8 +2231,8 @@ azihsm_status azihsm_key_unmask_pair(
  This function generates an attestation report for a key.
 
  @param[in] key_handle Handle to the key to attest
- @param[in] report_data Pointer to buffer containing custom data to include in the report (exactly
- 128 bytes)
+ @param[in] report_data Pointer to buffer containing exactly 128 bytes of custom data to include in
+ the report
  @param[out] report Pointer to buffer to receive the attestation report
 
  @return 0 on success, or a negative error code on failure
