@@ -24,17 +24,20 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
-
-use azihsm_ddi_tbor_test_harness::{bootstrap_rotated_co, bootstrap_rotated_cu};
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
 use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA1;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA256;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA384;
+use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
-use azihsm_ddi_tbor_types::{HASH_ALGO_SHA1, HASH_ALGO_SHA256, HASH_ALGO_SHA384, HASH_ALGO_SHA512};
 
 use crate::commands::common::CO;
 use crate::commands::common::SCOPE_EPHEMERAL;
