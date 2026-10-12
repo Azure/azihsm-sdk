@@ -222,21 +222,24 @@ fn hmac_generate_key_rejects_security_domain_scope() {
     ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
 }
 
-/// Rejects non-Session HMAC key scopes before partition finalization.
+/// Rejects Ephemeral and Local HMAC key scopes before partition finalization.
 #[test]
 fn hmac_generate_key_rejects_non_session_scopes_before_finalize() {
-    // Ephemeral / Local masking keys are provisioned at PartFinal, so a
-    // non-Session scope before finalize is rejected with InvalidArg.
     let ctx = TestCtx::new();
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
-    let req = TborHmacGenerateKeyReq {
-        session_id: session.session_id,
-        scope: SCOPE_EPHEMERAL,
-        hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
-        key_label: Vec::new(),
-    };
-    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+
+    // Both Ephemeral and Local masking keys require PartFinal.
+    for scope in [SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+        let req = TborHmacGenerateKeyReq {
+            session_id: session.session_id,
+            scope,
+            hash_algo: HASH_ALGO_SHA256,
+            key_length: 32,
+            key_label: Vec::new(),
+        };
+
+        ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+    }
 }
 
 /// Rejects unsupported HMAC hash algorithm discriminants.
