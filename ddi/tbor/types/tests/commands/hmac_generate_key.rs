@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 //! Integration tests for the TBOR `HmacGenerateKey` command.
 //!
 //! The command generates a random HMAC key of the requested SHA variant
@@ -46,10 +47,16 @@ use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
+/// AEAD envelope component lengths.
+const ENVELOPE_HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
+const ENVELOPE_IV_LEN: usize = 12;
+const ENVELOPE_AAD_LEN: usize = 192;
+const ENVELOPE_TAG_LEN: usize = 16;
+
 /// Masked-key envelope length for a given HMAC key length: `header(8) ‖
 /// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.
 fn masked_len(key_len: usize) -> usize {
-    8 + 12 + 192 + key_len + 16
+    ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + ENVELOPE_AAD_LEN + key_len + ENVELOPE_TAG_LEN
 }
 
 /// A representative in-range key length for a wire hash discriminant (the
@@ -185,7 +192,13 @@ fn hmac_generate_key_roundtrip_all_scopes() {
     // Session / Ephemeral / Local masking keys all exist on an Initialized
     // partition with an Active session.
     for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
-        roundtrip(&ctx, session.session_id, scope, HASH_ALGO_SHA256, 32);
+        roundtrip(
+            &ctx,
+            session.session_id,
+            scope,
+            HASH_ALGO_SHA256,
+            default_key_len(HASH_ALGO_SHA256),
+        );
     }
 }
 
@@ -201,7 +214,7 @@ fn hmac_generate_key_session_scope_before_finalize() {
         session.session_id,
         SCOPE_SESSION,
         HASH_ALGO_SHA256,
-        32,
+        default_key_len(HASH_ALGO_SHA256),
     );
 }
 
@@ -216,7 +229,7 @@ fn hmac_generate_key_rejects_security_domain_scope() {
         session_id: session.session_id,
         scope: SCOPE_SECURITY_DOMAIN,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
@@ -234,7 +247,7 @@ fn hmac_generate_key_rejects_non_session_scopes_before_finalize() {
             session_id: session.session_id,
             scope,
             hash_algo: HASH_ALGO_SHA256,
-            key_length: 32,
+            key_length: default_key_len(HASH_ALGO_SHA256) as u8,
             key_label: Vec::new(),
         };
 
@@ -269,7 +282,7 @@ fn hmac_generate_key_rejects_unknown_scope() {
             session_id: session.session_id,
             scope,
             hash_algo: HASH_ALGO_SHA256,
-            key_length: 32,
+            key_length: default_key_len(HASH_ALGO_SHA256) as u8,
             key_label: Vec::new(),
         };
         ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
@@ -301,13 +314,16 @@ fn hmac_generate_key_accepts_non_empty_key_label() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: b"hmac-test-key".to_vec(),
     };
     let resp = ctx
         .tbor(&req)
         .expect("HmacGenerateKey with non-empty key label");
-    assert_eq!(resp.masked_key.len(), masked_len(32));
+    assert_eq!(
+        resp.masked_key.len(),
+        masked_len(default_key_len(HASH_ALGO_SHA256))
+    );
     assert!(
         resp.masked_key.iter().any(|&b| b != 0),
         "masked_key must not be all-zero",
@@ -335,7 +351,7 @@ fn hmac_generate_key_rejects_default_psk() {
         session_id: session.session_id(),
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
@@ -352,7 +368,7 @@ fn hmac_generate_key_rejects_closed_session() {
         session_id: session.session_id,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
     ctx.expect_fw_reject(&req, TborStatus::SessionNotFound);
@@ -390,7 +406,7 @@ fn hmac_generate_key_rejects_invalid_session_id() {
         session_id: u16::MAX,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
 
@@ -442,7 +458,7 @@ fn hmac_generate_key_accepts_empty_key_label() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
 
@@ -450,7 +466,10 @@ fn hmac_generate_key_accepts_empty_key_label() {
         .tbor(&req)
         .expect("HmacGenerateKey with empty key label");
 
-    assert_eq!(resp.masked_key.len(), masked_len(32));
+    assert_eq!(
+        resp.masked_key.len(),
+        masked_len(default_key_len(HASH_ALGO_SHA256))
+    );
 }
 
 /// Accepts arbitrary bytes in the key label.
@@ -462,7 +481,7 @@ fn hmac_generate_key_accepts_binary_key_label() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: vec![0x00, 0x80, 0xff, 0x41],
     };
 
@@ -470,7 +489,10 @@ fn hmac_generate_key_accepts_binary_key_label() {
         .tbor(&req)
         .expect("HmacGenerateKey with binary key label");
 
-    assert_eq!(resp.masked_key.len(), masked_len(32));
+    assert_eq!(
+        resp.masked_key.len(),
+        masked_len(default_key_len(HASH_ALGO_SHA256))
+    );
 }
 
 /// Accepts the maximum supported key-label length.
@@ -482,7 +504,7 @@ fn hmac_generate_key_accepts_max_key_label_length() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN],
     };
 
@@ -490,7 +512,10 @@ fn hmac_generate_key_accepts_max_key_label_length() {
         .tbor(&req)
         .expect("HmacGenerateKey with maximum key-label length");
 
-    assert_eq!(resp.masked_key.len(), masked_len(32));
+    assert_eq!(
+        resp.masked_key.len(),
+        masked_len(default_key_len(HASH_ALGO_SHA256))
+    );
 }
 
 /// Rejects a key label longer than the supported maximum.
@@ -502,7 +527,7 @@ fn hmac_generate_key_rejects_oversized_key_label() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: vec![b'L'; TBOR_KEY_LABEL_MAX_LEN + 1],
     };
 
@@ -519,7 +544,7 @@ fn hmac_generate_key_tampered_masked_key_rejected() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
 
@@ -551,7 +576,7 @@ fn hmac_generate_key_truncated_masked_key_rejected() {
         session_id: session.session_id,
         scope: SCOPE_LOCAL,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
 
@@ -648,7 +673,7 @@ fn hmac_generate_key_cu_accepts_binary_key_label() {
         session_id: session.session_id,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: vec![0x00, 0x80, 0xff, 0x41],
     };
 
@@ -656,7 +681,10 @@ fn hmac_generate_key_cu_accepts_binary_key_label() {
         .tbor(&req)
         .expect("CU HmacGenerateKey with binary label");
 
-    assert_eq!(generated.masked_key.len(), masked_len(32));
+    assert_eq!(
+        generated.masked_key.len(),
+        masked_len(default_key_len(HASH_ALGO_SHA256))
+    );
 
     let mac_req = TborHmacReq {
         session_id: session.session_id,
@@ -666,7 +694,7 @@ fn hmac_generate_key_cu_accepts_binary_key_label() {
 
     let tag = ctx.tbor(&mac_req).expect("CU HMAC using labeled key").tag;
 
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), default_key_len(HASH_ALGO_SHA256));
 }
 
 /// CU: reject HmacGenerateKey after its session is closed.
@@ -682,7 +710,7 @@ fn hmac_generate_key_cu_rejects_closed_session() {
         session_id: session.session_id,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
 
@@ -738,4 +766,38 @@ fn hmac_generate_key_cu_sha1_rejected() {
     };
 
     ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+}
+
+/// Rejects a mismatched session ID while a valid CO session remains active.
+#[test]
+fn hmac_generate_key_active_session_id_mismatch_rejected() {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let invalid_session_id = u16::MAX;
+
+    assert_ne!(
+        session.session_id, invalid_session_id,
+        "invalid session ID must differ from the active session",
+    );
+
+    let req = TborHmacGenerateKeyReq {
+        session_id: invalid_session_id,
+        scope: SCOPE_SESSION,
+        hash_algo: HASH_ALGO_SHA256,
+        key_length: 32,
+        key_label: Vec::new(),
+    };
+
+    // Reject the mismatched ID while the valid session is active.
+    ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
+
+    // Verify the rejected request did not disrupt the valid session.
+    roundtrip(
+        &ctx,
+        session.session_id,
+        SCOPE_SESSION,
+        HASH_ALGO_SHA256,
+        default_key_len(HASH_ALGO_SHA256),
+    );
 }

@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 222 tests
+* emu: 223 tests
 * mock: 6 tests
 
 ## Legend
@@ -251,6 +251,11 @@ without requiring an active session.
 
 ## `GetCertificate` (opcode out-of-session)
 
+Firmware integration coverage for the TBOR `GetCertificate` command. These tests exercise
+certificate retrieval from slot 0, cross-check TBOR against the MBOR certificate path,
+validate invalid slot/index status handling, and verify that the out-of-session command is
+independent of CO/CU session state.
+
 | Requirement | Status | Test | Notes |
 |---|---|---|---|
 | Every certificate index advertised by `GetCertChainInfo` returns non-empty, valid DER/X.509 within `CERT_MAX_LEN` | ✅ 🔁 | `get_cert::all_indices_round_trip` | Iterates over the full advertised chain and verifies DER SEQUENCE encoding and X.509 parsing. |
@@ -337,6 +342,8 @@ masked-key integrity, and unsupported SHA-1 generation.
 | SHA-256 rejects a 20-byte key with `InvalidKeyLength` | ✅ | `hmac_generate_key::hmac_generate_key_sha256_rejects_sha1_sized_key` | Verifies SHA-256 minimum length of 32 bytes |
 | CO rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_co_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key |
 | CU rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_cu_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key under rotated CU session |
+| Mismatched session ID while a valid CO session is active → `FileHandleSessionIdDoesNotMatch` | ✅ | `hmac_generate_key::hmac_generate_key_active_session_id_mismatch_rejected` | Sends `u16::MAX` while a rotated CO session remains active; verifies the valid session remains usable afterward |
+
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
