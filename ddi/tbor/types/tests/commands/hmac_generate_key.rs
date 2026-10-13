@@ -41,16 +41,15 @@ use azihsm_ddi_tbor_types::HASH_ALGO_SHA512;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
 use crate::commands::common::CO;
+use crate::commands::common::ENVELOPE_AAD_LEN;
+use crate::commands::common::ENVELOPE_HEADER_LEN;
+use crate::commands::common::ENVELOPE_IV_LEN;
+use crate::commands::common::ENVELOPE_TAG_LEN;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-/// AEAD envelope component lengths.
-const ENVELOPE_HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
-const ENVELOPE_IV_LEN: usize = 12;
-const ENVELOPE_AAD_LEN: usize = 192;
-const ENVELOPE_TAG_LEN: usize = 16;
 
 /// Masked-key envelope length for a given HMAC key length: `header(8) ‖
 /// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.

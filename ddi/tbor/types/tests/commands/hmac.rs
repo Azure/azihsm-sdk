@@ -58,6 +58,9 @@ use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MAX_LEN;
 use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MIN_LEN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
+use crate::commands::common::ENVELOPE_AAD_LEN;
+use crate::commands::common::ENVELOPE_HEADER_LEN;
+use crate::commands::common::ENVELOPE_IV_LEN;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
@@ -128,7 +131,7 @@ fn hmac_session_scope_roundtrip() {
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_SESSION, HMAC_HASH_SHA256);
     let tag = mac(&ctx, session.session_id, &masked, b"session-scoped mac");
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
     assert!(tag.iter().any(|&b| b != 0));
 }
 
@@ -165,7 +168,7 @@ fn hmac_empty_message() {
     let session = finalized_co_session(&ctx);
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
     let tag = mac(&ctx, session.session_id, &masked, b"");
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
     assert!(
         tag.iter().any(|&b| b != 0),
         "HMAC of empty message is non-zero"
@@ -198,9 +201,21 @@ fn hmac_matches_host_at_message_boundaries() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     for (class, hash, key_len) in [
-        (KEY_CLASS_HMAC_SHA256, HashAlgo::sha256(), 32),
-        (KEY_CLASS_HMAC_SHA384, HashAlgo::sha384(), 48),
-        (KEY_CLASS_HMAC_SHA512, HashAlgo::sha512(), 64),
+        (
+            KEY_CLASS_HMAC_SHA256,
+            HashAlgo::sha256(),
+            tag_len_for_hash(HMAC_HASH_SHA256),
+        ),
+        (
+            KEY_CLASS_HMAC_SHA384,
+            HashAlgo::sha384(),
+            tag_len_for_hash(HMAC_HASH_SHA384),
+        ),
+        (
+            KEY_CLASS_HMAC_SHA512,
+            HashAlgo::sha512(),
+            tag_len_for_hash(HMAC_HASH_SHA512),
+        ),
     ] {
         let key_bytes: Vec<u8> = (0..key_len).map(|i| i as u8).collect();
         let masked = unwrap(&ctx, session.session_id, class, &key_bytes).masked_key;
@@ -402,8 +417,8 @@ fn hmac_rejects_tampered_iv() {
 
     let mut tampered = masked.clone();
 
-    // Envelope starts with header(8), followed by IV.
-    tampered[8] ^= 1;
+    // IV starts immediately after the envelope header.
+    tampered[ENVELOPE_HEADER_LEN] ^= 1;
 
     ctx.expect_fw_reject(
         &TborHmacReq {
@@ -431,7 +446,7 @@ fn hmac_rejects_tampered_ciphertext() {
     let mut tampered = masked.clone();
 
     // Envelope: header(8) + IV(12) + metadata/AAD(192) + ciphertext.
-    tampered[8 + 12 + 192] ^= 1;
+    tampered[ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + ENVELOPE_AAD_LEN] ^= 1;
 
     ctx.expect_fw_reject(
         &TborHmacReq {
@@ -483,7 +498,7 @@ fn hmac_rejects_closed_session() {
 
     // Prove the key works before closing the session.
     let tag = mac(&ctx, session_id, &masked, b"before close");
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
 
     ctx.session_close(session_id).expect("close HMAC session");
 
@@ -549,7 +564,7 @@ fn hmac_rejects_corrupted_masked_key_header() {
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
 
     // Exercise each byte in the cleartext envelope header independently.
-    for offset in 0..8 {
+    for offset in 0..ENVELOPE_HEADER_LEN {
         let mut corrupted = masked.clone();
         corrupted[offset] ^= 0x80;
 
@@ -559,16 +574,22 @@ fn hmac_rejects_corrupted_masked_key_header() {
             msg: b"header corruption".to_vec(),
         };
 
-        // Do not use mac(), because rejection is expected.
+        use azihsm_ddi::DdiError;
+        let result = ctx.tbor(&req);
+
         assert!(
-            ctx.tbor(&req).is_err(),
-            "corrupted masked-key header byte {offset} unexpectedly succeeded"
+            matches!(
+                result,
+                Err(DdiError::TborStatus(s))
+                    if s == TborStatus::InvalidArg || s == TborStatus::MaskedKeyDecodeFailed
+            ),
+            "unexpected error at offset {offset}"
         );
     }
 
     // Original key must still work after all rejected attempts.
     let tag = mac(&ctx, session.session_id, &masked, b"header corruption");
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
 }
 
 /// Alternating HMAC algorithms does not retain stale hash or key state.
@@ -586,9 +607,9 @@ fn hmac_alternating_hashes_do_not_leak_state() {
     let tag384 = mac(&ctx, session.session_id, &key384, msg);
     let tag512 = mac(&ctx, session.session_id, &key512, msg);
 
-    assert_eq!(tag256.len(), 32);
-    assert_eq!(tag384.len(), 48);
-    assert_eq!(tag512.len(), 64);
+    assert_eq!(tag256.len(), tag_len_for_hash(HMAC_HASH_SHA256));
+    assert_eq!(tag384.len(), tag_len_for_hash(HMAC_HASH_SHA384));
+    assert_eq!(tag512.len(), tag_len_for_hash(HMAC_HASH_SHA512));
 
     // Go back to earlier algorithms after SHA-512.
     assert_eq!(mac(&ctx, session.session_id, &key256, msg), tag256);
@@ -619,7 +640,7 @@ fn hmac_generate_key_accepts_non_empty_key_label() {
         b"labeled HMAC key",
     );
 
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
     assert!(tag.iter().any(|&b| b != 0));
 }
 
@@ -680,7 +701,7 @@ fn hmac_generate_key_accepts_binary_key_label() {
 
     let tag = mac(&ctx, session.session_id, &resp.masked_key, b"binary label");
 
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
 }
 
 /// Verifies that HMAC accepts a key label at the maximum allowed length.
@@ -706,7 +727,7 @@ fn hmac_generate_key_accepts_max_length_key_label() {
         b"max label test",
     );
 
-    assert_eq!(tag.len(), 32);
+    assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
 }
 
 /// Verifies that a labeled session-scoped HMAC key expires after session reopening.
