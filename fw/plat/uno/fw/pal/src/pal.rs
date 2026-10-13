@@ -910,9 +910,13 @@ impl UnoHsmPal {
     /// Mirroring the reference firmware's `on_flr`, every partition is reset
     /// before the event is acknowledged: per-tenant state, vault keys,
     /// identity, and resource mask are cleared and the partition returns to
-    /// `Unallocated`. Admin resets its own function and resource tables
-    /// once it sees the acknowledgement, so the next driver load
-    /// (PfnEnable, SetResource) starts from the same state as a cold boot.
+    /// `Unallocated`. A partition whose free fails is quarantined `Faulted`
+    /// (fail-closed) so it cannot serve host IO with stale keys after Admin
+    /// resets its side; the event is still acknowledged because Admin blocks
+    /// its reset completion on the HSM response. Admin resets its own function
+    /// and resource tables once it sees the acknowledgement, so the next
+    /// driver load (PfnEnable, SetResource) starts from the same state as a
+    /// cold boot.
     ///
     /// Admin raises this only after its own boot, which waits for the HSM
     /// to reach `Running`, so GDMA and the admin IO slot used by the vault
@@ -924,13 +928,43 @@ impl UnoHsmPal {
     /// - `value`: Raw event payload delivered by hardware.
     async fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
         if self.boot_phase.get() == BootPhase::Running {
+            let mut faulted = 0u16;
             for pfn in 0..crate::part::NUM_PARTITIONS as u8 {
-                if let Err(_e) = self.part_free(HsmPartId::from(pfn)).await {
-                    error!("pcie", _e, "reset event: partition {} reset failed", pfn);
+                let pid = HsmPartId::from(pfn);
+                if let Err(_e) = self.part_free(pid).await {
+                    // Fail-closed: a partition we could not free still holds its
+                    // previous allocation, keys, and sessions, yet Admin is
+                    // about to reset its own side — leaving the partition
+                    // appearing usable would let host IO reach stale keys after
+                    // the reset. Quarantine it as `Faulted` so the enable gate
+                    // (`partition_enabled`) drops all host IO for it until a
+                    // clean free/realloc (or reboot) clears the fault.
+                    if let Ok(part) = azihsm_fw_uno_drivers_part_store::PartStore::partition(pid) {
+                        part.set_state(azihsm_fw_hsm_pal_traits::PartState::Faulted);
+                    }
+                    faulted += 1;
+                    error!(
+                        "pcie",
+                        _e, "reset event: partition {} free failed; faulted", pfn
+                    );
                 }
             }
-            info!("pcie", "reset event {}: all partitions reset", value);
+            if faulted == 0 {
+                info!("pcie", "reset event {}: all partitions reset", value);
+            } else {
+                warn!(
+                    "pcie",
+                    "reset event {}: {} partition(s) failed to free and were faulted",
+                    value,
+                    faulted
+                );
+            }
         }
+        // Admin blocks its PERST/FLR completion on this ack (its pcie FSM stays
+        // Pending until the HSM response arrives), so the event is always
+        // acknowledged — withholding the ack would hang the reset rather than
+        // recover it. Any partition that failed to free was faulted above, so
+        // the acknowledged reset never leaves a stale partition serving IO.
         self.ipc.ack_event(channel as u8, value);
     }
 }
