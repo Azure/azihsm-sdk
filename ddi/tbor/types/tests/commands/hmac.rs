@@ -35,7 +35,13 @@ use azihsm_crypto::HmacAlgo;
 use azihsm_crypto::HmacKey;
 use azihsm_crypto::ImportableKey;
 use azihsm_crypto::Signer;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
@@ -57,12 +63,6 @@ use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
-use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
-use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 
 /// Expected tag length (bytes) for a wire hash discriminant.
 fn tag_len_for_hash(hash: u8) -> usize {
