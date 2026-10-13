@@ -4,10 +4,12 @@
 //! PTA CSR (PKCS#10) template builder using OpenSSL.
 //!
 //! Builds a valid PKCS#10 CertificationRequest with the fixed PTA
-//! subject Common Name (`"Azure Integrated HSM PTA"`), a 32-character
-//! hex placeholder for the PTAID-derived serialNumber, and a P-384
-//! public key needle. The TBS portion is extracted, needle-matched,
-//! and sanitized to produce a reusable template that the runtime
+//! subject encoded as a single 64-byte `commonName` — holding the PTA
+//! name (`"Azure Integrated HSM PTA"`) followed by trailing padding
+//! that the runtime overwrites with a separating space and the
+//! hex-encoded PTAID — plus a P-384 public key needle. The TBS portion
+//! is extracted, needle-matched, and sanitized to produce a reusable
+//! template that the runtime
 //! [`build_csr`](crate::csr_builder::build_csr) function patches.
 
 use openssl::ec::EcGroup;
@@ -35,36 +37,28 @@ const P384_PUBKEY_LEN: usize = 97;
 /// Length of the CSR subject Common Name field in bytes
 /// (space-padded ASCII).  Matches
 /// `azihsm_fw_core_crypto_x509_builder::csr::SUBJECT_CN_LEN`.
-const PTA_CN_LEN: usize = 32;
+///
+/// The single `commonName` carries both the fixed PTA name and the
+/// hex-encoded PTAID, so the PTA subject is a one-RDN DN whose framing
+/// byte-matches the issuer slot of `leaf_cert.rs`.  That lets the
+/// on-demand slot-2 PID leaf reuse the `leaf_cert` template directly,
+/// with no second template and no runtime DER manipulation.
+const PTA_CN_LEN: usize = 64;
 
-/// Length of the CSR subject serialNumber field in bytes
-/// (32 ASCII hex chars for the truncated PTAID).  Matches
-/// `azihsm_fw_core_crypto_x509_builder::csr::SUBJECT_SN_LEN`.
-const PTA_SN_LEN: usize = 32;
-
-/// Fixed PTA subject Common Name.  Encoded as a 32-byte field, with
-/// trailing spaces patched in by the runtime padding helper.  Kept
-/// here to seed a CN needle of the same byte length so OpenSSL emits
-/// a TBS we can patch without re-encoding the DN length.
+/// Fixed PTA subject Common Name needle.  Encoded as a 64-byte field
+/// so OpenSSL emits a TBS whose CN length matches the runtime value,
+/// letting the template be patched without re-encoding the DN length.
 fn subject_cn_needle() -> String {
-    // 32 chars: "Azure Integrated HSM PTA" (24) + 8 spaces.
-    "Azure Integrated HSM PTA        ".to_string()
-}
-
-/// Needle string for the PTA subject serialNumber — a unique 32-char
-/// hex pattern embedded in the CSR's subject DN, then located in the
-/// DER to determine the SN field offset.
-fn subject_sn_needle() -> String {
-    "F1F2F3F4F5F6F7F8F9FAFBFCFDFEFFF0".to_string()
+    // 64 unique chars: "Azure Integrated HSM PTA" (24) + 40 'X' pad.
+    format!("{:X<64}", "Azure Integrated HSM PTA")
 }
 
 /// Build the PTA CSR template.
 ///
 /// Generates a valid PKCS#10 CSR with the PTA subject DN
-/// (CN = `"Azure Integrated HSM PTA"`, serialNumber = 32-hex-char
-/// needle) using OpenSSL, extracts the CertificationRequestInfo
-/// (TBS), locates variable fields by needle matching, and sanitizes
-/// the template.
+/// (a single `commonName` holding the PTA name and hex PTAID) using
+/// OpenSSL, extracts the CertificationRequestInfo (TBS), locates
+/// variable fields by needle matching, and sanitizes the template.
 ///
 /// # Returns
 /// A [`CsrTemplateResult`] containing the sanitized TBS and field
@@ -85,14 +79,10 @@ pub fn build_csr() -> CsrTemplateResult {
     let pkey = PKey::from_ec_key(ec_key).expect("PKey from EC");
 
     let subject_cn = subject_cn_needle();
-    let subject_sn = subject_sn_needle();
     let mut name_builder = X509Name::builder().expect("name builder");
     name_builder
         .append_entry_by_text("CN", &subject_cn)
         .expect("CN");
-    name_builder
-        .append_entry_by_text("serialNumber", &subject_sn)
-        .expect("serialNumber");
     let subject = name_builder.build();
 
     let mut builder = X509ReqBuilder::new().expect("X509ReqBuilder");
@@ -118,11 +108,6 @@ pub fn build_csr() -> CsrTemplateResult {
             name: "SUBJECT_CN",
             offset: tbs::find_needle(&tbs_bytes, subject_cn.as_bytes(), "SUBJECT_CN"),
             len: PTA_CN_LEN,
-        },
-        FieldOffset {
-            name: "SUBJECT_SN",
-            offset: tbs::find_needle(&tbs_bytes, subject_sn.as_bytes(), "SUBJECT_SN"),
-            len: PTA_SN_LEN,
         },
     ];
 

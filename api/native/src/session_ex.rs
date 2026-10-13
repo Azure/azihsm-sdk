@@ -20,7 +20,7 @@ use super::*;
 pub struct AzihsmSessionPsk {
     /// PSK slot: 0 = Crypto Officer, 1 = Crypto User.
     pub psk_id: u8,
-    /// Optional PSK buffer (exactly `PSK_LEN` bytes); NULL selects the
+    /// Optional PSK buffer (exactly `AZIHSM_PSK_LEN` bytes); NULL selects the
     /// partition default PSK for the slot.
     pub psk: *const AzihsmBuffer,
 }
@@ -45,7 +45,7 @@ pub struct AzihsmSessionPsk {
 ///
 /// - `dev_handle` must be a valid partition handle.
 /// - `psk` must be a valid pointer to an `azihsm_session_psk` whose `psk`
-///   field is NULL or a valid `azihsm_buffer` holding exactly `PSK_LEN`
+///   field is NULL or a valid `azihsm_buffer` holding exactly `AZIHSM_PSK_LEN`
 ///   bytes.
 /// - `sess_handle` must be a valid pointer to memory where the session handle
 ///   will be written.
@@ -103,10 +103,10 @@ pub unsafe extern "C" fn azihsm_sess_ex_open(
 /// be NULL to omit it.
 #[repr(C)]
 pub struct AzihsmSessExPartInitParams {
-    /// Machine seed plaintext buffer.
-    pub mach_seed: *const AzihsmBuffer,
     /// Unified partition policy image buffer.
     pub part_policy: *const AzihsmBuffer,
+    /// Machine seed plaintext buffer.
+    pub mach_seed: *const AzihsmBuffer,
     /// POTA public-key thumbprint buffer.
     pub pota_thumbprint: *const AzihsmBuffer,
     /// SATA public-key thumbprint buffer.
@@ -223,9 +223,15 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_init(
         csr_check?;
         report_check?;
 
+        // Parse the opaque policy image into a typed `PartPolicy`. This
+        // runs after the output-buffer probe so a size probe still reports
+        // `BUFFER_TOO_SMALL`; a wrong-length policy is rejected here.
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+
         let result = session.part_init_ex(
-            mach_seed,
             part_policy,
+            mach_seed,
             pota_thumbprint,
             sata_thumbprint,
             sapota_thumbprint,
@@ -304,7 +310,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         let session = api::HsmSession::try_from(sess_handle)?;
         let params = deref_ptr(params)?;
 
-        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
+        let part_policy_bytes: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let prev_local_mk_backup = buffer_to_optional_slice(params.prev_local_mk_backup)?;
 
         // Build the PTA cert chain (borrowing, not copying) from the C
@@ -335,6 +341,14 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
         let local_mk_backup = deref_mut_ptr(local_mk_backup)?;
         validate_output_buffer(local_mk_backup, api::LOCAL_MK_BACKUP_LEN)?;
 
+        // Parse the opaque policy image into a typed `PartPolicy` at the
+        // untrusted C boundary. Done after the output-buffer probe so a
+        // size query with a wrong-length policy still reports
+        // `AZIHSM_BUFFER_TOO_SMALL` (matching `part_init`) rather than
+        // `AZIHSM_INVALID_ARGUMENT`.
+        let part_policy = api::PartPolicy::ref_from_wire(part_policy_bytes)
+            .ok_or(AzihsmStatus::InvalidArgument)?;
+
         let result = session.part_final_ex(part_policy, &certs, prev_local_mk_backup)?;
 
         copy_to_buffer(local_mk_backup, &result.local_mk_backup)?;
@@ -351,7 +365,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
 /// before provisioning.
 ///
 /// @param[in] sess_handle Handle to the security-domain session
-/// @param[in] new_psk New PSK buffer; must be exactly `PSK_LEN` (32 B)
+/// @param[in] new_psk New PSK buffer; must be exactly `AZIHSM_PSK_LEN` (32 B)
 ///
 /// @return `AzihsmStatus` indicating the result of the operation
 ///
@@ -359,7 +373,7 @@ pub unsafe extern "C" fn azihsm_sess_ex_part_final(
 ///
 /// - `sess_handle` must be a valid security-domain session handle.
 /// - `new_psk` must be a valid pointer to an `azihsm_buffer` whose
-///   backing storage holds exactly `PSK_LEN` bytes.
+///   backing storage holds exactly `AZIHSM_PSK_LEN` bytes.
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub unsafe extern "C" fn azihsm_sess_ex_psk_change(

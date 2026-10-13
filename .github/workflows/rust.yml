@@ -41,6 +41,10 @@ jobs:
       run: cargo xtask precheck --fmt
     - name: Cargo Clippy
       run: cargo xtask precheck --clippy
+    - name: Install clang-format-18
+      run: sudo apt-get update && sudo apt-get install -y clang-format-18
+    - name: Check committed C header is up to date
+      run: cargo xtask precheck --cbindgen
 
   test_ubuntu_mock:
 

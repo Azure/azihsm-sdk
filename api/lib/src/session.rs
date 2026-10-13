@@ -14,6 +14,7 @@ use azihsm_crypto::AesKey;
 use azihsm_ddi_tbor_types::SessionType;
 use parking_lot::RwLock;
 use tracing::*;
+use zerocopy::IntoBytes;
 use zeroize::Zeroize;
 
 use super::*;
@@ -182,8 +183,8 @@ impl HsmSession {
     /// session returns [`HsmError::InvalidSession`].
     pub fn part_init_ex(
         &self,
+        part_policy: &PartPolicy,
         mach_seed: &[u8],
-        part_policy: &[u8],
         pota_thumbprint: &[u8],
         sata_thumbprint: &[u8],
         sapota_thumbprint: Option<&[u8]>,
@@ -212,7 +213,7 @@ impl HsmSession {
     /// session; a V1 session returns [`HsmError::InvalidSession`].
     pub fn part_final_ex(
         &self,
-        part_policy: &[u8],
+        part_policy: &PartPolicy,
         pta_cert_chain: &[HsmCert<'_>],
         prev_local_mk_backup: Option<&[u8]>,
     ) -> HsmResult<HsmPartFinalExResult> {
@@ -233,16 +234,20 @@ impl HsmSession {
     /// session.
     ///
     /// Creates a new security domain from the caller-supplied unified
-    /// `policy`, using the sender's `masked_sealing_key` (from
-    /// `SdSealingKeyGen`) and the receiver's attestation `evidence`.
-    /// Returns the remote backup together with the device-local backups.
-    /// Only valid on a V2 session; a V1 session returns
+    /// `part_policy`, using the sender's `masked_sealing_key` (from
+    /// `SdSealingKeyGen`). The receiver public key is always recovered from
+    /// the authoritative `receiver_cert_chain` (anchored to the policy SATA
+    /// key); `receiver_evidence` is optional and verified only when the
+    /// policy sets `require_trusted_sa_key` (pass an empty evidence
+    /// otherwise). Returns the remote backup together with the device-local
+    /// backups. Only valid on a V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
     pub fn sd_create_remote_backup(
         &self,
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
+        receiver_cert_chain: &[HsmCert<'_>],
         receiver_evidence: &HsmSdEvidence<'_>,
-        policy: &[u8],
     ) -> HsmResult<HsmSdRemoteBackupResult> {
         let inner = self.inner.read();
         match &inner.kind {
@@ -250,8 +255,9 @@ impl HsmSession {
                 &inner.partition,
                 inner.id,
                 masked_sealing_key,
+                receiver_cert_chain,
                 receiver_evidence,
-                policy,
+                part_policy.as_bytes(),
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
         }
@@ -268,10 +274,10 @@ impl HsmSession {
     /// [`HsmError::InvalidSession`].
     pub fn sd_reseal_remote_backup(
         &self,
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         src_evidence: &HsmSdEvidence<'_>,
         dest_evidence: &HsmSdEvidence<'_>,
-        policy: &[u8],
         src_remote_backup: &[u8],
     ) -> HsmResult<Vec<u8>> {
         let inner = self.inner.read();
@@ -282,7 +288,7 @@ impl HsmSession {
                 masked_sealing_key,
                 src_evidence,
                 dest_evidence,
-                policy,
+                part_policy.as_bytes(),
                 src_remote_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
@@ -293,16 +299,17 @@ impl HsmSession {
     /// session.
     ///
     /// HPKE-opens `src_remote_backup` with the receiver's
-    /// `masked_sealing_key` (authenticated by the sender in
-    /// `sender_evidence`), recovers the security-domain masking key from
+    /// `masked_sealing_key` (authenticated by the sender key recovered from
+    /// `sender_cert_chain`), recovers the security-domain masking key from
     /// `prev_sd_mk_backup`, and returns the refreshed device-local backups.
     /// Only valid on a V2 session; a V1 session returns
     /// [`HsmError::InvalidSession`].
     pub fn sd_restore_remote_backup(
         &self,
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
+        sender_cert_chain: &[HsmCert<'_>],
         sender_evidence: &HsmSdEvidence<'_>,
-        policy: &[u8],
         src_remote_backup: &[u8],
         prev_sd_mk_backup: &[u8],
     ) -> HsmResult<HsmSdRestoreResult> {
@@ -312,8 +319,9 @@ impl HsmSession {
                 &inner.partition,
                 inner.id,
                 masked_sealing_key,
+                sender_cert_chain,
                 sender_evidence,
-                policy,
+                part_policy.as_bytes(),
                 src_remote_backup,
                 prev_sd_mk_backup,
             ),
@@ -330,9 +338,9 @@ impl HsmSession {
     /// V2 session; a V1 session returns [`HsmError::InvalidSession`].
     pub fn sd_create_peer_backup(
         &self,
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         dst_evidence: &HsmSdEvidence<'_>,
-        policy: &[u8],
         pok_local_backup: &[u8],
     ) -> HsmResult<Vec<u8>> {
         let inner = self.inner.read();
@@ -342,7 +350,7 @@ impl HsmSession {
                 inner.id,
                 masked_sealing_key,
                 dst_evidence,
-                policy,
+                part_policy.as_bytes(),
                 pok_local_backup,
             ),
             SessionKind::Ver1 { .. } => Err(HsmError::InvalidSession),
@@ -360,9 +368,9 @@ impl HsmSession {
     /// session returns [`HsmError::InvalidSession`].
     pub fn sd_restore_peer_backup(
         &self,
+        part_policy: &PartPolicy,
         masked_sealing_key: &[u8],
         src_evidence: &HsmSdEvidence<'_>,
-        policy: &[u8],
         pok_peer_backup: &[u8],
         prev_sd_mk_backup: &[u8],
     ) -> HsmResult<HsmSdRestoreResult> {
@@ -373,7 +381,7 @@ impl HsmSession {
                 inner.id,
                 masked_sealing_key,
                 src_evidence,
-                policy,
+                part_policy.as_bytes(),
                 pok_peer_backup,
                 prev_sd_mk_backup,
             ),

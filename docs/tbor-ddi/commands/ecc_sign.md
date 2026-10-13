@@ -27,6 +27,14 @@ order (the natural big-endian digest with all bytes reversed); the device
 flips endianness internally if its signing primitive is big-endian native
 (e.g. OpenSSL on the emulator).
 
+All supported SHA-2 digest lengths are accepted on P-256, P-384, and P-521.
+ECDSA retains only the most significant bits when a digest is longer than
+the curve's order: SHA-384 and SHA-512 are truncated to 32 bytes for P-256,
+and SHA-512 is truncated to 48 bytes for P-384. In wire little-endian order,
+these are the trailing bytes of the supplied digest. Shorter digests are
+zero-extended to the signing operand width without changing their value.
+SHA-1 and other unsupported digest lengths remain rejected.
+
 Available to **both Crypto-Officer and Crypto-User** sessions.
 
 ## Request
@@ -60,7 +68,7 @@ Carries the wire-format signature.
 | Error | Cause |
 |---|---|
 | `SessionNotFound` | `session_id` does not refer to an `Active` slot |
-| `InvalidArg` | `digest` length is not a supported SHA-2 digest length (32 / 48 / 64 B), or exceeds the curve's ECDSA field width |
+| `InvalidArg` | `digest` length is not a supported SHA-2 digest length (32 / 48 / 64 B) |
 | `InvalidKeyType` | The masked blob is not an ECC private key |
 | `InvalidPermissions` | The key's `sign` usage attribute is not set |
 | `MaskedKeyDecodeFailed` / `AesGcmDecryptTagDoesNotMatch` | The masked key is malformed or fails authentication (wrong scope / tampered) |

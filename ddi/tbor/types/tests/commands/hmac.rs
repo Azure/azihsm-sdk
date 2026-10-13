@@ -35,6 +35,7 @@ use azihsm_crypto::HmacAlgo;
 use azihsm_crypto::HmacKey;
 use azihsm_crypto::ImportableKey;
 use azihsm_crypto::Signer;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborHmacGenerateKeyReq;
 use azihsm_ddi_tbor_types::TborHmacReq;
@@ -56,13 +57,12 @@ use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
-use crate::harness::bootstrap_rotated_co;
-use crate::harness::bootstrap_rotated_cu;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TestCtx;
-use crate::harness::CO_PSK_ID;
-use crate::harness::ROTATED_CO_PSK;
-use crate::harness::ROTATED_CU_PSK;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
+use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
 
 /// Expected tag length (bytes) for a wire hash discriminant.
 fn tag_len_for_hash(hash: u8) -> usize {
@@ -596,6 +596,7 @@ fn hmac_alternating_hashes_do_not_leak_state() {
     assert_eq!(mac(&ctx, session.session_id, &key512, msg), tag512);
 }
 
+/// Verifies that HMAC keys with non-empty labels can be generated and used.
 #[test]
 fn hmac_generate_key_accepts_non_empty_key_label() {
     let ctx = TestCtx::new();
@@ -622,6 +623,7 @@ fn hmac_generate_key_accepts_non_empty_key_label() {
     assert!(tag.iter().any(|&b| b != 0));
 }
 
+/// Verifies labeled HMAC key generation across all supported hashes.
 #[test]
 fn hmac_generate_key_with_label_all_hashes() {
     let ctx = TestCtx::new();
@@ -660,6 +662,7 @@ fn hmac_generate_key_with_label_all_hashes() {
     }
 }
 
+/// Verifies that HMAC accepts binary key labels.
 #[test]
 fn hmac_generate_key_accepts_binary_key_label() {
     let ctx = TestCtx::new();
@@ -680,6 +683,7 @@ fn hmac_generate_key_accepts_binary_key_label() {
     assert_eq!(tag.len(), 32);
 }
 
+/// Verifies that HMAC accepts a key label at the maximum allowed length.
 #[test]
 fn hmac_generate_key_accepts_max_length_key_label() {
     let ctx = TestCtx::new();
@@ -705,6 +709,7 @@ fn hmac_generate_key_accepts_max_length_key_label() {
     assert_eq!(tag.len(), 32);
 }
 
+/// Verifies that a labeled session-scoped HMAC key expires after session reopening.
 #[test]
 fn hmac_labeled_session_key_rejected_after_session_reopen() {
     let ctx = TestCtx::new();
@@ -752,4 +757,94 @@ fn hmac_labeled_session_key_rejected_after_session_reopen() {
 
     ctx.session_close(second.session_id)
         .expect("close second session");
+}
+
+/// Verifies CU labeled HMAC keys across all supported hashes and scopes.
+#[test]
+fn hmac_cu_labeled_keys_all_hashes_and_scopes() {
+    let ctx = TestCtx::new();
+    let co = finalized_co_session(&ctx);
+    ctx.session_close(co.session_id).expect("close CO");
+
+    let cu = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+    let msg = b"CU labeled HMAC coverage";
+
+    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+        for scope in [SCOPE_SESSION, SCOPE_EPHEMERAL, SCOPE_LOCAL] {
+            let masked = ctx
+                .tbor(&TborHmacGenerateKeyReq {
+                    session_id: cu.session_id,
+                    scope,
+                    hash_algo: hash,
+                    key_length: tag_len_for_hash(hash) as u8,
+                    key_label: b"cu-labeled-hmac".to_vec(),
+                })
+                .expect("CU labeled HMAC generation")
+                .masked_key;
+
+            let tag = mac(&ctx, cu.session_id, &masked, msg);
+
+            assert_eq!(
+                tag.len(),
+                tag_len_for_hash(hash),
+                "hash {hash}, scope {scope}"
+            );
+
+            assert_eq!(
+                tag,
+                mac(&ctx, cu.session_id, &masked, msg),
+                "CU labeled key must be reusable"
+            );
+        }
+    }
+
+    ctx.session_close(cu.session_id).expect("close CU");
+}
+
+/// Verifies CU HMAC behavior at message-length and hash block boundaries.
+#[test]
+fn hmac_cu_message_boundaries_all_hashes() {
+    let ctx = TestCtx::new();
+    let co = finalized_co_session(&ctx);
+    ctx.session_close(co.session_id).expect("close CO");
+
+    let cu = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    for hash in [HMAC_HASH_SHA256, HMAC_HASH_SHA384, HMAC_HASH_SHA512] {
+        let masked = generate_key(&ctx, cu.session_id, SCOPE_EPHEMERAL, hash);
+
+        for len in [
+            0,
+            1,
+            55,
+            56,
+            63,
+            64,
+            65,
+            111,
+            112,
+            127,
+            128,
+            129,
+            HMAC_MSG_MAX_LEN,
+        ] {
+            let msg: Vec<u8> = (0..len).map(|i| i as u8).collect();
+
+            let tag = mac(&ctx, cu.session_id, &masked, &msg);
+
+            assert_eq!(
+                tag.len(),
+                tag_len_for_hash(hash),
+                "CU hash {hash}, message length {len}"
+            );
+
+            assert_eq!(
+                tag,
+                mac(&ctx, cu.session_id, &masked, &msg),
+                "CU HMAC must be deterministic"
+            );
+        }
+    }
+
+    ctx.session_close(cu.session_id).expect("close CU");
 }

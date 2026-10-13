@@ -66,15 +66,6 @@ pub struct CsrInput<'a> {
     /// chosen template's `SUBJECT_CN_LEN` constant.  Padding is the
     /// caller's responsibility (see [`crate::padding::pad_cn_to`]).
     pub subject_cn: &'a [u8],
-
-    /// Offset of the subject serialNumber string within the TBS
-    /// template (e.g. [`crate::csr::SUBJECT_SN_OFFSET`]).
-    pub subject_sn_offset: usize,
-
-    /// Subject serialNumber bytes, exactly the length pinned by the
-    /// chosen template's `SUBJECT_SN_LEN` constant.  Padding is the
-    /// caller's responsibility (see [`crate::padding::pad_sn_to`]).
-    pub subject_sn: &'a [u8],
 }
 
 impl CsrInput<'_> {
@@ -90,7 +81,6 @@ impl CsrInput<'_> {
         };
         check(self.public_key_offset, self.public_key.len())?;
         check(self.subject_cn_offset, self.subject_cn.len())?;
-        check(self.subject_sn_offset, self.subject_sn.len())?;
         Ok(())
     }
 }
@@ -187,7 +177,6 @@ fn patch_tbs(dst: &mut [u8], input: &CsrInput<'_>) -> HsmResult<()> {
     dst[..n].copy_from_slice(input.tbs_template);
     patch_field(&mut dst[..n], input.public_key_offset, input.public_key)?;
     patch_field(&mut dst[..n], input.subject_cn_offset, input.subject_cn)?;
-    patch_field(&mut dst[..n], input.subject_sn_offset, input.subject_sn)?;
     Ok(())
 }
 

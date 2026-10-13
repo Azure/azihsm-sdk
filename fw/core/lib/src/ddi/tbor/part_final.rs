@@ -31,7 +31,9 @@ use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_core_crypto_key_masking::aead::AeadAlg;
 use azihsm_fw_core_crypto_key_masking::aead::MaskParams;
-use azihsm_fw_core_crypto_x509_chain::validate_chain;
+use azihsm_fw_core_crypto_x509_chain::parse_cert;
+use azihsm_fw_core_crypto_x509_chain::validate_issuing_chain;
+use azihsm_fw_core_crypto_x509_chain::MAX_CERT_DER_LEN;
 use azihsm_fw_ddi_tbor_types::evidence::CertDescriptor;
 use azihsm_fw_ddi_tbor_types::evidence::MAX_CERTS;
 use azihsm_fw_ddi_tbor_types::policy::PartPolicy;
@@ -137,7 +139,19 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // Trust gate: walk the supplied PTA certificate chain, proving it
         // chains to the policy `POTAPubKey` and that its terminal (PTA)
         // certificate carries this partition's PTA key.
-        validate_pta_chain(pal, io, alloc, oob, req.cert_descriptors, policy).await?;
+        //
+        // Scope the validation buffers (terminal snapshot, chain-walk
+        // scratch, and profile parse) to a nested allocator so they are
+        // reclaimed before the UPS derivation and backup
+        // restoration/masking below allocate. Restoring a backup with two
+        // maximal P-384 certificates would otherwise stack the retained
+        // validation buffers on top of the backup buffers and exhaust the
+        // std/emu 8 KiB DMA heap, failing a valid finalization with
+        // `NotEnoughSpace`.
+        pal.alloc_scoped_async(io, async |val_alloc| {
+            validate_pta_chain(pal, io, val_alloc, oob, req.cert_descriptors, policy).await
+        })
+        .await?;
 
         // Platform identity that binds the masking keys / backup
         // envelope: SVN (BKS1 lineage) and owner-seed id (BKS2 lineage).
@@ -284,6 +298,20 @@ async fn validate_pta_chain<P: HsmPal>(
         return Err(HsmError::InvalidArg);
     }
 
+    // Descriptors address out-of-band items by `index`, and the
+    // snapshot-serving fetch closure below selects the terminal
+    // certificate by that index. A certificate chain never legitimately
+    // references the same out-of-band item twice, and duplicate indices
+    // would make that selection ambiguous (e.g. a shorter non-terminal
+    // descriptor sharing the terminal's index). Reject them outright so a
+    // malformed host request cannot drive the fetch closure into a
+    // length-mismatched copy.
+    for (i, a) in cert_descriptors.iter().enumerate() {
+        if cert_descriptors[i + 1..].iter().any(|b| b.index == a.index) {
+            return Err(HsmError::InvalidArg);
+        }
+    }
+
     // Snapshot the expected PTA identity (partition PTA key) up front so
     // the property-store borrow is not held across the chain walk.
     let pta = super::super::part_state::part_pta_pub_key(pal, io)?;
@@ -295,15 +323,54 @@ async fn validate_pta_chain<P: HsmPal>(
     // `from_bytes` has already pinned its length to a full Ecc384 key.
     let anchor = &policy.pota_pub_key.data[..POLICY_MAX_KEY_LEN];
 
+    // Snapshot the terminal (PTA) certificate's DER **once**, up front,
+    // into HSM-owned memory. Both the chain walk (which signature-verifies
+    // the terminal) and the profile enforcement below consume this single
+    // snapshot, so they cannot observe different host-controlled bytes
+    // (TOCTOU): a host that swaps the OOB bytes between reads can no longer
+    // pass signature validation with one certificate while the
+    // subject/SKID/CA profile is checked against another.
+    let terminal = cert_descriptors.last().ok_or(HsmError::InvalidArg)?;
+    let terminal_index = usize::from(terminal.index);
+    let terminal_len = usize::from(terminal.length.get());
+    if terminal_len == 0 || terminal_len > MAX_CERT_DER_LEN {
+        return Err(HsmError::InvalidArg);
+    }
+    let pta_der = alloc.dma_alloc(terminal_len)?;
+    copy_oob(pal, io, &oob, terminal_index, pta_der).await?;
+
+    // Walk the chain root → leaf, validating the terminal as an *issuing*
+    // CA (it will later sign the on-demand slot-2 PID leaf): this enforces
+    // `cA == true`, `keyCertSign`, and — crucially — the ancestor
+    // `pathLenConstraint` budget on the PTA, so a chain whose ancestors
+    // leave no room for the PID leaf is rejected here. The terminal is
+    // served from `pta_der`; every other certificate still streams from
+    // the out-of-band region.
     let mut pta_from_chain = [0u8; POLICY_MAX_KEY_LEN];
-    validate_chain(
+    validate_issuing_chain(
         pal,
         io,
         alloc,
         cert_descriptors,
         Some(anchor),
         &mut pta_from_chain,
-        async |index, buf| copy_oob(pal, io, &oob, index, buf).await,
+        async |index, buf| {
+            if index == terminal_index {
+                // Defensive: duplicate indices are already rejected above,
+                // so `buf` here is the terminal descriptor's buffer and its
+                // length equals the snapshot's. Guard the copy anyway so a
+                // length mismatch can never panic the firmware across the
+                // host trust boundary.
+                let snapshot: &[u8] = pta_der;
+                if buf.len() != snapshot.len() {
+                    return Err(HsmError::InvalidArg);
+                }
+                buf.copy_from_slice(snapshot);
+                Ok(())
+            } else {
+                copy_oob(pal, io, &oob, index, buf).await
+            }
+        },
     )
     .await?;
 
@@ -314,6 +381,14 @@ async fn validate_pta_chain<P: HsmPal>(
     if &pta_from_chain[..] != expected_pta {
         return Err(HsmError::PartFinalPtaMismatch);
     }
+
+    // `validate_issuing_chain` does not pin the terminal certificate's
+    // subject DN or SKID. Parse the **same snapshot** the walk verified
+    // and enforce the deterministic subject/SKID/CA profile the on-demand
+    // slot-2 PID leaf depends on; otherwise finalization could accept a
+    // PTA that no future PID leaf can chain to.
+    let pta_cert = parse_cert(pta_der)?;
+    super::pta::validate_pta_profile(pal, io, alloc, &pta_cert).await?;
 
     Ok(())
 }

@@ -113,6 +113,12 @@ Each IO also owns two memory buffers: a 2 KB fast scratch region (`fmem`) and an
 
 The **GDMA controller** (`HsmGdmaController`) handles the actual data movement. Inbound: copy the encoded DDI request from host memory into `smem`. Outbound: copy the encoded DDI response from `smem` back to the host. On hardware this is a real DMA transaction; on the standard PAL it's a pointer-based `memcpy`.
 
+`OP_FLUSH` carries a session ID in the SQE with `Close` control and `id_valid`
+set. It destroys the session and its session-scoped keys without request or
+response DMA, then reports a zero-length CQE with the session closed.
+`SessionNotFound` from teardown is an idempotent success; malformed flags
+and other teardown failures return a CQE host error.
+
 → [io.md](traits/io.md) · [gdma.md](traits/gdma.md)
 
 ### Partitions: Identity and Lifecycle

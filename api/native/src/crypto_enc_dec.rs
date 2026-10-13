@@ -14,7 +14,7 @@ use crate::algo::rsa::*;
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 ///
 /// @internal
 /// # Safety
@@ -64,7 +64,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 ///
 /// @internal
 /// # Safety
@@ -148,7 +148,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_init(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 /// Note: Output may be less than input size if buffering occurs (e.g., for block alignment).
 ///
 /// @internal
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn azihsm_crypt_encrypt_update(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 ///
 /// @internal
 /// # Safety
@@ -262,7 +262,7 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_init(
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 /// Note: Output may be less than input size if buffering occurs (e.g., for block alignment).
 ///
 /// @internal
@@ -299,13 +299,12 @@ pub unsafe extern "C" fn azihsm_crypt_decrypt_update(
 
 /// Finish streaming decryption operation and retrieve any remaining plaintext.
 ///
-/// @param[in] sess_handle Handle to the HSM session
 /// @param[in] ctx_handle Handle to the streaming decryption context
 /// @param[out] plain_text Pointer to plaintext output buffer
 ///
 /// @return 0 on success, or a negative error code on failure.
 /// If output buffer is insufficient, required length is updated in the output buffer and
-/// the function returns the AZIHSM_STATUS_INSUFFICIENT_BUFFER error.
+/// the function returns the AZIHSM_STATUS_BUFFER_TOO_SMALL error.
 ///
 /// @internal
 /// # Safety

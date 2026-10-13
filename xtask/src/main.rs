@@ -18,6 +18,7 @@ use clap::Subcommand;
 
 mod audit;
 mod build;
+mod cbindgen;
 mod clang_format;
 mod clean;
 mod clippy;
@@ -65,6 +66,7 @@ struct Cli {
 enum Commands {
     Audit(audit::Audit),
     Build(build::Build),
+    Cbindgen(cbindgen::Cbindgen),
     Precheck(precheck::Precheck),
     Clean(clean::Clean),
     Clippy(clippy::Clippy),
@@ -107,6 +109,7 @@ fn try_main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Audit(task) => task.run(ctx),
         Commands::Build(task) => task.run(ctx),
+        Commands::Cbindgen(task) => task.run(ctx),
         Commands::Clean(task) => task.run(ctx),
         Commands::Clippy(task) => task.run(ctx),
         Commands::Copyright(task) => task.run(ctx),

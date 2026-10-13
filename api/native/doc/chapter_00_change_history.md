@@ -24,5 +24,7 @@
 |            | `azihsm_sess_ex_part_init`)                                      |
 |            | Added `azihsm_session_ex_type` enum                              |
 | 08/27/2026 | Added `AZIHSM_STATUS_UNSUPPORTED_KEY_OPERATION` error code       |
+| 10/01/2026 | Added partition-policy builder (`azihsm_part_policy_builder_new`, |
+|            | setters, `azihsm_part_policy_build`, `_free`)                    |
 
 \pagebreak

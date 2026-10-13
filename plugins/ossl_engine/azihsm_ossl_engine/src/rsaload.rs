@@ -8,10 +8,11 @@
 //! Mirrors [`crate::keyload`] for EC: the returned `RSA` is bound to the engine
 //! (`RSA_new_method`), so the engine — hence [`EngineData`] and this `.so` —
 //! outlives any `EVP_PKEY` built from it, and the stashed HSM-key pointer
-//! (owned by `EngineData`, in `RSA` ex_data) never dangles. Private-key
-//! operations (sign/decrypt) land on the RSA `EVP_PKEY_METHOD` in later work;
-//! this module wires load + retention + the ex_data marker the serialization
-//! method uses to recognize HSM-backed keys.
+//! (owned by `EngineData`, in `RSA` ex_data) never dangles. PKCS#1 v1.5 signing
+//! on HSM-backed keys lands on the engine's RSA `RSA_METHOD` sign slot (see
+//! [`crate::rsasign`]); any future private-key decrypt support remains separate.
+//! This module wires load + retention + the ex_data marker the sign path and the
+//! serialization method use to recognize HSM-backed keys.
 
 use std::ffi::c_int;
 use std::ffi::c_void;

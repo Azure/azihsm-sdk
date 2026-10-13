@@ -53,6 +53,7 @@ pub(crate) fn aes_generate_key(
     session: &HsmSession,
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    props.ensure_scope_supported(session.is_ex())?;
     // Transport step: run the generate command and get the key handle
     // plus the device-returned masked blob. A V2 (TBOR) session yields an
     // unpinned handle (`Unpinned`); a V1 (MBOR) session a pinned vault id
@@ -302,9 +303,10 @@ fn aes_generate_key_tbor(
     if key_label.len() > TBOR_KEY_LABEL_MAX_LEN {
         return Err(HsmError::InvalidKeyProps);
     }
+    let scope = props.tbor_scope();
     let req = TborAesGenerateKeyReq {
         session_id: session.ex_session_id()?,
-        scope: props.tbor_scope(),
+        scope,
         key_size: aes_bits_to_tbor_size(props.bits())?,
         key_usage: aes_tbor_key_usage(props)?,
         key_label: key_label.to_vec(),
@@ -315,6 +317,7 @@ fn aes_generate_key_tbor(
             .map_err(HsmError::from)
     })?;
 
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     Ok((ddi::HsmKeyHandle::Unpinned, resp.masked_key))
 }
 
@@ -503,6 +506,7 @@ fn aes_xts_encrypt_decrypt(
 /// Creates a new AES-GCM key using the specified key properties and returns both
 /// the key handle for performing operations and the masked key material for
 /// secure storage. AES-GCM keys are 256-bit only.
+/// Uses MBOR for legacy sessions; TBOR generation is not yet supported.
 ///
 /// # Arguments
 ///
@@ -523,6 +527,18 @@ fn aes_xts_encrypt_decrypt(
 /// - The session is invalid or closed
 #[resiliency_key_gen(session = "session")]
 pub(crate) fn aes_gcm_generate_key(
+    session: &HsmSession,
+    props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    if session.is_ex() {
+        aes_gcm_generate_key_tbor(session, props)
+    } else {
+        aes_gcm_generate_key_mbor(session, props)
+    }
+}
+
+/// Generates an AES-GCM bulk key using the legacy MBOR command.
+fn aes_gcm_generate_key_mbor(
     session: &HsmSession,
     props: HsmKeyProps,
 ) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
@@ -550,6 +566,14 @@ pub(crate) fn aes_gcm_generate_key(
     }
 
     Ok((key_id.release(), key_props))
+}
+
+/// Placeholder for TBOR AES-GCM key generation, which is not yet supported.
+fn aes_gcm_generate_key_tbor(
+    _session: &HsmSession,
+    _props: HsmKeyProps,
+) -> HsmResult<(HsmKeyHandle, HsmKeyProps)> {
+    Err(HsmError::UnsupportedAlgorithm)
 }
 
 /// Encrypts data using AES-GCM mode at the DDI layer.

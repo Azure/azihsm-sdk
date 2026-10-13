@@ -10,6 +10,8 @@
 //! Key generation is not supported — RSA keys are provisioned
 //! off-platform.
 
+use core::cmp::Ordering;
+
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
@@ -164,6 +166,70 @@ fn assemble_rsa_operand_in_place(buf: &mut [u8], layout: &RsaOperandLayout) {
     // 4. vault `e` at [2k, 2k+EXP_WIRE_LEN): already little-endian and
     //    zero-padded, so a single copy fills the fixed slot.
     front[2 * k..vault_len].copy_from_slice(&layout.e);
+}
+
+/// Borrow the little-endian modulus `n` (exactly `k` bytes) from a Uno vault
+/// RSA private operand, locating it from `key_size` — the authoritative
+/// descriptor the caller already holds. Mirrors mainline `RsaKey::n()`: the
+/// offset is selected by the CRT flag, both layouts little-endian:
+///   non-CRT `d(k) ‖ n(k) ‖ e(EXP_WIRE_LEN)`                       → `n` at `k`
+///   CRT     `p‖q‖dp‖dq‖ n(k) ‖ n1q(k) ‖ n2p(k) ‖ e(EXP_WIRE_LEN)` → `n` at `2k`
+///
+/// The operand length is *not* used to infer the layout: `n(k) ‖ e` for
+/// RSA-4096-public and `d ‖ n ‖ e` for RSA-2048-private are both 516 bytes, so
+/// length alone is ambiguous, and the PKA accepts an operand longer than the
+/// minimum it requires. The returned slice aliases the operand — no copy.
+fn rsa_modulus_le(key_size: HsmRsaKey, priv_key: &DmaBuf) -> HsmResult<&[u8]> {
+    let k = key_size.modulus_len();
+    let n_off = if key_size.is_crt() { 2 * k } else { k };
+    let end = n_off + k;
+    if priv_key.len() < end {
+        return Err(HsmError::InvalidArg);
+    }
+    Ok(&priv_key[n_off..end])
+}
+
+/// Byte-wise check that the little-endian value `m` satisfies `1 < m < n - 1`,
+/// where `n` is the equal-length little-endian modulus.
+///
+/// Implements the input-range rule [`HsmRsa::mod_exp_priv`] places on every PAL.
+/// The comparison walks from the most- to the least-significant byte and decides
+/// as soon as the bytes differ, avoiding a big-integer subtraction. Returns
+/// `false` if the lengths disagree or `n` is empty.
+fn mod_exp_input_in_range(n: &[u8], m: &[u8]) -> bool {
+    if n.len() != m.len() || n.is_empty() {
+        return false;
+    }
+    // Whether a more-significant byte of `m` is already non-zero, which by
+    // itself proves `m > 1`.
+    let mut m_gt_one = false;
+    for i in (1..n.len()).rev() {
+        m_gt_one |= m[i] > 0;
+        match n[i].cmp(&m[i]) {
+            Ordering::Greater => {
+                // `m == n - 1` only if the difference is exactly one here and
+                // every lower byte forms the borrow pattern (n's lower bytes
+                // all 0x00, m's all 0xFF).
+                if n[i] - m[i] == 1
+                    && n[..i].iter().all(|&b| b == 0)
+                    && m[..i].iter().all(|&b| b == 0xFF)
+                {
+                    return false;
+                }
+                // `m < n - 1` holds here; valid iff `m > 1`.
+                if m_gt_one {
+                    return true;
+                }
+                return m[1..i].iter().any(|&b| b > 0) || m[0] > 1;
+            }
+            // `m > n`, so `m < n - 1` is false.
+            Ordering::Less => return false,
+            Ordering::Equal => {}
+        }
+    }
+    // All bytes above the least-significant are equal: `m` and `n` differ only
+    // in the low byte, so `1 < m < n - 1` iff `m > 1` and `n[0] - m[0] > 1`.
+    (m_gt_one || m[0] > 1) && n[0] > m[0] && n[0] - m[0] > 1
 }
 
 // =============================================================================
@@ -350,6 +416,14 @@ impl HsmRsa for UnoHsmPal {
         y: &DmaBuf,
         x: &mut DmaBuf,
     ) -> HsmResult<()> {
+        // FIPS / NIST-ACVP: the input `m` must satisfy `1 < m < n - 1`. The PKA
+        // engine reduces `m mod n` and returns a valid result for out-of-range
+        // inputs instead of rejecting them, so enforce the range in firmware
+        // before the hardware op, as `HsmRsa::mod_exp_priv` requires.
+        let n = rsa_modulus_le(key_size, key)?;
+        if !mod_exp_input_in_range(n, y) {
+            return Err(HsmError::InvalidArg);
+        }
         let upka_key_type = rsa_key_to_upka_key_type(key_size);
         self.pka.rsa_mod_exp_priv(upka_key_type, key, y, x).await
     }
