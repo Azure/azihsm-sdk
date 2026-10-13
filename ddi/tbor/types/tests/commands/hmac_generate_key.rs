@@ -46,7 +46,6 @@ use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SECURITY_DOMAIN;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-
 /// AEAD envelope component lengths.
 const ENVELOPE_HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
 const ENVELOPE_IV_LEN: usize = 12;
@@ -265,7 +264,7 @@ fn hmac_generate_key_rejects_unknown_hash() {
             session_id: session.session_id,
             scope: SCOPE_EPHEMERAL,
             hash_algo,
-            key_length: 32,
+            key_length: default_key_len(HASH_ALGO_SHA256) as u8,
             key_label: Vec::new(),
         };
         ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
@@ -655,7 +654,7 @@ fn hmac_generate_key_cu_rejects_unknown_hash() {
             session_id: session.session_id,
             scope: SCOPE_SESSION,
             hash_algo,
-            key_length: 32,
+            key_length: default_key_len(HASH_ALGO_SHA256) as u8,
             key_label: Vec::new(),
         };
 
@@ -744,7 +743,7 @@ fn hmac_generate_key_co_sha1_rejected() {
         session_id: session.session_id,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA1,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: b"co-sha1-rejected".to_vec(),
     };
 
@@ -761,7 +760,7 @@ fn hmac_generate_key_cu_sha1_rejected() {
         session_id: session.session_id,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA1,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: b"cu-sha1-rejected".to_vec(),
     };
 
