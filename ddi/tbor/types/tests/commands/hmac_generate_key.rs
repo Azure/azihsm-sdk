@@ -772,27 +772,36 @@ fn hmac_generate_key_cu_sha1_rejected() {
 #[test]
 fn hmac_generate_key_active_session_id_mismatch_rejected() {
     let ctx = TestCtx::new();
+
+    // Rotate the CU PSK first so the default-PSK gate does not
+    // intercept the invalid CU session ID.
+    let cu_session = bootstrap_rotated_cu(&ctx, &ROTATED_CU_PSK);
+
+    ctx.session_close(cu_session.session_id)
+        .expect("close rotated CU session");
+
+    // Open a valid CO session and keep it active.
     let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
 
     let invalid_session_id = u16::MAX;
 
     assert_ne!(
         session.session_id, invalid_session_id,
-        "invalid session ID must differ from the active session",
+        "invalid session ID must differ from the active CO session",
     );
 
     let req = TborHmacGenerateKeyReq {
         session_id: invalid_session_id,
         scope: SCOPE_SESSION,
         hash_algo: HASH_ALGO_SHA256,
-        key_length: 32,
+        key_length: default_key_len(HASH_ALGO_SHA256) as u8,
         key_label: Vec::new(),
     };
 
-    // Reject the mismatched ID while the valid session is active.
+    // Verify that the mismatched session ID reaches session validation.
     ctx.expect_fw_reject(&req, TborStatus::FileHandleSessionIdDoesNotMatch);
 
-    // Verify the rejected request did not disrupt the valid session.
+    // Verify that the active CO session remains usable.
     roundtrip(
         &ctx,
         session.session_id,
