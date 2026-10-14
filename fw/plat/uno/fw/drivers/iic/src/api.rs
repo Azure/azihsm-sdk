@@ -26,8 +26,22 @@ struct ChannelState {
     /// ICQ consumer index — FW advances after reading completions.
     icq_head: u16,
 
+    /// Free-running count of ICQ entries consumed (both completed and
+    /// failed-recycled). Unlike [`icq_head`](Self::icq_head) this never
+    /// wraps at the ring boundary, so a consumer can latch a target value
+    /// and wait for the head to advance past a fixed point. Used by the
+    /// live-migration SQ-delete drain to account for entries the hardware
+    /// has already accepted into the ICQ but that `recv` has not yet pulled
+    /// into the in-flight IO accounting.
+    icq_consumed: u32,
+
     /// Waker for async recv — woken by IRQ or polling.
     waker: WakerRegistration,
+
+    /// Waker for a task tracking ICQ-consumption progress (the LM SQ-delete
+    /// drain). Woken on every consumed entry so the drain re-polls as the IO
+    /// task empties the shared ICQ, independent of the `recv` waker.
+    drain_waker: WakerRegistration,
 }
 
 /// Async IIC (Inbound IO Controller) driver.
@@ -128,7 +142,9 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
             io_meta: config.io_meta_base as *mut IoMetaEntry,
             state: SingleCell::new(ChannelState {
                 icq_head: 0,
+                icq_consumed: 0,
                 waker: WakerRegistration::new(),
+                drain_waker: WakerRegistration::new(),
             }),
             regs,
             config,
@@ -284,6 +300,13 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
                     .head
                     .write(ICQ_CHANNEL_HEAD::HEAD.val(s.icq_head.into()));
 
+                // Advance the free-running consumer count and wake any SQ-delete
+                // drain that is waiting for the ICQ to quiesce. This covers both
+                // the success path below and the failed-recycle path, so a drain
+                // makes progress even when the only remaining entries are errors.
+                s.icq_consumed = s.icq_consumed.wrapping_add(1);
+                s.drain_waker.wake();
+
                 // Skip failed entries — recycle buffer, return credit, and keep polling
                 if !success {
                     let _cause = self.regs.interrupt_cause.get();
@@ -313,6 +336,31 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
                 Poll::Ready(index)
             })
         })
+    }
+
+    /// Free-running count of ICQ entries consumed since boot.
+    ///
+    /// Monotonic (modulo `u32` wrap) across the ring boundary, so a waiter
+    /// can latch a value and detect when the consumer has advanced past it.
+    pub fn icq_consumed(&self) -> u32 {
+        self.state.with(|s| s.icq_consumed)
+    }
+
+    /// Number of ICQ entries the hardware has accepted but `recv` has not yet
+    /// consumed (ring distance between the shadow tail and the FW head).
+    pub fn icq_pending(&self) -> u16 {
+        self.state.with(|s| {
+            let tail = unsafe { self.icq_tail_shadow.read_volatile() } as u16;
+            tail.wrapping_sub(s.icq_head) & Self::MASK
+        })
+    }
+
+    /// Register `waker` to be notified on every ICQ consumption.
+    ///
+    /// Used by the live-migration SQ-delete drain to re-poll as the IO task
+    /// empties the shared ICQ, independent of the `recv` waker.
+    pub fn register_drain_waker(&self, waker: &core::task::Waker) {
+        self.state.with(|s| s.drain_waker.register(waker));
     }
 
     /// Wake the driver if the ICQ has pending entries.

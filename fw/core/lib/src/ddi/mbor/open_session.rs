@@ -101,23 +101,38 @@ pub(crate) async fn open_session<'p, P: HsmPal>(
     let mk_session = pal.dma_alloc(io, BK_LEN)?;
     pal.rng_fill_bytes(io, mk_session)?;
 
+    // Resolve the SVNs *before* allocating the slot so the only fallible step
+    // left after `session_create` is the response encode, which we roll back.
+    let mfgr_svn = crate::part_state::part_mfgr_svn(pal);
+    let owner_svn =
+        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?;
+
     let api_rev_bytes = pack_api_rev(api_rev);
     let sess_id = pal
         .session_create(io, &api_rev_bytes, mk_session, None)
         .await?;
 
     // ── Step 9: Encode response + envelope MK_SESSION under BK_SESSION
-    let resp = encode_response(
-        pal,
-        io,
-        hdr,
-        sess_id,
-        bk_session,
-        mk_session,
-        crate::part_state::part_mfgr_svn(pal),
-        u16::try_from(crate::part_state::part_owner_svn(pal)).map_err(|_| HsmError::InvalidArg)?,
+    //
+    // The slot is now allocated. If the encode (crypto + DMA + MBOR) fails,
+    // roll the slot back — otherwise the logical slot and its session-vault
+    // key stay allocated forever: `sess_id` is never surfaced to the CQE, so
+    // the host never registers the session and can never `CloseSession` it,
+    // leaking a slot for the rest of the boot. This mirrors the reference
+    // firmware's FSM `rollback_open_session` backstop.
+    let resp = match encode_response(
+        pal, io, hdr, sess_id, bk_session, mk_session, mfgr_svn, owner_svn,
     )
-    .await?;
+    .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            // Best-effort teardown of the just-allocated slot; surface the
+            // original failure to the host regardless of teardown result.
+            let _ = pal.session_destroy(io, sess_id).await;
+            return Err(err);
+        }
+    };
 
     // Surface the new session id to the IO layer for the CQE (only on the
     // success path, since the `?` above returns early on failure), letting the

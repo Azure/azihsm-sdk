@@ -77,6 +77,7 @@ impl UnoHsmPal {
         &self,
         pid: HsmPartId,
         mask: u128,
+        vm_launch_guid: &[u8; 16],
         is_pf: bool,
     ) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
@@ -93,6 +94,15 @@ impl UnoHsmPal {
             self.part_free(pid).await?;
         }
         part.set_res_mask(mask);
+
+        // Capture the host-provided VM-launch GUID carried by this
+        // `SetResource` into the persistent store, so a later `InitBk3`
+        // reports the correct VM identity to the host (and migration-restore
+        // preserves it). Mirrors the reference firmware's
+        // `part_init::handle_set_res_cnt`, which records the GUID alongside
+        // the resource mask. `part_free` above cleared any prior value, so
+        // reallocation always rebinds to the current launch's GUID.
+        part.set_vm_launch_guid(vm_launch_guid);
 
         // Arm Gate 1 so the SP may stage an unwrapping key for this partition;
         // gate on `mask != 0` to never arm an idle PFN. The SP polls
@@ -516,6 +526,19 @@ impl UnoHsmPal {
         }
     }
 
+    /// Returns `true` when partition `pid` is currently in
+    /// [`PartState::Enabled`].
+    ///
+    /// Used by the `CreateDeleteSq` IPC handler to reject submission-queue
+    /// create/delete for a function that is not enabled (mirroring the
+    /// reference firmware's `part.enabled()` check).
+    pub(crate) fn part_is_enabled(&self, pid: HsmPartId) -> bool {
+        PartStore::partition(pid)
+            .and_then(|part| part.state())
+            .map(|state| state == PartState::Enabled)
+            .unwrap_or(false)
+    }
+
     /// Resets partition `pid`'s per-tenant state for an NSSR `Migrate`,
     /// mirroring the reference firmware's `state.migrate()`.
     ///
@@ -593,6 +616,16 @@ impl UnoHsmPal {
         // `VaultSessionLimitReached` across the NSSR that `erase()` drives,
         // because the session slots were never freed.
 
+        // Snapshot the live session slots *before* the vault and session
+        // table are cleared, so a subsequent `ReopenSession` can re-key
+        // them. Mirrors the reference firmware's `state.migrate()`, which
+        // does `session_table().restore(session_table().backup())` across
+        // the reset. Without this, the migrated partition's slots are wiped
+        // and an in-session op on the old session id returns `SessionNotFound`
+        // instead of `SessionNeedsRenegotiation`, breaking live-migration
+        // reopen.
+        let session_backup = SessionStore::partition(pid)?.backup();
+
         // Wipe every vault key (app + session + internal) so no prior
         // tenant key material survives the reset, and release the partition's
         // fast-path engine bulk-key slots. Runs inside a `with_admin_io`
@@ -606,6 +639,11 @@ impl UnoHsmPal {
         // Clear the per-tenant persistent state (including the session
         // table), preserving the partition's provisioning material.
         part.clear_state(PartResetKind::Migrate);
+        // Re-establish the snapshotted sessions as `NeedsRenegotiation` so a
+        // host that migrated mid-session can `ReopenSession` the same slot;
+        // their physical vault mappings were dropped by the wipe above and
+        // are re-keyed on reopen. Mirrors the reference `restore(backup())`.
+        SessionStore::partition(pid)?.restore(session_backup);
         // The `vault.clear()` above also deleted the identity private key.
         // Zero the identity fields (id, `id_key_id`, cached public key)
         // *before* awaiting so no concurrent reader can observe `id_key_id`
@@ -876,7 +914,19 @@ impl HsmPartitionManager for UnoHsmPal {
             PartPropId::PSK_CO => p.set_psk_co(data),
             PartPropId::PSK_CU => p.set_psk_cu(data),
             PartPropId::CREDENTIAL => p.set_credential(data),
-            PartPropId::SEALED_BK3 => p.set_sealed_bk3(data),
+            // Write-once per power cycle: a second `SetSealedBk3` without an
+            // intervening clear (partition free / NSSR) returns
+            // `SealedBk3AlreadySet`, matching the std PAL (`part.rs` setter)
+            // and the `part_set_sealed_bk3` contract. The blob is preserved
+            // across `Migrate` (NSSR), so this one-shot gate must survive a
+            // live migration. The low-level store accessor keeps plain
+            // overwrite semantics; the policy lives here.
+            PartPropId::SEALED_BK3 => {
+                if !p.sealed_bk3().is_empty() {
+                    return Err(HsmError::SealedBk3AlreadySet);
+                }
+                p.set_sealed_bk3(data)
+            }
             PartPropId::MASKED_BK_BOOT => p.set_masked_bk_boot(data),
             PartPropId::BK3_SESSION => p.set_bk3_session(data),
             PartPropId::POTA_THUMBPRINT => p.set_pota_thumbprint(data),
