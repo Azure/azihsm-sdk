@@ -921,7 +921,16 @@ impl UnoHsmPal {
     /// - `channel`: IPC event channel to acknowledge.
     /// - `value`: Raw event payload delivered by hardware.
     async fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
-        if self.boot_phase.get() == BootPhase::Running {
+        // PERST/FLR are the only events Admin raises on this channel; the
+        // payload is the reference `PcieResetReason` (admin/src/fsm/types),
+        // ASCII "FLR"/"PRST" read little-endian. Reset partitions only for a
+        // recognised reset reason, so a future event type can never trigger a
+        // spurious teardown; anything unrecognised is ignored but still acked.
+        const PCIE_RESET_FLR: u32 = 0x524C4650;
+        const PCIE_RESET_PERST: u32 = 0x54535250;
+        let is_pcie_reset = value == PCIE_RESET_FLR || value == PCIE_RESET_PERST;
+
+        if self.boot_phase.get() == BootPhase::Running && is_pcie_reset {
             let mut faulted = 0u16;
             for pfn in 0..crate::part::NUM_PARTITIONS as u8 {
                 let pid = HsmPartId::from(pfn);
@@ -953,6 +962,8 @@ impl UnoHsmPal {
                     faulted
                 );
             }
+        } else if self.boot_phase.get() == BootPhase::Running {
+            warn!("pcie", "ignoring unexpected admin event {:#x}", value);
         }
         // Admin blocks its PERST/FLR completion on this ack (its pcie FSM stays
         // Pending until the HSM response arrives), so the event is always
