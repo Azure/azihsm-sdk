@@ -172,16 +172,17 @@ impl HsmEccCurve {
     }
 }
 
-/// ECC Pairwise Consistency Test (PCT) mode for key generation.
+/// ECC Pairwise Consistency Test (PCT) mode for key generation and key
+/// import.
 ///
-/// FIPS 140-3 requires a PCT after key generation to verify the key
-/// pair is functional.  The variant selects which operation is used
-/// for verification, or skips the test entirely.
+/// FIPS 140-3 requires a PCT after key generation and key import to
+/// verify the key pair is functional.  The variant selects which
+/// operation is used for verification, or skips the test entirely.
 pub enum HsmEccPct {
     /// No PCT — skip the consistency test.
     None,
 
-    /// Sign / verify round-trip with the freshly generated key pair.
+    /// Sign / verify round-trip with the key pair under test.
     SignVerify,
 
     /// ECDH key-agreement self-test against a known public-key
@@ -407,14 +408,25 @@ pub trait HsmEcc {
     /// [`wire_coord_len`](HsmEccCurve::wire_coord_len)), then
     /// `out = Some(buf)` to serialize.
     ///
+    /// In use mode, a PAL that checks imported keys runs the pairwise
+    /// consistency test that `pct` selects on the converted key pair before
+    /// it returns; query mode ignores `pct`.  Such a PAL can also check the
+    /// key's structure, such as whether the public key that `der` carries
+    /// matches the private key.
+    ///
     /// # Errors
     /// - [`HsmError::InvalidArg`] — `der` is not a valid PKCS#8 ECC
     ///   private key, or `out` is too small.
-    fn ecc_priv_der_to_vault(
+    /// - [`HsmError::KeyStructuralValidationFailed`] — the PAL's structure
+    ///   check rejected the key.
+    /// - [`HsmError::PctValidationRsaUnwrapEccKeyFailed`] — the key pair
+    ///   failed its PCT.
+    async fn ecc_priv_der_to_vault(
         &self,
         io: &impl HsmIo,
         der: &DmaBuf,
         out: Option<&mut DmaBuf>,
+        pct: HsmEccPct,
     ) -> HsmResult<(usize, HsmEccCurve)>;
 
     /// Derive the wire-format public key (`x || y`, wire-LE, P-521

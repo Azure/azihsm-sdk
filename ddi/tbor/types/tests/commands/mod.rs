@@ -8,7 +8,6 @@
 pub mod aes_encrypt_decrypt;
 pub mod aes_generate_key;
 pub mod api_rev;
-#[cfg(feature = "emu")]
 pub mod common;
 pub mod concat_kdf_derive;
 pub mod default_psk_gate;
@@ -24,6 +23,7 @@ pub mod hash;
 pub mod hkdf_derive;
 pub mod hmac;
 pub mod hmac_generate_key;
+pub mod key_assurance;
 pub mod key_report;
 pub mod open_session;
 pub mod part_final;

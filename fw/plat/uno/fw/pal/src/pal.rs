@@ -54,6 +54,7 @@ use azihsm_fw_uno_drivers_ipc::IpcPairKind;
 use azihsm_fw_uno_drivers_nvic::Nvic;
 use azihsm_fw_uno_drivers_oic::ChannelConfig as OicChannelConfig;
 use azihsm_fw_uno_drivers_oic::OicDriver;
+use azihsm_fw_uno_drivers_part_store::NUM_PARTITIONS;
 use azihsm_fw_uno_drivers_rng::RngDriver;
 use azihsm_fw_uno_drivers_sha::ShaDriver;
 use azihsm_fw_uno_drivers_systick as systick_driver;
@@ -316,6 +317,11 @@ pub struct UnoHsmPal {
     /// being torn down can't be registered with the engine after the
     /// session's engine-side delete (see `vault.rs`).
     pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
+
+    /// Per-partition claim on the SP-published unwrapping key's pairwise
+    /// consistency test, so only one IO tests a partition's slot at a time.
+    /// See [`crate::unwrapping_key`].
+    pub(crate) unwrap_pct_busy: [Cell<bool>; NUM_PARTITIONS],
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -421,6 +427,7 @@ impl Default for UnoHsmPal {
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
             fp_bulk_lock: Mutex::new(()),
+            unwrap_pct_busy: [const { Cell::new(false) }; NUM_PARTITIONS],
         }
     }
 }

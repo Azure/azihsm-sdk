@@ -241,3 +241,35 @@ fn sealed_bk3_stays_write_once_after_migrate() {
     p.set_sealed_bk3(buf(&replacement)).unwrap();
     assert_eq!(&p.sealed_bk3()[..], &replacement);
 }
+
+/// The unwrapping-key slot's validity byte decodes to its three states, and
+/// any other byte decodes to `None`, which callers treat as not importable.
+#[test]
+fn unwrapping_key_slot_decodes_validity_byte() {
+    assert_eq!(UnwrappingKeySlot::Empty as u8, 0);
+    assert_eq!(UnwrappingKeySlot::PendingPct as u8, 1);
+    assert_eq!(UnwrappingKeySlot::PctPassed as u8, 2);
+    for byte in [3u8, 0x7F, 0xFF] {
+        assert_eq!(UnwrappingKeySlot::try_from(byte), Err(byte));
+    }
+
+    let pid = 12usize;
+    let mut p = Partition(pid);
+    p.slot_mut().unwrapping_key_bk_valid = UnwrappingKeySlot::PendingPct as u8;
+    assert_eq!(
+        Partition(pid).unwrapping_key_slot(),
+        Some(UnwrappingKeySlot::PendingPct)
+    );
+    Partition(pid).mark_unwrapping_key_pct_passed();
+    assert_eq!(
+        Partition(pid).unwrapping_key_slot(),
+        Some(UnwrappingKeySlot::PctPassed)
+    );
+    Partition(pid).discard_unwrapping_key();
+    assert_eq!(
+        Partition(pid).unwrapping_key_slot(),
+        Some(UnwrappingKeySlot::Empty)
+    );
+    p.slot_mut().unwrapping_key_bk_valid = 7;
+    assert_eq!(Partition(pid).unwrapping_key_slot(), None);
+}

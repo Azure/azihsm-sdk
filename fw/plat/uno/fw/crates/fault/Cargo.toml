@@ -26,9 +26,11 @@ fault-stackdump = []
 
 [dependencies]
 azihsm_fw_hsm_core_tracing.workspace = true
+azihsm_fw_static_ref.workspace = true
 azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
 azihsm_fw_uno_error.workspace = true
 azihsm_fw_uno_reg_cortex_m.workspace = true
+azihsm_fw_uno_reg_soc.workspace = true
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
 tock-registers.workspace = true

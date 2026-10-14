@@ -20,12 +20,9 @@
 
 #![cfg(feature = "emu")]
 
-use azihsm_crypto::EccAlgo;
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccPrivateKey;
-use azihsm_crypto::EccPublicKey;
 use azihsm_crypto::ExportableKey;
-use azihsm_crypto::Verifier;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
@@ -43,6 +40,9 @@ use azihsm_ddi_tbor_types::KEY_CLASS_AES;
 use azihsm_ddi_tbor_types::KEY_CLASS_ECC;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
+use crate::commands::common::assert_ecc_signs;
+use crate::commands::common::sign;
+use crate::commands::common::verify_wire_ecdsa;
 use crate::commands::common::with_generated_ecc_key;
 use crate::commands::common::CO;
 use crate::commands::common::SCOPE_LOCAL;
@@ -63,19 +63,6 @@ const SCOPE_UNSPECIFIED: u8 = 0b000;
 #[cfg(feature = "emu")]
 const SCOPE_INTERNAL: u8 = 0b101;
 
-/// Per-curve wire sizes: `(wire_coord_len, raw_coord_len)`.
-///
-/// `wire_coord_len` is the padded on-wire component size (P-521 → 68);
-/// `raw_coord_len` is the cryptographic component size (P-521 → 66).
-fn coord_sizes(pub_len: usize) -> (usize, usize) {
-    match pub_len {
-        64 => (32, 32),
-        96 => (48, 48),
-        136 => (68, 66),
-        _ => panic!("unexpected public-key length {pub_len}"),
-    }
-}
-
 /// Generate an ECC key on-device for `curve` under `scope`.
 fn generate_in_scope(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) -> (Vec<u8>, Vec<u8>) {
     let resp = ctx
@@ -90,53 +77,6 @@ fn generate_in_scope(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) -> (V
     (resp.masked_key, resp.pub_key)
 }
 
-/// Sign `digest` with a caller-held masked key.
-fn sign(ctx: &TestCtx, session_id: u16, masked_key: Vec<u8>, digest: &[u8]) -> Vec<u8> {
-    ctx.tbor(&TborEccSignReq {
-        session_id,
-        masked_key,
-        digest: digest.to_vec(),
-    })
-    .expect("EccSign")
-    .signature
-}
-
-/// Reverse the low `len` bytes of `src` into a fresh big-endian vec.
-fn rev(src: &[u8], len: usize) -> Vec<u8> {
-    src[..len].iter().rev().copied().collect()
-}
-
-/// Verify a wire-LE ECDSA signature on the host with `azihsm_crypto`.
-///
-/// * `pub_le` — `x_le ‖ y_le`, each `wire_coord_len` bytes.
-/// * `sig_le` — `r_le ‖ s_le`, each `wire_coord_len` bytes.
-/// * `digest_le` — the wire-LE digest that was handed to `EccSign`.
-fn verify_wire_ecdsa(pub_le: &[u8], sig_le: &[u8], digest_le: &[u8]) -> bool {
-    let (wire_coord, raw_coord) = coord_sizes(pub_le.len());
-    assert_eq!(sig_le.len(), wire_coord * 2, "signature length mismatch");
-
-    // Public key: reverse each full padded wire coordinate → big-endian
-    // `hsm_point_size` coordinates. Trailing LE pad becomes leading BE
-    // zeros, which `from_hsm_bytes` tolerates.
-    let (x_le, y_le) = pub_le.split_at(wire_coord);
-    let mut pub_be = rev(x_le, wire_coord);
-    pub_be.extend(rev(y_le, wire_coord));
-    let pubkey = EccPublicKey::from_hsm_bytes(&pub_be).expect("import public key");
-
-    // Signature: reverse the meaningful `raw_coord` bytes of each component
-    // → big-endian `r ‖ s`.
-    let (r_le, s_le) = sig_le.split_at(wire_coord);
-    let mut sig_be = rev(r_le, raw_coord);
-    sig_be.extend(rev(s_le, raw_coord));
-
-    // Verify the full big-endian digest; host ECDSA applies the same
-    // most-significant-bit truncation as the firmware.
-    let digest_be = rev(digest_le, digest_le.len());
-
-    Verifier::verify(&mut EccAlgo::default(), &pubkey, &digest_be, &sig_be)
-        .expect("host ECDSA verify")
-}
-
 /// Signs and verifies a curve-appropriate digest on every supported ECC curve.
 #[test]
 fn ecc_sign_roundtrip_all_curves() {
@@ -146,19 +86,7 @@ fn ecc_sign_roundtrip_all_curves() {
         (ECC_CURVE_P521, 64usize),
     ] {
         with_generated_ecc_key(curve, |ctx, session_id, masked_key, pub_key| {
-            let digest: Vec<u8> = (0..digest_len)
-                .map(|i| (i as u8).wrapping_mul(7).wrapping_add(0x11))
-                .collect();
-            let signature = sign(ctx, session_id, masked_key, &digest);
-            assert_eq!(
-                signature.len(),
-                pub_key.len(),
-                "wire signature length equals wire public-key length for curve {curve}",
-            );
-            assert!(
-                verify_wire_ecdsa(&pub_key, &signature, &digest),
-                "ECDSA signature must verify against the generated public key (curve {curve})",
-            );
+            assert_ecc_signs(ctx, session_id, masked_key, &pub_key, digest_len);
         });
     }
 }

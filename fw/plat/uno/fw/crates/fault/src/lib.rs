@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Panic and CPU-exception handlers for the Uno HSM firmware.
+//! Panic and CPU-exception handlers, and the FIPS error state, for the Uno
+//! HSM firmware.
 //!
 //! Installs the firmware's single `#[panic_handler]` plus overrides for the
 //! ARMv7-M `HardFault` and `DefaultHandler` exceptions. The goal is fault
@@ -30,6 +31,15 @@
 //! and exception type. The `trace-uart` / `trace-semihosting` features select
 //! `level-info`, which compiles `error!` in.
 //!
+//! # FIPS error state
+//!
+//! [`enter_error_state`] is the one deliberate stop: the PAL calls it when a
+//! key pair that the module generated, or the partition's unwrapping key,
+//! fails its pairwise consistency test. Unlike the handlers, it notifies the
+//! SP by setting Mailbox0's error bit, so the SP enters its own FIPS error
+//! state and resets the device. It halts through the same `halt` as the
+//! handlers.
+//!
 //! # Linking
 //!
 //! The panic and exception symbols only take effect if this crate is part
@@ -38,7 +48,7 @@
 //!
 //! # Scope
 //!
-//! This is deliberately a CPU-fault *reporter*. Cross-core crash
+//! The handlers are deliberately CPU-fault *reporters*. Cross-core crash
 //! notification, persistent crash dumps, and peripheral-error ISRs (present
 //! in the mcr-hsm `exception-handlers` crate) depend on infrastructure the
 //! Uno port does not yet have (Tcon mailbox, crashdump store) and are out of
@@ -50,17 +60,30 @@
 mod decode;
 
 use azihsm_fw_hsm_core_tracing::error;
-// `HsmError` is referenced only inside `error!`, which compiles out when no
-// trace level is enabled (production); the import is then unused.
-#[allow(unused_imports)]
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_error::HsmError;
 use azihsm_fw_uno_reg_cortex_m::scb::regs::ScbRegs;
 use azihsm_fw_uno_reg_cortex_m::scb::CFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::HFSR;
 use azihsm_fw_uno_reg_cortex_m::scb::SCB_BASE;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_uno_reg_soc::sys_mbx::regs::SysMbxRegs;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_uno_reg_soc::sys_mbx::S2H_MBX_INSTS;
+#[cfg(not(feature = "semihosting"))]
+use azihsm_fw_uno_reg_soc::sys_mbx::SYS_MBX_BASE;
 use cortex_m_rt::exception;
 use cortex_m_rt::ExceptionFrame;
+#[cfg(not(feature = "semihosting"))]
+use tock_registers::interfaces::ReadWriteable;
 use tock_registers::interfaces::Readable;
+
+/// Mailbox0, which the SP watches for this core's error interrupt.
+#[cfg(not(feature = "semihosting"))]
+// SAFETY: `SYS_MBX_BASE` is the fixed MMIO address of Mailbox0, which is
+// always mapped on Uno silicon.
+const SYS_MBX: StaticRef<SysMbxRegs> = unsafe { StaticRef::new(SYS_MBX_BASE as *const SysMbxRegs) };
 
 /// Borrow the System Control Block MMIO register block.
 ///
@@ -74,7 +97,8 @@ fn scb() -> &'static ScbRegs {
     unsafe { &*(SCB_BASE as *const ScbRegs) }
 }
 
-/// Terminate the firmware after a fault has been reported.
+/// Terminate the firmware after a fault has been reported or the FIPS error
+/// state entered.
 ///
 /// On emulator builds (`semihosting`) this issues `SYS_EXIT(-1)` so the
 /// host stops; on silicon it spins forever (the core is already wedged).
@@ -86,6 +110,27 @@ fn halt() -> ! {
     loop {
         cortex_m::asm::nop();
     }
+}
+
+/// Enters the FIPS error state. Never returns.
+///
+/// Called when a key pair that the module generated, or the partition's
+/// unwrapping key, fails its pairwise consistency test (PCT). Sets `ERR_BIT`
+/// in Mailbox0's `S2H_MBX_INSTS` register, then halts. The SP turns that
+/// interrupt into its own FIPS error state, which stops SP output, saves
+/// crash dumps, and resets the device. Emulator builds (`semihosting`) skip
+/// the mailbox write and exit through semihosting instead.
+///
+/// `reason` names the check that failed; only trace builds report it.
+//
+// `reason` is consumed only by `error!`, which compiles out when no trace
+// level is enabled (production builds); allow keeps that build warning-free.
+#[allow(unused_variables)]
+pub fn enter_error_state(reason: HsmError) -> ! {
+    error!("fips", reason, "#### FIPS error state ####");
+    #[cfg(not(feature = "semihosting"))]
+    SYS_MBX.s2h_mbx_insts.modify(S2H_MBX_INSTS::ERR_BIT::SET);
+    halt();
 }
 
 /// Firmware panic handler.
