@@ -246,3 +246,18 @@ fn sealed_bk3_stays_write_once_after_migrate() {
     p.set_sealed_bk3(buf(&replacement)).unwrap();
     assert_eq!(&p.sealed_bk3()[..], &replacement);
 }
+
+/// A store slot carrying a version this firmware never stamped — as an
+/// incompatible image would leave across a fw-update warm reset — must mark
+/// the whole store incompatible so the PAL wipes instead of trusting foreign
+/// bytes. `reset()` then restores the current [`STORE_VERSION`].
+#[test]
+fn foreign_store_version_is_incompatible() {
+    let mut p = Partition(60);
+    p.slot_mut().version = STORE_VERSION.wrapping_add(1);
+    assert_ne!(Partition(60).version(), STORE_VERSION);
+    assert!(!PartStore::is_store_compatible());
+
+    Partition(60).reset();
+    assert_eq!(Partition(60).version(), STORE_VERSION);
+}

@@ -371,6 +371,19 @@ impl PartStore {
             }
         }
     }
+
+    /// Returns `true` if the GSRAM-resident store was written by a firmware
+    /// with a compatible layout — every slot carries the current
+    /// [`STORE_VERSION`].
+    ///
+    /// A warm / fw-update reset preserves GSRAM, but its bytes are only safe
+    /// to interpret if this firmware laid them out. An update from an
+    /// incompatible image (which keeps different fields at the version offset)
+    /// or uninitialised GSRAM leaves a foreign version, so the store must not
+    /// be preserved; the caller wipes to a known-good default instead.
+    pub fn is_store_compatible() -> bool {
+        (0..NUM_PARTITIONS).all(|idx| Partition(idx).version() == STORE_VERSION)
+    }
 }
 
 impl Partition {
@@ -1106,6 +1119,12 @@ impl Partition {
     #[inline(never)]
     pub fn res_mask(self) -> u128 {
         u128::from_le_bytes(self.slot().res_mask)
+    }
+
+    /// Reads the schema version stamped in this partition's store slot.
+    #[inline(never)]
+    pub(crate) fn version(self) -> u8 {
+        self.slot().version
     }
 
     /// Sets the resource mask.

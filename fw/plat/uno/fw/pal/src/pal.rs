@@ -1080,11 +1080,24 @@ impl HsmPal for UnoHsmPal {
                 azihsm_fw_uno_drivers_part_store::PartStore::init_default();
             }
             SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
-                info!(
-                    "boot",
-                    "init: reset=warm/fwupdate -> keep store, rearm gate1"
-                );
-                azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+                // The preserved store is only safe to interpret if this
+                // firmware laid it out. An update from an incompatible image
+                // (or uninitialised GSRAM) carries a foreign store version, so
+                // reject the incompatible store by wiping to a known-good
+                // default rather than trusting foreign bytes.
+                if azihsm_fw_uno_drivers_part_store::PartStore::is_store_compatible() {
+                    info!(
+                        "boot",
+                        "init: reset=warm/fwupdate -> keep store, rearm gate1"
+                    );
+                    azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+                } else {
+                    warn!(
+                        "boot",
+                        "init: incompatible partition store version -> init_default"
+                    );
+                    azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+                }
             }
         }
         boot_status::set(BootStatus::Done);
