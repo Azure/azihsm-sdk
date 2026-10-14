@@ -218,7 +218,7 @@ fn psk_change_envelope_tampered() {
 // Empty envelope
 // ===========================================================================
 
-/// Verifies AAD bound to a different session ID is rejected.
+/// Verifies an empty PSK envelope is rejected.
 #[test]
 fn psk_change_empty_envelope() {
     let ctx = TestCtx::new();
@@ -395,7 +395,7 @@ fn psk_change_cu_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CO);
 }
 
-/// Verifies CU cannot rotate its PSK to the default CO PSK.
+/// Verifies CO cannot rotate its PSK to the default CO PSK.
 #[test]
 fn psk_change_co_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CO);
@@ -541,7 +541,7 @@ fn psk_change_rotated_psk_repeated_reopen() {
 
     // Check that the rotated key is persistent across
     // multiple independent session handshakes.
-    for iteration in 0..3 {
+    for _ in 0..3 {
         let opts = SessionOpenInitOptions::new(CU, SessionType::PlainText).with_psk(&ROTATED_PSK);
 
         let pending = ctx
@@ -553,7 +553,7 @@ fn psk_change_rotated_psk_repeated_reopen() {
             .expect("finish using rotated PSK");
 
         ctx.session_close(resumed.session_id)
-            .unwrap_or_else(|_| panic!("failed to close reopened session {iteration}"));
+            .expect("failed to close reopened session");
     }
 }
 
