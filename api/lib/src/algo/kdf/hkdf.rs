@@ -41,8 +41,16 @@ impl HsmHkdfAlgo {
     ) -> Result<Self, HsmError> {
         Ok(Self {
             hash_algo,
-            salt: salt.map(|s| s.to_vec()),
-            info: info.map(|i| i.to_vec()),
+            // Per RFC 5869, an explicitly empty salt/info is cryptographically
+            // identical to omitting it (HMAC pads a shorter-than-block key
+            // with zeros), so the two are documented as interchangeable.
+            // Normalize `Some(&[])` to `None` here so every transport sends a
+            // single canonical "absent" wire representation rather than
+            // leaking a present-but-empty vs. omitted distinction down to
+            // the device — some firmware revisions do not treat the two
+            // on-wire encodings as equivalent.
+            salt: salt.filter(|s| !s.is_empty()).map(|s| s.to_vec()),
+            info: info.filter(|i| !i.is_empty()).map(|i| i.to_vec()),
         })
     }
 }
