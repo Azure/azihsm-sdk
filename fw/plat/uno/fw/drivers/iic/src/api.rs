@@ -6,6 +6,8 @@ use core::task::Poll;
 
 use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_ref::StaticRef;
+use azihsm_fw_uno_drivers_soc::reset_type;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_reg_soc::iic::regs::IicRegs;
 use azihsm_fw_uno_reg_soc::iic::IIC_BASE;
 use azihsm_fw_uno_reg_soc::iic::*;
@@ -140,10 +142,16 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     /// Must only be called after any boot handshake completes. Calling this
     /// earlier can race the controller-side owner of shared common and IRQ
     /// registers.
-    pub fn init(&self, fw_update: bool) {
+    pub fn init(&self) {
         let config = self.config;
         let regs = self.regs;
         let ch = config.channel as usize;
+
+        // An impactless (fw-update) warm reset resumes the queues the previous
+        // firmware left running; every other reset type fully programs them.
+        // The reset reason is read here rather than taken as a parameter, so
+        // the queue-init API stays unchanged for callers.
+        let fw_update = reset_type() == SocResetType::FwUpdateWarmReset;
 
         // Read the current enable state of both queues once. It also drives
         // the fw-update attach decision below.

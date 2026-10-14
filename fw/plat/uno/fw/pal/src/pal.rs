@@ -608,18 +608,12 @@ impl UnoHsmPal {
         // On an impactless (fw-update) warm reset the IIC/OIC queues were
         // programmed and enabled by the previous firmware and must survive the
         // update; the drivers attach (resume from the hardware indices) rather
-        // than reprogram. Every other reset type performs a full program.
-        // GDMA is re-initialised unconditionally, mirroring the reference
-        // Admin's unconditional `GdmaController::new_with_enable`.
-        let fw_update = azihsm_fw_uno_drivers_soc::reset_type() == SocResetType::FwUpdateWarmReset;
-        info!(
-            "boot",
-            "on_boot_complete: fw_update={} -> IIC/OIC {}",
-            fw_update,
-            if fw_update { "attach" } else { "program" }
-        );
-        self.iic.init(fw_update);
-        self.oic.init(fw_update);
+        // than reprogram. Every other reset type performs a full program. Each
+        // driver reads the SP-published reset reason itself in `init`. GDMA is
+        // re-initialised unconditionally, mirroring the reference Admin's
+        // unconditional `GdmaController::new_with_enable`.
+        self.iic.init();
+        self.oic.init();
         self.gdma.init();
         self.boot_phase.set(BootPhase::Running);
         boot_status::set(BootStatus::Run);

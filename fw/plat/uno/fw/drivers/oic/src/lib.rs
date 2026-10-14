@@ -26,7 +26,7 @@
 //!     io_meta_base: 0x2003_DC00,
 //!     interrupt: true,
 //! }));
-//! oic.init(false); // full program; pass true to attach on fw-update
+//! oic.init(); // attach on fw-update, full program otherwise (reads reset reason)
 //! oic.enable();
 //! oic.send(index)?.await?;
 //! ```
