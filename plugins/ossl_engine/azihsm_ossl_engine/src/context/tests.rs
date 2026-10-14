@@ -562,8 +562,7 @@ mod round_trips {
     /// within the creating HSM session). Generates EC P-384 signing and
     /// agreement keys and imports a software RSA key; each must carry the HSM
     /// session flag, the signing keys sign through the engine (verifying in
-    /// software) and the agreement key derives.
-    #[cfg(feature = "mock")]
+    /// software) and the agreement key derives. Backend-agnostic.
     #[allow(unsafe_code)]
     #[allow(clippy::unwrap_used)]
     pub(super) fn run_session_keys(data: EngineData, dir: &Path) -> EngineResult<()> {
@@ -2569,5 +2568,19 @@ mod hw_tests {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
         round_trips::run_hkdf(data, &std::env::temp_dir())
+    }
+
+    /// Hardware session keys, same flow as the mock test (see
+    /// [`super::round_trips::run_session_keys`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine session_keys_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn session_keys_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_session_keys(data, &std::env::temp_dir())
     }
 }

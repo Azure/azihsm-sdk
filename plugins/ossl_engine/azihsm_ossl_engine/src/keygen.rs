@@ -42,6 +42,7 @@ use azihsm_ossl_engine_core::ffi;
 use azihsm_ossl_engine_core::pkey_method::EcKeyUsage;
 use azihsm_ossl_engine_core::pkey_method::EcKeygenHandler;
 use azihsm_ossl_engine_core::pkey_method::KeygenParams;
+use zeroize::Zeroizing;
 
 use crate::SECRET_FILE_MODE;
 use crate::engine_impl::engine_data_slot;
@@ -137,10 +138,12 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         data.open_hsm_from_env()?;
 
         // Generate a key pair on the HSM (persistent, or a session key that
-        // dies with the HSM session) and export the masked blob + public-key DER. Usage is exclusive: sign/verify for
-        // digitalSignature, derive on both halves for keyAgreement.
+        // dies with the HSM session) and export the public-key DER, plus the
+        // masked blob when a path will receive it. Usage is exclusive:
+        // sign/verify for digitalSignature, derive on both halves for
+        // keyAgreement.
         let agree = params.key_usage == EcKeyUsage::KeyAgreement;
-        let (priv_key, masked, pub_der) = data.with_session(|session| {
+        let (priv_key, blob, pub_der) = data.with_session(|session| {
             let priv_props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Private)
                 .key_kind(HsmKeyKind::Ecc)
@@ -165,17 +168,26 @@ impl EcKeygenHandler for AzihsmEcKeygen {
             let (priv_key, _pub) =
                 HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
                     .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
-            let exported = priv_key
-                .masked_key_vec()
+            // Zeroizing: the masked blob is the private key in its persistent
+            // form.
+            let exported = params
+                .masked_key_path
+                .as_ref()
+                .map(|path| {
+                    priv_key
+                        .masked_key_vec()
+                        .map(|masked| (path, Zeroizing::new(masked)))
+                })
+                .transpose()
                 .map_err(|e| EngineError::wrap("export masked key", e))
-                .and_then(|masked| {
+                .and_then(|blob| {
                     priv_key
                         .pub_key_der_vec()
-                        .map(|pub_der| (masked, pub_der))
+                        .map(|pub_der| (blob, pub_der))
                         .map_err(|e| EngineError::wrap("read public key DER", e))
                 });
             match exported {
-                Ok((masked, pub_der)) => Ok((priv_key, masked, pub_der)),
+                Ok((blob, pub_der)) => Ok((priv_key, blob, pub_der)),
                 Err(e) => {
                     crate::context::delete_hsm_key(priv_key, "generated EC private key");
                     Err(e)
@@ -186,8 +198,8 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // Persist the blob before touching `pkey`, so a write failure surfaces
         // cleanly. (A persistent key's blob stays valid independently of this
         // key handle: a later unmask imports it as a fresh handle.)
-        if let Some(path) = &params.masked_key_path
-            && let Err(e) = write_masked_blob(path, &masked)
+        if let Some((path, masked)) = &blob
+            && let Err(e) = write_masked_blob(path, masked)
         {
             crate::context::delete_hsm_key(priv_key, "generated EC private key");
             return Err(e);

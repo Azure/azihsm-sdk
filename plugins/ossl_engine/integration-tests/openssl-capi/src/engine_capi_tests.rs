@@ -879,12 +879,22 @@ fn sign_rsa_key_via_engine_capi() {
 /// `-pkeyopt`-equivalent control strings + `EVP_PKEY_keygen`, binding the
 /// returned key to `e` (`EVP_PKEY_set1_engine`) so NULL-engine contexts built
 /// on it resolve to the engine's `EVP_PKEY_METHOD`. Returns the owning key.
-#[allow(unsafe_code)]
 fn capi_keygen(
     e: *mut ffi::ENGINE,
     nid: std::ffi::c_int,
     opts: &[(&str, &str)],
 ) -> *mut ffi::EVP_PKEY {
+    capi_try_keygen(e, nid, opts).unwrap_or_else(|err| panic!("EVP_PKEY_keygen: {err}"))
+}
+
+/// [`capi_keygen`] that returns a failing `EVP_PKEY_keygen`'s error stack
+/// instead of panicking (the options themselves must still be accepted).
+#[allow(unsafe_code)]
+fn capi_try_keygen(
+    e: *mut ffi::ENGINE,
+    nid: std::ffi::c_int,
+    opts: &[(&str, &str)],
+) -> Result<*mut ffi::EVP_PKEY, String> {
     let cstr = |s: &str| CString::new(s).unwrap();
     // SAFETY: standard EVP_PKEY keygen sequence on the engine handle; every
     // return code is checked and the ctx is freed.
@@ -902,20 +912,19 @@ fn capi_keygen(
             );
         }
         let mut pkey = std::ptr::null_mut();
-        assert_eq!(
-            ffi::EVP_PKEY_keygen(ctx, &mut pkey),
-            1,
-            "EVP_PKEY_keygen: {}",
-            openssl::error::ErrorStack::get()
-        );
+        let rc = ffi::EVP_PKEY_keygen(ctx, &mut pkey);
         ffi::EVP_PKEY_CTX_free(ctx);
+        if rc != 1 {
+            assert!(pkey.is_null(), "a failed keygen returned a key");
+            return Err(openssl::error::ErrorStack::get().to_string());
+        }
         assert!(!pkey.is_null(), "keygen returned a NULL EVP_PKEY");
         assert_eq!(
             ffi::EVP_PKEY_set1_engine(pkey, e),
             1,
             "EVP_PKEY_set1_engine"
         );
-        pkey
+        Ok(pkey)
     }
 }
 
@@ -1126,6 +1135,96 @@ fn session_keys_via_engine_capi() {
         ffi::EVP_PKEY_free(ec);
         ffi::EVP_PKEY_free(rsa_sign);
         ffi::EVP_PKEY_free(rsa_dec);
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A key whose `azihsm.masked_key` cannot be written must fail cleanly: a
+/// persistent and a session EC keygen and an RSA import, each with a missing
+/// parent directory, a path naming a directory and an empty path, return no
+/// key and leave nothing behind (not even the staging file). The engine stays
+/// usable: a valid path still generates afterwards.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn invalid_masked_key_path_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let dir = setup_keymat();
+    let e = open_dynamic_engine(&engine_so);
+    let ec = ffi::EVP_PKEY_EC as std::ffi::c_int;
+    let input_path = dir.join("rsa_bad_path_input.der");
+    sw_rsa_input(&input_path);
+    // Blob paths live under their own dir, so the leftover check below is not
+    // confused by the keymat files the HSM open writes.
+    let out = dir.join("out");
+    let missing_parent = out.join("no_such_dir").join("key.bin");
+    let a_directory = out.join("a_directory");
+    std::fs::create_dir_all(&a_directory).unwrap();
+
+    for bad in [
+        missing_parent.to_str().unwrap(),
+        a_directory.to_str().unwrap(),
+        "",
+    ] {
+        let attempts: [(std::ffi::c_int, &[(&str, &str)]); 3] = [
+            (
+                ec,
+                &[("ec_paramgen_curve", "P-384"), ("azihsm.masked_key", bad)],
+            ),
+            (
+                ec,
+                &[
+                    ("ec_paramgen_curve", "P-384"),
+                    ("azihsm.session", "true"),
+                    ("azihsm.masked_key", bad),
+                ],
+            ),
+            (
+                ffi::EVP_PKEY_RSA as std::ffi::c_int,
+                &[
+                    ("rsa_keygen_bits", "2048"),
+                    ("azihsm.input_key", input_path.to_str().unwrap()),
+                    ("azihsm.masked_key", bad),
+                ],
+            ),
+        ];
+        for (nid, opts) in attempts {
+            let err = capi_try_keygen(e, nid, opts).expect_err(&format!(
+                "keygen with an unwritable blob path succeeded: {opts:?}"
+            ));
+            assert!(
+                err.contains("masked key"),
+                "{opts:?} failed for another reason: {err}"
+            );
+        }
+    }
+    let left: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        left,
+        ["a_directory"],
+        "a failed blob write left files behind"
+    );
+    assert_eq!(std::fs::read_dir(&a_directory).unwrap().count(), 0);
+
+    let good = out.join("after_bad_paths.bin");
+    let pkey = capi_keygen(
+        e,
+        ec,
+        &[
+            ("ec_paramgen_curve", "P-384"),
+            ("azihsm.masked_key", good.to_str().unwrap()),
+        ],
+    );
+    assert!(good.is_file(), "masked blob not written");
+
+    // SAFETY: pkey is the owning EVP_PKEY from capi_keygen; e is ours.
+    unsafe {
+        ffi::EVP_PKEY_free(pkey);
         ffi::ENGINE_finish(e);
         ffi::ENGINE_free(e);
     }
