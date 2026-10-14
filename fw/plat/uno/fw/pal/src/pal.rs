@@ -56,7 +56,9 @@ use azihsm_fw_uno_drivers_oic::ChannelConfig as OicChannelConfig;
 use azihsm_fw_uno_drivers_oic::OicDriver;
 use azihsm_fw_uno_drivers_rng::RngDriver;
 use azihsm_fw_uno_drivers_sha::ShaDriver;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_drivers_systick as systick_driver;
+use azihsm_fw_uno_drivers_tcon::Tcon;
 use azihsm_fw_uno_drivers_upka::UpkaDriver;
 use azihsm_fw_uno_pac::Interrupt;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_OFFSET;
@@ -76,6 +78,14 @@ use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_RING_STRIDE;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_CI_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_PI_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_RING_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::ISQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
@@ -122,7 +132,7 @@ pub enum BootPhase {
 const IO_QUEUE_DEPTH: usize = 32;
 
 /// Number of IPC pairs configured for the firmware.
-const IPC_PAIRS: usize = 3;
+const IPC_PAIRS: usize = 4;
 
 /// IPC channel identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,6 +144,8 @@ pub enum IpcChannel {
     AdminEvent = 1,
     /// HSM → FP bulk-key requests (with response).
     FpMessage = 2,
+    /// HSM → Admin requests (HSM is the requestor, Admin the responder).
+    AdminRequest = 3,
 }
 
 // ── NVIC wake dispatch ─────────────────────────────────────────
@@ -405,6 +417,24 @@ impl Default for UnoHsmPal {
                     depth: HSM_TO_FP_IPC_TX_RING_COUNT as u16,
                     msg_len: (HSM_TO_FP_IPC_TX_RING_STRIDE / 4) as u16,
                 },
+                // Pair 3: send requests to Admin (desc 13 in, 12 out).
+                //
+                // Descriptor numbers and ring addresses mirror the reference
+                // `hsm_to_admin_ipc_channel_config` — the Admin core runs the
+                // reference firmware, so both ends must agree exactly.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: 13,
+                    outbound_desc: 12,
+                    tx_ring_base: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_RING_OFFSET,
+                    tx_pi: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET,
+                    tx_ci: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET,
+                    rx_ring_base: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_RING_OFFSET,
+                    rx_pi: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_PI_OFFSET,
+                    rx_ci: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_CI_OFFSET,
+                    depth: IPC_HSM_ADMIN_RX_RING_COUNT as u16,
+                    msg_len: (IPC_HSM_ADMIN_RX_RING_STRIDE / 4) as u16,
+                },
             ],
         };
 
@@ -545,6 +575,14 @@ impl UnoHsmPal {
         self.gdma.init();
         self.boot_phase.set(BootPhase::Running);
         boot_status::set(BootStatus::Run);
+
+        // Enable the TCON wakeup1 receiver now that the Admin bootstrap
+        // handshake is complete. This IRQ is the cross-core crash-notification
+        // trigger: a faulting peer core arms it, and the NVIC-vectored
+        // trampoline in `azihsm_fw_uno_fault` then collects this core's dump.
+        // Enabling it earlier risks a wakeup during partial init.
+        Nvic::unpend(Interrupt::TCON_WAKEUP1);
+        Nvic::enable(Interrupt::TCON_WAKEUP1);
 
         #[cfg(feature = "semihosting")]
         azihsm_fw_uno_drivers_semihosting::sys_ready();
@@ -815,6 +853,16 @@ impl HsmPal for UnoHsmPal {
         systick_driver::init();
         self.rng.init();
         self.ipc.init();
+        // Zero the indices of the HSM→Admin queue this core produces into.
+        // Mirrors the reference `hsm_to_admin_ipc_channel_config`, which
+        // zeroes the tx queue's ci/pi because the HSM owns that queue; the
+        // Admin core zeroes the reply queue from its own side. Without this,
+        // stale indices left in GSRAM by a previous boot desynchronize the
+        // ring. Must run before the channel is enabled.
+        unsafe {
+            core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET) as *mut u32, 0);
+            core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET) as *mut u32, 0);
+        }
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
         self.ipc.enable(IpcChannel::FpMessage as u8);
@@ -830,7 +878,25 @@ impl HsmPal for UnoHsmPal {
             ((PSRAM_BASE + HSM_TO_FP_IPC_RX_PI_OFFSET) as *mut u32).write_volatile(0);
             ((PSRAM_BASE + HSM_TO_FP_IPC_RX_CI_OFFSET) as *mut u32).write_volatile(0);
         }
-        azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+
+        self.ipc.enable(IpcChannel::AdminRequest as u8);
+        // Start the crash-notify wakeup timer disarmed. `on_boot_complete`
+        // enables the NVIC receiver after the Admin handshake; the timer
+        // itself is armed only when sending a crash notification.
+        Tcon::disable_wakeup_timer1();
+        // Recovery boot: only a cold (power-on) boot wipes the partition
+        // store. On a warm / fw-update reset the GSRAM-resident store survived,
+        // so preserve every partition's persisted state (res_mask, keys, creds,
+        // sessions) and only re-arm Gate 1. Mirrors the reference `HsmEnv::new`
+        // constructor selection on `SocInfo::reset_type` (`env.rs`).
+        match azihsm_fw_uno_drivers_soc::reset_type() {
+            SocResetType::Por => {
+                azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+            }
+            SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
+                azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+            }
+        }
         boot_status::set(BootStatus::Done);
     }
 
