@@ -907,9 +907,12 @@ mod round_trips {
         }
 
         let _ = slot.take(&mut engine)?;
-        release_aes_cbc_ciphers(&engine);
-        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
-        unsafe { ffi::ENGINE_free(engine_raw) };
+        // SAFETY: every cipher context above is freed; engine_raw is the
+        // ENGINE_new ref from new_test_engine.
+        unsafe {
+            release_aes_cbc_ciphers(&engine);
+            ffi::ENGINE_free(engine_raw);
+        }
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         Ok(())
     }

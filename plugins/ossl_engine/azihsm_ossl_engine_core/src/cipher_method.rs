@@ -614,11 +614,17 @@ unsafe extern "C" fn c_ciphers(
 
 /// Create `engine`'s AES-128/192/256-CBC ciphers with `L` loading HSM keys,
 /// and install them with `ENGINE_set_ciphers`. Pair with
-/// [`release_aes_cbc_ciphers`] in the engine's destroy hook.
+/// [`release_aes_cbc_ciphers`] in the engine's destroy hook. A second
+/// registration on the same ENGINE is refused: its contexts may still use the
+/// first one's ciphers.
 #[allow(unsafe_code)]
 pub fn register_aes_cbc_ciphers<L: AesCbcKeyLoader>(engine: &Engine) -> EngineResult<()> {
-    // An earlier registration on this ENGINE is replaced.
-    release_aes_cbc_ciphers(engine);
+    let e = engine.as_ptr() as usize;
+    if ciphers().lock().values().any(|v| v.engine == e) {
+        return Err(EngineError::Other(
+            "AES-CBC ciphers are already registered on this ENGINE".into(),
+        ));
+    }
     for nid in NIDS {
         let cipher = new_cipher::<L>(builtin_cipher(nid)?)?;
         ciphers().lock().insert(
@@ -635,10 +641,14 @@ pub fn register_aes_cbc_ciphers<L: AesCbcKeyLoader>(engine: &Engine) -> EngineRe
     ossl_check(rc, EngineError::Other("ENGINE_set_ciphers failed".into()))
 }
 
-/// Free `engine`'s cipher copies. Call from the engine's destroy hook (or, in
-/// tests, before `ENGINE_free`); the framework never frees engine ciphers.
+/// Free `engine`'s cipher copies; the framework never frees engine ciphers.
+///
+/// # Safety
+/// No cipher context may still use them: call from the engine's destroy hook,
+/// which runs once every context's functional reference on the ENGINE is gone
+/// (or, in tests, once their contexts are freed).
 #[allow(unsafe_code)]
-pub fn release_aes_cbc_ciphers(engine: &Engine) {
+pub unsafe fn release_aes_cbc_ciphers(engine: &Engine) {
     let e = engine.as_ptr() as usize;
     let mut table = ciphers().lock();
     let mine: Vec<usize> = table
@@ -649,7 +659,7 @@ pub fn release_aes_cbc_ciphers(engine: &Engine) {
     for cipher in mine {
         table.remove(&cipher);
         // SAFETY: cipher is our own EVP_CIPHER_meth_dup copy, no longer listed;
-        // no context still uses it (each holds a reference on the ENGINE).
+        // no context still uses it (this function's contract).
         unsafe { ffi::EVP_CIPHER_meth_free(cipher as *mut ffi::EVP_CIPHER) };
     }
 }
@@ -768,12 +778,16 @@ mod tests {
         }
     }
 
-    /// Free the ciphers and the ENGINE from [`engine_with_ciphers`].
+    /// Free the ciphers and the ENGINE from [`engine_with_ciphers`], once the
+    /// test's contexts are freed.
     #[allow(unsafe_code)]
     fn teardown(engine: &Engine, raw: *mut ffi::ENGINE) {
-        release_aes_cbc_ciphers(engine);
-        // SAFETY: raw is the ENGINE_new ref from engine_with_ciphers.
-        unsafe { ffi::ENGINE_free(raw) };
+        // SAFETY: the test freed every context it created; raw is the
+        // ENGINE_new ref from engine_with_ciphers.
+        unsafe {
+            release_aes_cbc_ciphers(engine);
+            ffi::ENGINE_free(raw);
+        }
     }
 
     /// The ENGINE `raw`'s cipher for `nid`.
@@ -941,7 +955,8 @@ mod tests {
                 );
             }
         }
-        release_aes_cbc_ciphers(&engine);
+        // SAFETY: no context was created on these ciphers.
+        unsafe { release_aes_cbc_ciphers(&engine) };
         let mut cipher: *const ffi::EVP_CIPHER = null();
         // SAFETY: calling our callback directly with valid out-params (the
         // ENGINE is still alive, so its address cannot be reused meanwhile).
@@ -952,6 +967,20 @@ mod tests {
             "a released ENGINE has no ciphers"
         );
         assert!(cipher.is_null());
+        teardown(&engine, raw);
+    }
+
+    // A second registration on the same ENGINE is refused and leaves the
+    // first one's ciphers, and the contexts using them, working.
+    #[test]
+    fn repeat_registration_is_refused() {
+        let (engine, raw) = engine_with_ciphers();
+        let iv = [7u8; AES_BLOCK];
+        let msg = pattern(40);
+        let ctx = hsm_ctx(raw, NIDS[2], true, &iv);
+        assert!(register_aes_cbc_ciphers::<ToyLoader>(&engine).is_err());
+        assert_eq!(run(ctx, &msg, 16).unwrap(), toy_encrypt(&iv, &msg));
+        free(ctx);
         teardown(&engine, raw);
     }
 
