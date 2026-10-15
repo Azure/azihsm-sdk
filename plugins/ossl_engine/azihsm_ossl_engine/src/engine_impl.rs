@@ -67,15 +67,20 @@ impl LoadPrivKeyHandler for AzihsmLoadPrivKey {
 
 struct AzihsmDestroy;
 impl DestroyHandler for AzihsmDestroy {
+    #[allow(unsafe_code)]
     fn destroy(engine: &mut Engine) -> EngineResult<()> {
         // The ex_data slot has no auto-free callback (see exdata.rs module
         // docs); the destroy handler drops the Box. Use the already-cached
         // slot: if it was never registered there is nothing to clear, and
-        // registering one here would just leak an index.
-        if let Some(slot) = ENGINE_DATA_SLOT.get() {
-            tracing::info!(target: "azihsm", "azihsm engine destroy: dropping EngineData");
-            slot.take(engine)?;
-        }
+        // registering one here would just leak an index. A failure is
+        // returned only after the releases below, which must always run.
+        let taken = match ENGINE_DATA_SLOT.get() {
+            Some(slot) => {
+                tracing::info!(target: "azihsm", "azihsm engine destroy: dropping EngineData");
+                slot.take(engine).map(drop)
+            }
+            None => Ok(()),
+        };
         // Unconditional (no-op-safe): if bind failed after registering the
         // methods but before parking EngineData, the table entries and the
         // global ASN1 registration still need cleaning. The framework has
@@ -83,7 +88,11 @@ impl DestroyHandler for AzihsmDestroy {
         // run before this hook); only stale pointers are dropped here.
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(engine);
         azihsm_ossl_engine_core::asn1_method::release_ec_asn1_method(engine);
-        Ok(())
+        // The framework never frees engine ciphers: free this ENGINE's copies.
+        // SAFETY: the destroy hook runs once the last functional reference on
+        // the ENGINE is gone, and every context using its ciphers holds one.
+        unsafe { azihsm_ossl_engine_core::cipher_method::release_aes_cbc_ciphers(engine) };
+        taken
     }
 }
 
@@ -208,6 +217,12 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     // The global registration holds an engine reference until ENGINE_cleanup,
     // so a dynamic engine loads at most once per process.
     azihsm_ossl_engine_core::asn1_method::register_ec_asn1_method::<crate::asn1::AzihsmEcAsn1>(
+        engine,
+    )?;
+    // AES-CBC with HSM keys attached via AZIHSM_CTRL_SET_KEY_URI; contexts with
+    // a raw key run the built-in software AES (see
+    // azihsm_ossl_engine_core::cipher_method).
+    azihsm_ossl_engine_core::cipher_method::register_aes_cbc_ciphers::<crate::aes::AzihsmAesCbc>(
         engine,
     )?;
 
