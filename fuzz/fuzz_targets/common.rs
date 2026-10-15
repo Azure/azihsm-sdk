@@ -553,10 +553,17 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         })
         .expect("sealing-key report generation should succeed");
 
+    let receiver_key = CaKey::generate();
+    let receiver_pub = receiver_key.raw_pub();
+    let receiver = make_chain(&sata, &receiver_pub);
     let mfgr = make_chain(&CaKey::generate(), &pid_pub);
     let owner = make_chain(&CaKey::generate(), &pid_pub);
     let part_owner = make_chain(&sata, &pid_pub);
     let mut oob_items = Vec::new();
+    let receiver_chain = vec![
+        add_evidence_item(&mut oob_items, &receiver.root_der),
+        add_evidence_item(&mut oob_items, &receiver.leaf_der),
+    ];
     let mfgr_chain = vec![
         add_evidence_item(&mut oob_items, &mfgr.root_der),
         add_evidence_item(&mut oob_items, &mfgr.leaf_der),
@@ -574,6 +581,7 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     let req = TborSdCreateRemoteBackupReq {
         session_id: session.session_id,
         masked_sealing_key: sealing_key.masked_key,
+        receiver_cert_chain: receiver_chain,
         receiver_mfgr_cert_chain: mfgr_chain,
         receiver_owner_cert_chain: owner_chain,
         receiver_part_owner_cert_chain: part_owner_chain,
