@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 168 tests
+* emu: 223 tests
 * mock: 6 tests
 
 ## Legend
@@ -300,6 +300,51 @@ and Crypto-User sessions after the applicable PSK has been rotated.
 | CU PSK rotation does not change the partition unwrapping key | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_cu_psk_rotation` | Reads the key before and after a second CU PSK rotation |
 | Key remains stable across CO → CU → CO role transitions | ✅ | `get_unwrapping_key::get_unwrapping_key_stable_across_role_transitions` | Confirms partition-key identity across role/session transitions |
 
+## `HmacGenerateKey` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `HmacGenerateKey` command.
+Tests generate masked HMAC keys using SHA-256, SHA-384, and SHA-512
+under Crypto-Officer (CO) and Crypto-User (CU) sessions.
+
+Coverage includes supported hash algorithms, key-length boundaries,
+masking-key scopes, key labels, session validation, default-PSK gating,
+masked-key integrity, and unsupported SHA-1 generation.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Generate usable HMAC keys for SHA-256/384/512 | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_hashes` | CO; verifies masked-key length, nonzero output, HMAC usage, deterministic MACs, and fresh random keys |
+| Accept minimum, intermediate, and maximum key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_variable_lengths` | SHA-256: 32/48/64; SHA-384: 48/96/128; SHA-512: 64/96/128 |
+| Reject out-of-range key lengths with `InvalidKeyLength` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_out_of_range_length` | Covers zero, below-minimum, above-maximum, and `u8::MAX` lengths |
+| Generate keys under Session, Ephemeral, and Local scopes | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_roundtrip_all_scopes` | CO; verifies all three supported provisioned scopes |
+| Session-scoped generation succeeds before partition finalization | ✅ | `hmac_generate_key::hmac_generate_key_session_scope_before_finalize` | Uses rotated CO session before `PartFinal` |
+| SecurityDomain scope without a provisioned masking key → `UnsupportedKeyScope` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_security_domain_scope` | SecurityDomain masking key is unavailable |
+| Ephemeral scope before partition finalization → `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_non_session_scopes_before_finalize` | Tests Ephemeral scope before `PartFinal` |
+| Unsupported HMAC hash algorithms → `InvalidArg` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_hash` | CO; covers SHA-1 discriminant `0` and unsupported values `4` and `255` |
+| Unsupported key scopes → `UnsupportedKeyScope` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_rejects_unknown_scope` | Tests scope values `0`, `5`, and `255` |
+| CU can generate and use SHA-256/384/512 HMAC keys | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_crypto_user_session_scope` | Rotated CU session; Session scope |
+| Accept non-empty key label and generate usable key | ✅ | `hmac_generate_key::hmac_generate_key_accepts_non_empty_key_label` | Verifies successful generation and subsequent HMAC usage |
+| Default CO PSK → `DefaultPskMustRotate` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_default_psk` | Verifies dispatcher gate before PSK rotation |
+| Closed CO session → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_closed_session` | Request submitted after session close |
+| Unknown session ID → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_invalid_session_id` | Rotates and closes CO/CU sessions before using `u16::MAX` |
+| Accept exact minimum and maximum key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_exact_length_boundaries` | Covers all six SHA-256/384/512 length boundaries |
+| Accept non-digest-sized valid key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_accepts_non_digest_key_lengths` | Tests lengths immediately inside supported boundaries |
+| Empty key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_empty_key_label` | Uses an empty `key_label` buffer |
+| Binary key label is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_binary_key_label` | Includes `0x00`, `0x80`, and `0xff` bytes |
+| Maximum supported key-label length is accepted | ✅ | `hmac_generate_key::hmac_generate_key_accepts_max_key_label_length` | Uses `TBOR_KEY_LABEL_MAX_LEN` |
+| Oversized key label → `TborInvalidFixedLength` | ✅ | `hmac_generate_key::hmac_generate_key_rejects_oversized_key_label` | Uses `TBOR_KEY_LABEL_MAX_LEN + 1` |
+| Tampered masked-key envelope → `AesGcmDecryptTagDoesNotMatch` | ✅ | `hmac_generate_key::hmac_generate_key_tampered_masked_key_rejected` | Generates key, modifies authentication tag, then attempts HMAC |
+| Truncated masked-key envelope → `TborInvalidFixedLength` | ✅ | `hmac_generate_key::hmac_generate_key_truncated_masked_key_rejected` | Removes one byte before HMAC usage |
+| CU accepts valid variable HMAC key lengths | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_cu_variable_lengths` | Tests nine SHA-256/384/512 key-length combinations |
+| CU rejects invalid key lengths with `InvalidKeyLength` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_cu_rejects_invalid_lengths` | Tests zero, below-minimum, and above-maximum values |
+| CU rejects unsupported algorithms with `InvalidArg` | ✅ 🔁 | `hmac_generate_key::hmac_generate_key_cu_rejects_unknown_hash` | Covers SHA-1 discriminant `0` and unsupported values `4` and `255` |
+| CU accepts binary key labels | ✅ | `hmac_generate_key::hmac_generate_key_cu_accepts_binary_key_label` | Verifies generated key can be used for HMAC |
+| Closed CU session → `SessionNotFound` | ✅ | `hmac_generate_key::hmac_generate_key_cu_rejects_closed_session` | Rotated CU session closed before command |
+| SHA-256 rejects a 20-byte key with `InvalidKeyLength` | ✅ | `hmac_generate_key::hmac_generate_key_sha256_rejects_sha1_sized_key` | Verifies SHA-256 minimum length of 32 bytes |
+| CO rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_co_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key |
+| CU rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_cu_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key under rotated CU session |
+| Mismatched session ID while a valid CO session is active → `FileHandleSessionIdDoesNotMatch` | ✅ | `hmac_generate_key::hmac_generate_key_active_session_id_mismatch_rejected` | Sends `u16::MAX` while a rotated CO session remains active; verifies the valid session remains usable afterward |
+
+
 ## `EccGenerateKey` (opcode in-session, gated)
 
 Firmware integration coverage for the TBOR `EccGenerateKey` command. These tests exercise
@@ -375,6 +420,41 @@ the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
 | `status == 0` with a valid body still decodes the body | ✅ | `fw_error_decode::zero_status_with_valid_body_still_decodes` | Mock + emu |
 | TOC entry of wrong type yields `TborDecodeError::UnexpectedTocType` | ✅ | `unexpected_toc_type::wrong_toc_entry_type_yields_unexpected_toc_type` | Mock + emu |
 | `mach_seed` AAD wire-layout encoder stability | ✅ | `part_init::success_path::mach_seed_aad_layout` | Unit test; pure host-side |
+
+## `HkdfDerive` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `HkdfDerive` command.
+Tests derive masked AES and HMAC keys from ECDH shared secrets using
+SHA-1, SHA-256, SHA-384, and SHA-512. Coverage includes key types,
+scopes, salt/info handling, deterministic derivation, and invalid requests.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| All supported fixed and variable-length AES/HMAC key types derive successfully | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_key_types` | Tests all 12 key-type/length cases with SHA-1, SHA-256, SHA-384, and SHA-512 (48 combinations) |
+| ECDH secrets from all supported curves can be used as HKDF input | ✅ 🔁 | `hkdf_derive::hkdf_derive_accepts_all_ecdh_secret_sizes` | Covers P-256, P-384, and P-521 |
+| All supported hash algorithms and provisioned output scopes succeed | ✅ 🔁 | `hkdf_derive::hkdf_derive_all_hashes_and_scopes` | SHA-1/256/384/512 across Session, Ephemeral, and Local scopes |
+| Empty and non-empty salt/info combinations are accepted | ✅ 🔁 | `hkdf_derive::hkdf_derive_optional_salt_info` | Covers all four combinations using SHA-1 and SHA-256 |
+| Maximum supported salt and info lengths are accepted | ✅ | `hkdf_derive::hkdf_derive_maximum_salt_and_info` | Uses SHA-512 and maximum-length salt/info buffers |
+| Identical inputs derive stable key material; changing salt or info changes the key | ✅ 🔁 | `hkdf_derive::hkdf_derive_is_stable_and_salt_info_separate_outputs` | Covers SHA-1 and SHA-256 using HMAC tags |
+| Unknown hash algorithm → `InvalidArg` | ✅ | `hkdf_derive::hkdf_derive_unknown_hash_rejected` | Uses unsupported discriminant `u8::MAX` |
+| Unknown derived-key type → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_unknown_key_type_rejected` | Uses key type `99` |
+| SecurityDomain output scope → `UnsupportedKeyScope` | ✅ | `hkdf_derive::hkdf_derive_unsupported_scope_rejected` | Requests unsupported SecurityDomain scope |
+| Variable-length HMAC without explicit length → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_missing_length_rejected` | Uses `key_length = 0` |
+| Variable-length HMAC below minimum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_out_of_range_length_rejected` | Uses VarHmac256 with length `16` |
+| Non-ECDH masked key supplied as IKM → `InvalidKeyType` | ✅ | `hkdf_derive::hkdf_derive_non_secret_ikm_rejected` | Supplies a masked ECC private key |
+| Tampered masked ECDH secret → `AesGcmDecryptTagDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_tampered_masked_secret_rejected` | Flips one byte in the masked-secret authentication tag |
+| Fixed-size key types ignore the supplied key length | ✅ 🔁 | `hkdf_derive::hkdf_derive_fixed_key_type_key_length_is_ignored` | AES-256 output remains 32 bytes across different `key_length` values |
+| Invalid session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_invalid_session_id_rejected` | Uses `u16::MAX` |
+| Different HKDF hash algorithms produce different derived keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_different_hashes_produce_different_keys` | Pairwise comparison of SHA-1/256/384/512 using HMAC tags |
+| Different ECDH secrets produce different derived keys | ✅ | `hkdf_derive::hkdf_derive_different_ikm_produces_different_keys` | Same SHA-256 HKDF parameters with two independently generated ECDH secrets |
+| Variable-length HMAC above maximum length → `InvalidKeyLength` | ✅ | `hkdf_derive::hkdf_derive_var_hmac_above_max_length_rejected` | Uses VarHmac256 with length `65` |
+
+| Rotated Crypto-User session may derive HKDF keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_allowed_on_cu_session` | Tests SHA-1/256/384/512 under a rotated CU session after partition finalization |
+| Default CU PSK → `DefaultPskMustRotate` | ✅ | `hkdf_derive::hkdf_derive_default_cu_psk_rejected` | Verifies the dispatcher default-PSK gate for CU |
+| Mismatched CU session id → `FileHandleSessionIdDoesNotMatch` | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_session_id_rejected` | Uses a rotated CU session and `u16::MAX` |
+| CU can use HKDF-derived HMAC keys | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_key_usable_for_hmac` | SHA-1/256/384/512; verifies HMAC determinism and message sensitivity |
+| CU derives keys under all provisioned output scopes | ✅ 🔁 | `hkdf_derive::hkdf_derive_cu_all_output_scopes` | Tests Session, Ephemeral, and Local scopes across SHA-1/256/384/512 (12 combinations) |
+| Invalid HKDF request does not corrupt the active CU session | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_request_preserves_session` | Invalid hash returns `InvalidArg`; subsequent valid HKDF derivation succeeds |
 
 ---
 

@@ -42,6 +42,9 @@ mod rsaimport;
 mod rsasign;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsadecrypt;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod sign;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]

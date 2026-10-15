@@ -19,10 +19,8 @@
 //! - Requires a **physical** device — virtual/mock devices are skipped.
 //! - Requires firmware built with `azihsm_test_hooks`; otherwise `TriggerCrash`
 //!   returns [`DdiStatus::UnsupportedCmd`] and the case is skipped.
-//! - CP1 firmware currently only implements crashing the **HSM** core; a
-//!   request naming another core returns `UnsupportedCmd`, so those cases
-//!   skip until the cross-core crash path exists. They are kept here so the
-//!   suite documents the full intended matrix.
+//! - HSM crash requests execute locally; Admin requests use HSM-to-Admin
+//!   GSRAM IPC, and FP0/FP1/FP2 requests use HSM-to-FP PSRAM IPC.
 
 #![allow(clippy::unwrap_used)]
 
@@ -363,5 +361,5 @@ fn trigger_crash(
     assert_eq!(resp.data.min.major, 1);
     assert_eq!(resp.data.min.minor, 0);
     assert_eq!(resp.data.max.major, 1);
-    assert_eq!(resp.data.max.minor, 0);
+    assert_eq!(resp.data.max.minor, 1);
 }

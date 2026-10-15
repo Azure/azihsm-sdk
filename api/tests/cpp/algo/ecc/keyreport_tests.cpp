@@ -198,8 +198,12 @@ TEST_F(azihsm_ecc_keyattest, public_key_fails)
 }
 
 #if !SESSION_EX_TESTS
-/// Verifies that key attestation succeeds with zero-length report data.
-TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds)
+/// Verifies that key attestation rejects zero-length report data.
+///
+/// The device requires `report_data` to be exactly `MAX_REPORT_DATA_SIZE`
+/// (128) bytes; shorter lengths are rejected by the device, surfaced here
+/// as `AZIHSM_STATUS_DDI_CMD_FAILURE`.
+TEST_F(azihsm_ecc_keyattest, zero_length_report_data_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto_key priv_key;
@@ -227,13 +231,15 @@ TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds)
         report_buf.ptr = report.data();
 
         attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_GT(report_buf.len, 0);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
     });
 }
 
-/// Verifies that key attestation succeeds with one byte of report data.
-TEST_F(azihsm_ecc_keyattest, one_byte_report_data_succeeds)
+/// Verifies that key attestation rejects a single byte of report data.
+///
+/// See `zero_length_report_data_fails`: only exactly `MAX_REPORT_DATA_SIZE`
+/// (128) bytes of report data is accepted by the device.
+TEST_F(azihsm_ecc_keyattest, one_byte_report_data_fails)
 {
     part_list_.for_each_session([](azihsm_handle session) {
         auto_key priv_key;
@@ -262,8 +268,7 @@ TEST_F(azihsm_ecc_keyattest, one_byte_report_data_succeeds)
         report_buf.ptr = report.data();
 
         attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_GT(report_buf.len, 0);
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
     });
 }
 
@@ -658,8 +663,11 @@ TEST_F(azihsm_ecc_keyattest, invalid_report_data_size_query_fails)
 }
 
 #if !SESSION_EX_TESTS
-/// Verifies that zero-length report data succeeds for key attestation across all supported curves.
-TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds_for_all_curves)
+/// Verifies that zero-length report data fails key attestation across all supported curves.
+///
+/// See `zero_length_report_data_fails`: only exactly `MAX_REPORT_DATA_SIZE`
+/// (128) bytes of report data is accepted by the device.
+TEST_F(azihsm_ecc_keyattest, zero_length_report_data_fails_for_all_curves)
 {
     std::vector<KeyAttestTestParams> test_cases = {
         { AZIHSM_ECC_CURVE_P256, "P256" },
@@ -698,15 +706,15 @@ TEST_F(azihsm_ecc_keyattest, zero_length_report_data_succeeds_for_all_curves)
             report_buf.ptr = report.data();
 
             attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-            ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-            ASSERT_GT(report_buf.len, 0);
+            ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
         });
     }
 }
 
-/// Verifies that boundary report data lengths succeed for key attestation across all supported
-/// curves.
-TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves)
+/// Verifies key attestation behavior at boundary report data lengths across all supported
+/// curves: lengths shorter than `MAX_REPORT_DATA_SIZE` (128) are rejected by the device, while
+/// exactly 128 bytes succeeds.
+TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_for_all_curves)
 {
     std::vector<KeyAttestTestParams> curve_cases = {
         { AZIHSM_ECC_CURVE_P256, "P256" },
@@ -727,6 +735,8 @@ TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves
                 "Testing " + std::string(curve_case.test_name) +
                 " with report_data_len=" + std::to_string(report_data_len)
             );
+
+            bool expect_success = report_data_len == kReportDataSize;
 
             part_list_.for_each_session([&](azihsm_handle session) {
                 auto_key priv_key;
@@ -758,8 +768,15 @@ TEST_F(azihsm_ecc_keyattest, boundary_report_data_lengths_succeed_for_all_curves
 
                 attest_err =
                     azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-                ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-                ASSERT_GT(report_buf.len, 0);
+                if (expect_success)
+                {
+                    ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+                    ASSERT_GT(report_buf.len, 0);
+                }
+                else
+                {
+                    ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
+                }
             });
         }
     }
@@ -783,7 +800,7 @@ TEST_F(azihsm_ecc_keyattest, rejects_noncanonical_report_data_lengths)
             AZIHSM_STATUS_SUCCESS
         );
         for (uint32_t length :
-             { 0u, 1u, kLegacyReportDataSize, kReportDataSize - 1, kReportDataSize + 1 })
+             { 0u, 1u, kShortReportDataSize, kReportDataSize - 1, kReportDataSize + 1 })
         {
             SCOPED_TRACE(length);
             std::vector<uint8_t> report_data(length, 0x42);

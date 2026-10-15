@@ -167,7 +167,7 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_noncanonical_report_data_lengths)
         );
 
         for (uint32_t length :
-             { 0u, 1u, kLegacyReportDataSize, kReportDataSize - 1, kReportDataSize + 1 })
+             { 0u, 1u, kShortReportDataSize, kReportDataSize - 1, kReportDataSize + 1 })
         {
             SCOPED_TRACE(length);
             std::vector<uint8_t> report_data(length, 0x42);
@@ -281,8 +281,8 @@ TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_larger_than_max)
 }
 
 #if !SESSION_EX_TESTS
-// Verifies that empty report data is accepted.
-TEST_F(azihsm_rsa_keyattest, attest_accepts_empty_report_data)
+// Verifies that empty report data is rejected (report data must be exactly the max size).
+TEST_F(azihsm_rsa_keyattest, attest_rejects_empty_report_data)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
@@ -303,9 +303,7 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_empty_report_data)
         report_buf.ptr = report.data();
 
         attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_GT(report_buf.len, 0);
-        ASSERT_TRUE(buffer_has_non_zero(report, report_buf.len));
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
     });
 }
 
@@ -535,8 +533,8 @@ TEST_F(azihsm_rsa_keyattest, attest_succeeds_with_exact_required_report_size)
     });
 }
 
-// Verifies that different valid report data contents can be used for attestation.
-TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
+// Verifies report-data length requirements across different data patterns.
+TEST_F(azihsm_rsa_keyattest, attest_report_data_patterns_require_max_size)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
@@ -550,11 +548,12 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
 #if SESSION_EX_TESTS
             std::vector<uint8_t>(kReportDataSize, 0x00),
             std::vector<uint8_t>(kReportDataSize, 0xFF),
+            std::vector<uint8_t>(kReportDataSize, 0xA5),
 #else
             std::vector<uint8_t>(1, 0x00),
-            std::vector<uint8_t>(kLegacyReportDataSize / 2, 0xFF),
+            std::vector<uint8_t>(kShortReportDataSize / 2, 0xFF),
+            std::vector<uint8_t>(kShortReportDataSize, 0xA5),
 #endif
-            std::vector<uint8_t>(kValidReportDataSize, 0xA5),
             std::vector<uint8_t>(kReportDataSize, 0x5A),
         };
 
@@ -563,6 +562,7 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
             SCOPED_TRACE("Report data case " + std::to_string(i));
 
             auto &report_data = report_data_cases[i];
+            bool expect_success = report_data.size() == kReportDataSize;
             azihsm_buffer report_data_buf{ report_data.data(),
                                            static_cast<uint32_t>(report_data.size()) };
 
@@ -577,16 +577,23 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_different_report_data_patterns)
             azihsm_buffer report_buf{ report.data(), size_query_buf.len };
 
             attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-            ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-            ASSERT_GT(report_buf.len, 0);
-            ASSERT_TRUE(buffer_has_non_zero(report, report_buf.len));
+            if (expect_success)
+            {
+                ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
+                ASSERT_GT(report_buf.len, 0);
+                ASSERT_TRUE(buffer_has_non_zero(report, report_buf.len));
+            }
+            else
+            {
+                ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
+            }
         }
     });
 }
 
 #if !SESSION_EX_TESTS
-// Verifies that 127-byte report data is accepted just below the max boundary.
-TEST_F(azihsm_rsa_keyattest, attest_accepts_report_data_one_less_than_max)
+// Verifies that 127-byte report data, one less than the required max, is rejected.
+TEST_F(azihsm_rsa_keyattest, attest_rejects_report_data_one_less_than_max)
 {
     part_list_.for_each_session([&](azihsm_handle session) {
         auto_key priv_key;
@@ -610,9 +617,7 @@ TEST_F(azihsm_rsa_keyattest, attest_accepts_report_data_one_less_than_max)
         report_buf.ptr = report.data();
 
         attest_err = azihsm_generate_key_report(priv_key.get(), &report_data_buf, &report_buf);
-        ASSERT_EQ(attest_err, AZIHSM_STATUS_SUCCESS);
-        ASSERT_GT(report_buf.len, 0);
-        ASSERT_TRUE(buffer_has_non_zero(report, report_buf.len));
+        ASSERT_EQ(attest_err, AZIHSM_STATUS_DDI_CMD_FAILURE);
     });
 }
 

@@ -41,7 +41,7 @@ fuzz_target!(|input: FuzzInput| {
         let masked_key = if input.use_valid_key {
             let key_req = TborAesGenerateKeyReq {
                 session_id: session.session_id,
-                scope: AES_KEY_SCOPE_SESSION,
+                scope: common::KEY_SCOPE_SESSION,
                 key_size: input.key_size.to_tbor(),
                 key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
                 key_label: Vec::new(),
@@ -117,5 +117,3 @@ fuzz_target!(|input: FuzzInput| {
             .expect("session close should succeed");
     });
 });
-
-const AES_KEY_SCOPE_SESSION: u8 = 0b001;

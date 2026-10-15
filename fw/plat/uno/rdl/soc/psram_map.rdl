@@ -1,28 +1,48 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// PSRAM address map — CP0/CP1↔FP shared SRAM (32 KB, placed at
-// 0xA3E0_0000 by uno.rdl).
+// PSRAM address map (psram).
 //
-// PSRAM is a small SRAM shared between the Admin (CP0), HSM (CP1), and
-// the bulk-crypto backend cores.  The HSM uses PSRAM only for the
-// HSM-side IPC rings; the Admin-side rings and other regions live at
-// offsets the HSM never touches and are intentionally not modelled
-// here.
+// Persistent SRAM at base 0xA3E0_0000 (32 KB). Survives a warm reset and
+// is shared across the SP, CP (Admin/HSM), and the bulk-crypto backend
+// (FP). The reference firmware models the full region here (Admin/HSM/FP
+// IPC queues, CDMA IO SQE/CQE, producer/consumer indices, FP boot status).
+// uno models only the subset the HSM actually touches:
 //
-// HSM-visible layout (offsets from PSRAM base):
+//   0x0000_0980  HSM_TO_FP_IPC_TX_RING[16] — HSM→backend request slots (64 B each)
+//   0x0000_0D80  HSM_TO_FP_IPC_RX_RING[16] — backend→HSM response slots (64 B each)
+//   0x0000_3AFC  RESET_TYPE (4 B)          — reset-reason word (SP-written, CP-read)
+//   0x0000_3BD4  HSM_TO_FP_IPC_TX_PI       — HSM-writes, backend-reads
+//   0x0000_3BD8  HSM_TO_FP_IPC_TX_CI       — backend-writes, HSM-reads
+//   0x0000_3BDC  HSM_TO_FP_IPC_RX_PI       — backend-writes, HSM-reads
+//   0x0000_3BE0  HSM_TO_FP_IPC_RX_CI       — HSM-writes, backend-reads
 //
-//   0x0980  HSM_TO_FP_IPC_TX_RING[16] — HSM→backend request slots (64 B each)
-//   0x0D80  HSM_TO_FP_IPC_RX_RING[16] — backend→HSM response slots (64 B each)
-//   0x3BD4  HSM_TO_FP_IPC_TX_PI       — HSM-writes, backend-reads
-//   0x3BD8  HSM_TO_FP_IPC_TX_CI       — backend-writes, HSM-reads
-//   0x3BDC  HSM_TO_FP_IPC_RX_PI       — backend-writes, HSM-reads
-//   0x3BE0  HSM_TO_FP_IPC_RX_CI       — HSM-writes, backend-reads
+// Admin-side rings and other regions live at offsets the HSM never touches
+// and are intentionally not modelled here.
 //
-// Slot layout is 16 × u32 (64 B): DW0 is the IPC header (opcode,
-// response bit, status, length); DW1..DW15 are payload.  Layout
-// matches mainline mcr-hsm's PsRamMemMap for wire compatibility with
-// the backend firmware.
+// RESET_TYPE gates destructive boot init (recovery boot): the HSM reads it
+// at boot and skips the partition-store wipe on a warm / fw-update reset.
+// Mirrors the reference PsRamMemMap::reset_type at the identical absolute
+// address 0xA3E0_3AFC.
+//
+// IPC slot layout is 16 × u32 (64 B): DW0 is the IPC header (opcode,
+// response bit, status, length); DW1..DW15 are payload. Layout matches
+// mainline mcr-hsm's PsRamMemMap for wire compatibility with the backend
+// firmware.
+
+
+// ══════════════════════════════════════════════════════════════
+// Reset reason
+// ══════════════════════════════════════════════════════════════
+
+reg reset_type_t {
+    name = "Reset Reason Type";
+    desc = "SoC reset reason published by the boot processor (SP) before
+            releasing the CP cores. 0 = POR, 1 = warm reset, 2 = fw-update
+            warm reset. Read-only from the CP; the HSM reads it at boot to
+            gate destructive partition-store init (recovery boot).";
+    field { sw = r; hw = na; } RESET_TYPE[31:0] = 0x0;
+};
 
 
 // ══════════════════════════════════════════════════════════════
@@ -73,9 +93,10 @@ regfile psram_ipc_message_t {
 
 addrmap psram {
     name = "PSRAM";
-    desc = "CP0/CP1↔backend shared SRAM.  Only the HSM-visible IPC rings
-             and their producer/consumer indices are modelled here;
-             Admin-side regions are intentionally omitted.";
+    desc = "Persistent SRAM (32 KB at 0xA3E0_0000). Survives warm reset;
+             shared SP/CP/backend region. uno models the reset-reason word
+             and the HSM-visible IPC rings with their producer/consumer
+             indices; Admin-side regions are intentionally omitted.";
 
     default hw = na;
     default sw = rw;
@@ -85,6 +106,10 @@ addrmap psram {
     //                         RX = backend writes / HSM reads.
     psram_ipc_message_t HSM_TO_FP_IPC_TX_RING[16] @ 0x0980 += 0x40;
     psram_ipc_message_t HSM_TO_FP_IPC_RX_RING[16] @ 0x0D80 += 0x40;
+
+    // Reset-reason word — SP publishes it before CP boot (fixed 0xA3E0_3AFC).
+    reset_type_t RESET_TYPE @ 0x3AFC;
+
     psram_ipc_index_t   HSM_TO_FP_IPC_TX_PI       @ 0x3BD4;
     psram_ipc_index_t   HSM_TO_FP_IPC_TX_CI       @ 0x3BD8;
     psram_ipc_index_t   HSM_TO_FP_IPC_RX_PI       @ 0x3BDC;

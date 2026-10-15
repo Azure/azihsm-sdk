@@ -78,8 +78,6 @@ struct FuzzEccSignReq {
     masked_key: Vec<u8>,
 }
 
-const KEY_SCOPE_SESSION: u8 = 0b001;
-
 fn wire_digest(input: &FuzzEccSignReq) -> Vec<u8> {
     let digest_len = input.digest_algo.digest_len();
     let mut digest = input.digest.clone();
@@ -143,7 +141,7 @@ fuzz_target!(|input: FuzzInput| {
             let resp = ctx
                 .tbor(&TborEccGenerateKeyReq {
                     session_id: session.session_id,
-                    scope: KEY_SCOPE_SESSION,
+                    scope: common::KEY_SCOPE_SESSION,
                     curve: input.curve.to_tbor(),
                     key_usage: KEY_USAGE_SIGN,
                     key_label: Vec::new(),
