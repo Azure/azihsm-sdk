@@ -50,7 +50,6 @@ use crate::commands::common::ENVELOPE_HEADER_LEN;
 use crate::commands::common::ENVELOPE_IV_LEN;
 use crate::commands::common::SCOPE_EPHEMERAL;
 use crate::commands::common::SCOPE_LOCAL;
-use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// Sample caller-supplied report data bound into the report payload.
@@ -394,10 +393,13 @@ fn key_report_rejects_all_symmetric_key_classes() {
 
 /// Verifies a signed key report for a session-scoped P-384 ECC key.
 #[test]
+#[cfg(feature = "emu")]
 fn key_report_session_scope_roundtrip() {
     use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
     use azihsm_ddi_tbor_types::ECC_CURVE_P384;
     use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+
+    use crate::commands::common::SCOPE_SESSION;
 
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
@@ -425,6 +427,7 @@ fn key_report_session_scope_roundtrip() {
     let decoded = verify_key_report(&ctx, &report.report, &key.pub_key, &report_data);
 
     // Generated + sign.
+    // Session + Generated + Sign.
     assert_eq!(decoded.flags, (1 << 2) | (1 << 5));
 }
 
