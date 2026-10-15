@@ -54,6 +54,8 @@ use azihsm_ddi_tbor_types::KEY_CLASS_AES;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA256;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA384;
 use azihsm_ddi_tbor_types::KEY_CLASS_HMAC_SHA512;
+use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
+use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MAX_LEN;
 use azihsm_ddi_tbor_types::MASKED_HMAC_KEY_MIN_LEN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
@@ -66,6 +68,7 @@ use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
+use crate::commands::unwrap_key::unwrap_with_usage;
 
 /// Expected tag length (bytes) for a wire hash discriminant.
 fn tag_len_for_hash(hash: u8) -> usize {
@@ -856,4 +859,37 @@ fn hmac_cu_message_boundaries_all_hashes() {
     }
 
     ctx.session_close(cu.session_id).expect("close CU");
+}
+
+/// Verifies HMAC accepts imported keys with SIGN and VERIFY permissions.
+#[test]
+fn hmac_accepts_key_with_sign_permission() {
+    let ctx = TestCtx::new();
+    let session = finalized_co_session(&ctx);
+
+    for (class, hash, key_len) in [
+        (KEY_CLASS_HMAC_SHA256, HMAC_HASH_SHA256, 32),
+        (KEY_CLASS_HMAC_SHA384, HMAC_HASH_SHA384, 48),
+        (KEY_CLASS_HMAC_SHA512, HMAC_HASH_SHA512, 64),
+    ] {
+        let key = vec![0x37u8; key_len];
+
+        let masked = unwrap_with_usage(
+            &ctx,
+            session.session_id,
+            class,
+            KEY_USAGE_SIGN | KEY_USAGE_VERIFY,
+            &key,
+        )
+        .masked_key;
+
+        let tag = mac(
+            &ctx,
+            session.session_id,
+            &masked,
+            b"HMAC signing permission",
+        );
+
+        assert_eq!(tag.len(), tag_len_for_hash(hash));
+    }
 }

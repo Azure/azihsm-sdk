@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 251 tests
+* emu: 252 tests
 * mock: 6 tests
 
 ## Legend
@@ -386,6 +386,8 @@ invalid requests, and CU authorization. SHA-1 HMAC is unsupported.
 | Labeled Session-scoped key expires after session reopening | ✅ | `hmac::hmac_labeled_session_key_rejected_after_session_reopen` | Expects `AesGcmDecryptTagDoesNotMatch` |
 | CU accepts labeled HMAC keys across all hashes and scopes | ✅ 🔁 | `hmac::hmac_cu_labeled_keys_all_hashes_and_scopes` | Rotated CU; SHA-256/384/512 across Session, Ephemeral, and Local; verifies deterministic reuse |
 | CU handles empty, boundary-length, and maximum-length messages | ✅ 🔁 | `hmac::hmac_cu_message_boundaries_all_hashes` | Rotated CU; SHA-256/384/512 at padding/block boundaries and `HMAC_MSG_MAX_LEN` |
+| Imported HMAC keys with SIGN and VERIFY permissions compute valid MACs | ✅ 🔁 | `hmac::hmac_accepts_key_with_sign_permission` | Tests SHA-256, SHA-384, and SHA-512 using `UnwrapKey` with `KEY_USAGE_SIGN \| KEY_USAGE_VERIFY`; verifies correct MAC tag lengths |
+
 
 ## `EccGenerateKey` (opcode in-session, gated)
 
