@@ -11,9 +11,9 @@
 //! each against the MBOR path (same underlying cert store), and confirm
 //! that an out-of-range index or slot is rejected.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborGetCertChainInfoReq;
 use azihsm_ddi_tbor_types::TborGetCertReq;
@@ -21,9 +21,6 @@ use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::CERT_MAX_LEN;
 use x509::X509Certificate;
 use x509::X509CertificateOp;
-
-use crate::commands::common::CO;
-use crate::commands::common::CU;
 
 /// Fetch the chain length via TBOR `GetCertChainInfo`.
 fn num_certs(ctx: &TestCtx) -> u8 {
