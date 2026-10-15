@@ -439,7 +439,7 @@ Firmware integration coverage for the TBOR `KeyReport` command. Tests validate P
 | Different report-data patterns are preserved in signed reports | ✅ 🔁 | `key_report::key_report_report_data_patterns` | Covers zero-filled, 0xFF-filled, and patterned report data under Ephemeral and Local scopes |
 | Generated ECC keys on all supported curves can be attested | ✅ 🔁 | `key_report::key_report_generated_ecc_all_curves` | Tests P-256, P-384, and P-521 under Ephemeral and Local scopes; verifies Generated and Sign flags |
 | Symmetric key classes are rejected | ✅ 🔁 | `key_report::key_report_rejects_all_symmetric_key_classes_emu` | AES and HMAC-SHA256/384/512; expects `UnsupportedKeyType` |
-| Session-scoped ECC key produces a valid signed attestation report | ✅ | `key_report::key_report_session_scope_roundtrip` | P-384 under Session scope; verifies signature, public-key binding, report data, and Generated/Sign flags |
+| Session-scoped ECC key produces a valid signed attestation report | ✅ (emu) | `key_report::key_report_session_scope_roundtrip` | Emulator-only; P-384 Session scope, verifies COSE_Sign1 signature, public-key binding, report data, and Generated/Sign flags (0x24) |
 | Oversized masked-key envelope is rejected | ✅ | `key_report::key_report_rejects_oversized_masked_key` | Uses `KEY_REPORT_MASKED_KEY_MAX_LEN + 1`; expects `TborInvalidFixedLength` |
 | Invalid session ID is rejected | ✅ | `key_report::key_report_rejects_invalid_session` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch` |
 | Tampered IV and ciphertext are rejected without affecting the original key | ✅ 🔁 | `key_report::key_report_rejects_tampered_iv_and_ciphertext` | Expects `AesGcmDecryptTagDoesNotMatch`; original masked key remains attestable |
