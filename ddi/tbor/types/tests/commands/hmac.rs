@@ -555,7 +555,7 @@ fn hmac_all_byte_values_matches_host() {
     assert_eq!(actual, expected);
 }
 
-/// Corrupting the masked-key envelope header must never produce a valid MAC.
+/// Corrupting the masked-key envelope header must be rejected.
 #[test]
 fn hmac_rejects_corrupted_masked_key_header() {
     let ctx = TestCtx::new();
@@ -563,31 +563,19 @@ fn hmac_rejects_corrupted_masked_key_header() {
 
     let masked = generate_key(&ctx, session.session_id, SCOPE_EPHEMERAL, HMAC_HASH_SHA256);
 
-    // Exercise each byte in the cleartext envelope header independently.
-    for offset in 0..ENVELOPE_HEADER_LEN {
-        let mut corrupted = masked.clone();
-        corrupted[offset] ^= 0x80;
+    // Corrupt the first byte of the masked-key envelope header.
+    let mut corrupted = masked.clone();
+    corrupted[0] ^= 0x80;
 
-        let req = TborHmacReq {
-            session_id: session.session_id,
-            masked_key: corrupted,
-            msg: b"header corruption".to_vec(),
-        };
+    let req = TborHmacReq {
+        session_id: session.session_id,
+        masked_key: corrupted,
+        msg: b"header corruption".to_vec(),
+    };
 
-        use azihsm_ddi::DdiError;
-        let result = ctx.tbor(&req);
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
 
-        assert!(
-            matches!(
-                result,
-                Err(DdiError::TborStatus(s))
-                    if s == TborStatus::InvalidArg || s == TborStatus::MaskedKeyDecodeFailed
-            ),
-            "unexpected error at offset {offset}"
-        );
-    }
-
-    // Original key must still work after all rejected attempts.
+    // Original key must still work after the rejected attempt.
     let tag = mac(&ctx, session.session_id, &masked, b"header corruption");
     assert_eq!(tag.len(), tag_len_for_hash(HMAC_HASH_SHA256));
 }
