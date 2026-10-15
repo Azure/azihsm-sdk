@@ -377,7 +377,7 @@ invalid requests, and CU authorization. SHA-1 HMAC is unsupported.
 | Closed session rejects subsequent HMAC operations | ✅ | `hmac::hmac_rejects_closed_session` | Expects `SessionNotFound` |
 | Masked HMAC key remains reusable across repeated operations | ✅ 🔁 | `hmac::hmac_masked_key_reusable_after_multiple_calls` | Verifies determinism and unchanged host-side key bytes |
 | Arbitrary binary message matches host HMAC | ✅ | `hmac::hmac_all_byte_values_matches_host` | Tests every byte value from `0x00` through `0xff` |
-| Corrupted masked-key header is rejected | ✅ 🔁 | `hmac::hmac_rejects_corrupted_masked_key_header` | Corrupts each of eight header bytes independently; original key remains usable |
+| Corrupted masked-key header is rejected | ✅ | `hmac::hmac_rejects_corrupted_masked_key_header` | Corrupts the first header byte and expects `InvalidArg`; original key remains usable |
 | Switching HMAC algorithms does not retain stale state | ✅ 🔁 | `hmac::hmac_alternating_hashes_do_not_leak_state` | Alternates SHA-256/384/512 and verifies earlier tags remain stable |
 | Non-empty HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_non_empty_key_label` | Generated labeled SHA-256 key successfully computes HMAC |
 | Labeled HMAC keys work with every supported hash | ✅ 🔁 | `hmac::hmac_generate_key_with_label_all_hashes` | SHA-256/384/512; verifies tag lengths and key reuse |
