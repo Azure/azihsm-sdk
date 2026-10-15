@@ -326,9 +326,8 @@ unsafe fn hsm_cbc(
     if ivp.is_null() {
         return Err(EngineError::NullParam("cipher IV"));
     }
-    let mut iv = [0u8; AES_BLOCK];
-    // SAFETY: ivp holds AES_BLOCK bytes (see above); iv is a local array.
-    unsafe { std::ptr::copy_nonoverlapping(ivp, iv.as_mut_ptr(), AES_BLOCK) };
+    // SAFETY: ivp holds AES_BLOCK bytes (see above); this reads a copy.
+    let mut iv = unsafe { ivp.cast::<[u8; AES_BLOCK]>().read_unaligned() };
     // Each request's input is copied before its output is written, as OpenSSL
     // may run in place (out == input). It may be plaintext, so the copy is
     // scrubbed on drop.
