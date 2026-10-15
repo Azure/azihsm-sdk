@@ -27,6 +27,18 @@ pub(crate) const CO: u8 = 0;
 /// `SessionType` role identifier for Crypto-User sessions.
 pub(crate) const CU: u8 = 1;
 
+/// AEAD envelope component lengths.
+pub(crate) const ENVELOPE_HEADER_LEN: usize = azihsm_crypto::aead_envelope::HEADER_LEN;
+
+/// Length in bytes of the masked-key envelope IV.
+pub(crate) const ENVELOPE_IV_LEN: usize = 12;
+
+/// Length in bytes of the masked-key envelope AAD.
+pub(crate) const ENVELOPE_AAD_LEN: usize = 192;
+
+/// Length in bytes of the masked-key envelope authentication tag.
+pub(crate) const ENVELOPE_TAG_LEN: usize = 16;
+
 /// Creates a Crypto-Officer session, generates a session-scoped ECC signing key,
 /// and keeps the session alive while `test` runs.
 pub(crate) fn with_generated_ecc_key(
