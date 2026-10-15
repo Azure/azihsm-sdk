@@ -180,7 +180,7 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         // this firmware. Any other fw-update case (fresh flash, foreign image,
         // partially-initialised queue) falls through to the full program, so
         // attach can never adopt foreign or uninitialised hardware state.
-        if fw_update && already_enabled && ours {
+        if should_attach(fw_update, already_enabled, ours) {
             let hw_head = regs.icq_ch[ch].head.read(ICQ_CHANNEL_HEAD::HEAD) as u16;
             self.state.with(|s| s.icq_head = hw_head);
             // The completion IRQ enable does not survive the core reset even
@@ -396,5 +396,32 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     #[inline]
     fn buf_index(&self, addr: u32) -> u16 {
         ((addr - self.buf_pool_base) / self.buf_size) as u16
+    }
+}
+
+/// Whether queue init should ATTACH to the running hardware instead of
+/// reprogramming it: only on a fw-update warm reset, and only when the queues
+/// are already enabled AND still programmed with this firmware's ring bases.
+/// Any other combination reprograms, so attach can never adopt foreign or
+/// uninitialised hardware state.
+#[inline]
+fn should_attach(fw_update: bool, already_enabled: bool, ours: bool) -> bool {
+    fw_update && already_enabled && ours
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_attach;
+
+    /// Attach is permitted only when all three preconditions hold; any missing
+    /// one must fall through to a full reprogram so foreign or uninitialised
+    /// queue state is never adopted across a fw-update warm reset.
+    #[test]
+    fn attach_only_on_fw_update_enabled_and_ours() {
+        assert!(should_attach(true, true, true));
+        assert!(!should_attach(false, true, true)); // not a fw-update reset
+        assert!(!should_attach(true, false, true)); // queues not running
+        assert!(!should_attach(true, true, false)); // foreign ring base
+        assert!(!should_attach(false, false, false));
     }
 }

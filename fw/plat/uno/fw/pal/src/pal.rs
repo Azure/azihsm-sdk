@@ -464,6 +464,20 @@ impl Default for UnoHsmPal {
     }
 }
 
+/// PERST / FLR PCIe-reset discriminants as defined by Admin's reference
+/// `PcieResetReason` (admin/src/fsm/types); the HSM matches these exact
+/// 32-bit values as delivered over the IPC event channel.
+const PCIE_RESET_FLR: u32 = 0x524C4650;
+const PCIE_RESET_PERST: u32 = 0x54535250;
+
+/// Classifies an admin IPC event payload: `true` only for the PERST / FLR
+/// reset reasons that must tear partitions down. Every other value is an
+/// unrecognised event that must not reset partitions (it is ignored but still
+/// acknowledged).
+fn is_pcie_reset_event(value: u32) -> bool {
+    value == PCIE_RESET_FLR || value == PCIE_RESET_PERST
+}
+
 impl UnoHsmPal {
     /// Returns the current boot phase.
     ///
@@ -921,16 +935,11 @@ impl UnoHsmPal {
     /// - `channel`: IPC event channel to acknowledge.
     /// - `value`: Raw event payload delivered by hardware.
     async fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
-        // PERST/FLR are the only events Admin raises on this channel; the
-        // payload is the reference `PcieResetReason` (admin/src/fsm/types),
-        // ASCII "FLR"/"PRST" read little-endian. Reset partitions only for a
-        // recognised reset reason, so a future event type can never trigger a
-        // spurious teardown; anything unrecognised is ignored but still acked.
-        const PCIE_RESET_FLR: u32 = 0x524C4650;
-        const PCIE_RESET_PERST: u32 = 0x54535250;
-        let is_pcie_reset = value == PCIE_RESET_FLR || value == PCIE_RESET_PERST;
-
-        if self.boot_phase.get() == BootPhase::Running && is_pcie_reset {
+        // Admin raises only PERST/FLR on this channel. Reset partitions only
+        // for a recognised reset reason, so a future event type can never
+        // trigger a spurious teardown; anything unrecognised is ignored but
+        // still acked.
+        if self.boot_phase.get() == BootPhase::Running && is_pcie_reset_event(value) {
             let mut faulted = 0u16;
             for pfn in 0..crate::part::NUM_PARTITIONS as u8 {
                 let pid = HsmPartId::from(pfn);

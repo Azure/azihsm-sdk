@@ -198,7 +198,7 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
         // this firmware. Any other fw-update case (fresh flash, foreign image,
         // partially-initialised queue) falls through to the full program, so
         // attach can never adopt foreign or uninitialised hardware state.
-        if fw_update && already_enabled && ours {
+        if should_attach(fw_update, already_enabled, ours) {
             let hw_ocq_head = regs.ocq_ch[ch].head.read(OCQ_CHANNEL_HEAD::HEAD) as u16;
             let hw_osq_tail = regs.osq_ch[ch].tail.read(OSQ_CHANNEL_TAIL::TAIL) as u16;
             self.state.with(|s| {
@@ -380,5 +380,32 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
                 .write(OCQ_CHANNEL_HEAD::HEAD.val(s.ocq_head.into()));
             azihsm_fw_uno_drivers_nvic::Nvic::unpend_raw(irq);
         });
+    }
+}
+
+/// Whether queue init should ATTACH to the running hardware instead of
+/// reprogramming it: only on a fw-update warm reset, and only when the queues
+/// are already enabled AND still programmed with this firmware's ring bases.
+/// Any other combination reprograms, so attach can never adopt foreign or
+/// uninitialised hardware state.
+#[inline]
+fn should_attach(fw_update: bool, already_enabled: bool, ours: bool) -> bool {
+    fw_update && already_enabled && ours
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_attach;
+
+    /// Attach is permitted only when all three preconditions hold; any missing
+    /// one must fall through to a full reprogram so foreign or uninitialised
+    /// queue state is never adopted across a fw-update warm reset.
+    #[test]
+    fn attach_only_on_fw_update_enabled_and_ours() {
+        assert!(should_attach(true, true, true));
+        assert!(!should_attach(false, true, true)); // not a fw-update reset
+        assert!(!should_attach(true, false, true)); // queues not running
+        assert!(!should_attach(true, true, false)); // foreign ring base
+        assert!(!should_attach(false, false, false));
     }
 }

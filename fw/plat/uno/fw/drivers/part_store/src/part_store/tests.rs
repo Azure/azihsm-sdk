@@ -261,3 +261,22 @@ fn foreign_store_version_is_incompatible() {
     Partition(60).reset();
     assert_eq!(Partition(60).version(), STORE_VERSION);
 }
+
+/// Gate-1 re-arm (consumed by the SP on every warm / fw-update boot) must set
+/// `unwrapping_key_required` for every partition that still owns resources
+/// (`res_mask != 0`) and leave resource-free partitions untouched, so an
+/// un-provisioned slot is not made to demand a key it never had.
+#[test]
+fn rearm_sets_gate1_only_for_resourced_partitions() {
+    let resourced = Partition(61);
+    let empty = Partition(62);
+    resourced.set_res_mask(0x1);
+    resourced.set_unwrapping_key_required(false);
+    empty.set_res_mask(0);
+    empty.set_unwrapping_key_required(false);
+
+    PartStore::rearm_unwrapping_key_required();
+
+    assert!(resourced.unwrapping_key_required());
+    assert!(!empty.unwrapping_key_required());
+}
