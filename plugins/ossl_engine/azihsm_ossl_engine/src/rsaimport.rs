@@ -53,12 +53,6 @@ impl RsaImportHandler for AzihsmRsaImport {
         params: &RsaImportParams,
         pkey: *mut ffi::EVP_PKEY,
     ) -> EngineResult<()> {
-        if params.session {
-            return Err(EngineError::Other(
-                "azihsm.session:true (session keys) is not yet supported by the engine".into(),
-            ));
-        }
-
         let slot = engine_data_slot()?;
         let data = slot
             .get(engine)
@@ -79,7 +73,8 @@ impl RsaImportHandler for AzihsmRsaImport {
 /// `digitalSignature` → sign on the private half, verify on the public;
 /// `keyEncipherment` → decrypt on the private half, encrypt on the public.
 /// RSA-CRT (unless plain RSA was requested) applies to the private half only;
-/// the public half is always kind `Rsa`.
+/// the public half is always kind `Rsa`. `azihsm.session` marks both halves as
+/// session keys.
 fn import_props(params: &RsaImportParams) -> EngineResult<(HsmKeyProps, HsmKeyProps)> {
     let priv_kind = if params.crt {
         HsmKeyKind::RsaCrt
@@ -93,12 +88,12 @@ fn import_props(params: &RsaImportParams) -> EngineResult<(HsmKeyProps, HsmKeyPr
         .class(HsmKeyClass::Private)
         .key_kind(priv_kind)
         .bits(params.bits)
-        .is_session(false);
+        .is_session(params.session);
     let mut pub_builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
         .bits(params.bits)
-        .is_session(false);
+        .is_session(params.session);
     match params.key_usage {
         RsaKeyUsage::DigitalSignature => {
             priv_builder = priv_builder.can_sign(true);
@@ -257,4 +252,33 @@ enum ImportSource {
     PlaintextDer(Zeroizing<Vec<u8>>),
     /// A pre-wrapped blob (`azihsm.wrapped_key`); unwrapped directly.
     WrappedBlob(Zeroizing<Vec<u8>>),
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    // `azihsm.session` must reach both halves' HSM properties (and stay off
+    // for the persistent default), for each importing usage.
+    #[test]
+    fn import_props_carry_session_flag() {
+        for key_usage in [RsaKeyUsage::DigitalSignature, RsaKeyUsage::KeyEncipherment] {
+            for session in [false, true] {
+                let params = RsaImportParams {
+                    bits: 2048,
+                    crt: true,
+                    key_usage,
+                    session,
+                    input_key: None,
+                    wrapped_key: None,
+                    masked_key_path: None,
+                };
+                let (priv_props, pub_props) = import_props(&params).unwrap();
+                assert_eq!(priv_props.is_session(), session, "{key_usage:?}");
+                assert_eq!(pub_props.is_session(), session, "{key_usage:?}");
+            }
+        }
+    }
 }
