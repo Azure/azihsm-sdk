@@ -83,6 +83,8 @@ impl DestroyHandler for AzihsmDestroy {
         // run before this hook); only stale pointers are dropped here.
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(engine);
         azihsm_ossl_engine_core::asn1_method::release_ec_asn1_method(engine);
+        // The framework never frees engine ciphers: free this ENGINE's copies.
+        azihsm_ossl_engine_core::cipher_method::release_aes_cbc_ciphers(engine);
         Ok(())
     }
 }
@@ -208,6 +210,12 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     // The global registration holds an engine reference until ENGINE_cleanup,
     // so a dynamic engine loads at most once per process.
     azihsm_ossl_engine_core::asn1_method::register_ec_asn1_method::<crate::asn1::AzihsmEcAsn1>(
+        engine,
+    )?;
+    // AES-CBC with HSM keys attached via AZIHSM_CTRL_SET_KEY_URI; contexts with
+    // a raw key run the built-in software AES (see
+    // azihsm_ossl_engine_core::cipher_method).
+    azihsm_ossl_engine_core::cipher_method::register_aes_cbc_ciphers::<crate::aes::AzihsmAesCbc>(
         engine,
     )?;
 
