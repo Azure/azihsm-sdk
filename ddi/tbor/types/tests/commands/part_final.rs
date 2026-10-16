@@ -797,3 +797,307 @@ fn part_final_multi_threaded_single_winner() {
         "after the concurrent PartFinal race",
     );
 }
+
+/// A previous LocalMK backup shorter than the wire-pinned masked-envelope
+/// length must be rejected without advancing the partition out of
+/// `Initializing`. A fresh PartFinal must still succeed afterward.
+#[test]
+fn part_final_rejects_truncated_backup_and_allows_retry() {
+    let ctx = TestCtx::new();
+    let fixture = PotaFixture::generate();
+    let seed = mach_seed();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pta_pub = run_part_init(&ctx, &session, &fixture, &seed);
+    let chain = fixture.chain_for(&pta_pub);
+
+    let before_reject = read_part_info(&ctx);
+
+    let truncated = vec![0u8; LOCAL_MK_BACKUP_LEN - 1];
+
+    ctx.part_final(
+        &session,
+        &pota_policy(&fixture),
+        &truncated,
+        &chain.der_items(),
+    )
+    .expect_err("truncated previous LocalMK backup must be rejected");
+
+    let after_reject = read_part_info(&ctx);
+    assert_part_state(
+        &after_reject,
+        PART_STATE_INITIALIZING,
+        "after truncated-backup rejection",
+    );
+    assert_identity_stable(&before_reject, &after_reject, "truncated-backup rejection");
+
+    finalize(&ctx, &session, &fixture, &[], &chain);
+
+    assert_part_state(
+        &read_part_info(&ctx),
+        PART_STATE_INITIALIZED,
+        "after retry following truncated-backup rejection",
+    );
+}
+
+/// A previous LocalMK backup longer than the wire-pinned masked-envelope
+/// length must be rejected without mutating PartInit state.
+#[test]
+fn part_final_rejects_oversized_backup_and_allows_retry() {
+    let ctx = TestCtx::new();
+    let fixture = PotaFixture::generate();
+    let seed = mach_seed();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let pta_pub = run_part_init(&ctx, &session, &fixture, &seed);
+    let chain = fixture.chain_for(&pta_pub);
+
+    let before_reject = read_part_info(&ctx);
+
+    let oversized = vec![0u8; LOCAL_MK_BACKUP_LEN + 1];
+
+    ctx.part_final(
+        &session,
+        &pota_policy(&fixture),
+        &oversized,
+        &chain.der_items(),
+    )
+    .expect_err("oversized previous LocalMK backup must be rejected");
+
+    let after_reject = read_part_info(&ctx);
+    assert_part_state(
+        &after_reject,
+        PART_STATE_INITIALIZING,
+        "after oversized-backup rejection",
+    );
+    assert_identity_stable(&before_reject, &after_reject, "oversized-backup rejection");
+
+    finalize(&ctx, &session, &fixture, &[], &chain);
+
+    assert_part_state(
+        &read_part_info(&ctx),
+        PART_STATE_INITIALIZED,
+        "after retry following oversized-backup rejection",
+    );
+}
+
+/// A failed restore must be atomic: rejecting a corrupted previous backup
+/// must leave the partition in `Initializing`, preserve its identity, and
+/// allow the genuine backup to be retried successfully.
+#[test]
+fn part_final_tampered_backup_failure_allows_valid_backup_retry() {
+    let pota = CaKey::generate();
+    let policy = part_policy_with_pota(&pota.raw_pub());
+    let seed = mach_seed();
+    let thumb = pota_thumbprint();
+
+    let (backup, chain) = {
+        let ctx1 = TestCtx::new();
+        let session1 = bootstrap_rotated_co(&ctx1, &ROTATED_CO_PSK);
+
+        let chain = issue_pta_chain(&ctx1, &session1, &pota, &seed, &policy, &thumb);
+
+        let backup = ctx1
+            .part_final(&session1, &policy, &[], &chain.der_items())
+            .expect("PartFinal roundtrip")
+            .local_mk_backup;
+
+        (backup, chain)
+    };
+
+    let ctx2 = TestCtx::new();
+    let session2 = bootstrap_rotated_co(&ctx2, &ROTATED_CO_PSK);
+
+    ctx2.part_init(&session2, &seed, &policy, &thumb)
+        .expect("PartInit roundtrip");
+
+    let before_reject = read_part_info(&ctx2);
+
+    let mut tampered = backup.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0x01;
+
+    ctx2.part_final(&session2, &policy, &tampered, &chain.der_items())
+        .expect_err("tampered backup must be rejected");
+
+    let after_reject = read_part_info(&ctx2);
+
+    assert_part_state(
+        &after_reject,
+        PART_STATE_INITIALIZING,
+        "after tampered backup rejection",
+    );
+    assert_identity_stable(&before_reject, &after_reject, "tampered backup rejection");
+
+    let retry = ctx2
+        .part_final(&session2, &policy, &backup, &chain.der_items())
+        .expect("valid backup must remain usable after failed restore");
+
+    assert_eq!(retry.local_mk_backup.len(), LOCAL_MK_BACKUP_LEN);
+
+    assert_part_state(
+        &read_part_info(&ctx2),
+        PART_STATE_INITIALIZED,
+        "after valid backup retry",
+    );
+}
+
+/// Separate fresh PartFinal operations must produce full-sized backup
+/// envelopes and must not deterministically reuse the same masked envelope.
+#[test]
+fn part_final_fresh_devices_produce_distinct_backup_envelopes() {
+    let fixture = PotaFixture::generate();
+    let seed = mach_seed();
+
+    let backup_a = {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let pta_pub = run_part_init(&ctx, &session, &fixture, &seed);
+        let chain = fixture.chain_for(&pta_pub);
+
+        finalize(&ctx, &session, &fixture, &[], &chain)
+    };
+
+    let backup_b = {
+        let ctx = TestCtx::new();
+        let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+        let pta_pub = run_part_init(&ctx, &session, &fixture, &seed);
+        let chain = fixture.chain_for(&pta_pub);
+
+        finalize(&ctx, &session, &fixture, &[], &chain)
+    };
+
+    assert_eq!(backup_a.len(), LOCAL_MK_BACKUP_LEN);
+    assert_eq!(backup_b.len(), LOCAL_MK_BACKUP_LEN);
+
+    assert_ne!(
+        backup_a, backup_b,
+        "fresh PartFinal operations must not reuse an identical masked backup envelope",
+    );
+}
+
+/// PartInit state is partition-scoped rather than session-scoped. Closing the
+/// CO session that issued PartInit and opening a new CO session must not lose
+/// the pending provisioning state; PartFinal must still succeed.
+#[test]
+fn part_final_succeeds_after_co_session_reopen() {
+    let ctx = TestCtx::new();
+    let fixture = PotaFixture::generate();
+    let seed = mach_seed();
+
+    let init_session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pta_pub = run_part_init(&ctx, &init_session, &fixture, &seed);
+    let chain = fixture.chain_for(&pta_pub);
+
+    let before_close = read_part_info(&ctx);
+    assert_part_state(&before_close, PART_STATE_INITIALIZING, "after PartInit");
+
+    ctx.session_close(init_session.session_id)
+        .expect("close PartInit CO session");
+
+    let final_session = open_co_with(&ctx, &ROTATED_CO_PSK);
+
+    let before_final = read_part_info(&ctx);
+
+    assert_part_state(
+        &before_final,
+        PART_STATE_INITIALIZING,
+        "after reopening CO before PartFinal",
+    );
+
+    assert_identity_stable(
+        &before_close,
+        &before_final,
+        "CO session reopen before PartFinal",
+    );
+
+    finalize(&ctx, &final_session, &fixture, &[], &chain);
+
+    assert_part_state(
+        &read_part_info(&ctx),
+        PART_STATE_INITIALIZED,
+        "after PartFinal from reopened CO session",
+    );
+}
+
+/// Once PartInit has succeeded, PartFinal still requires a usable PTA chain.
+/// Supplying no certificates must fail without consuming the lifecycle
+/// transition, and a subsequent call with the valid chain must succeed.
+#[test]
+fn part_final_rejects_empty_chain_and_allows_retry() {
+    let ctx = TestCtx::new();
+    let fixture = PotaFixture::generate();
+    let seed = mach_seed();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let pta_pub = run_part_init(&ctx, &session, &fixture, &seed);
+    let chain = fixture.chain_for(&pta_pub);
+
+    let before_reject = read_part_info(&ctx);
+
+    ctx.part_final(&session, &pota_policy(&fixture), &[], &[])
+        .expect_err("PartFinal without a PTA certificate chain must fail");
+
+    let after_reject = read_part_info(&ctx);
+
+    assert_part_state(
+        &after_reject,
+        PART_STATE_INITIALIZING,
+        "after empty-chain rejection",
+    );
+
+    assert_identity_stable(&before_reject, &after_reject, "empty-chain rejection");
+
+    finalize(&ctx, &session, &fixture, &[], &chain);
+
+    assert_part_state(
+        &read_part_info(&ctx),
+        PART_STATE_INITIALIZED,
+        "after valid-chain retry",
+    );
+}
+
+/// Rejecting a mismatched PartPolicy must be side-effect free. The partition
+/// must remain in `Initializing` with the same identity, and retrying
+/// PartFinal with the policy bound by PartInit must succeed.
+#[test]
+fn part_final_policy_mismatch_preserves_state_and_allows_retry() {
+    let ctx = TestCtx::new();
+    let fixture = PotaFixture::generate();
+    let seed = mach_seed();
+
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let policy = pota_policy(&fixture);
+    let pta_pub = run_part_init(&ctx, &session, &fixture, &seed);
+    let chain = fixture.chain_for(&pta_pub);
+
+    let before_reject = read_part_info(&ctx);
+
+    let mut wrong_policy = policy;
+    let last = wrong_policy.len() - 2;
+    wrong_policy[last] ^= 0x01;
+
+    ctx.part_final(&session, &wrong_policy, &[], &chain.der_items())
+        .expect_err("mismatched PartPolicy must be rejected");
+
+    let after_reject = read_part_info(&ctx);
+
+    assert_part_state(
+        &after_reject,
+        PART_STATE_INITIALIZING,
+        "after policy mismatch",
+    );
+
+    assert_identity_stable(&before_reject, &after_reject, "policy mismatch rejection");
+
+    finalize(&ctx, &session, &fixture, &[], &chain);
+
+    assert_part_state(
+        &read_part_info(&ctx),
+        PART_STATE_INITIALIZED,
+        "after retry with correct policy",
+    );
+}
