@@ -40,7 +40,7 @@ use super::crypto;
 /// tests (e.g., tamper `exported` to force a Phase-2 MAC mismatch);
 /// the happy-path helper [`session_open_init`] populates it from a
 /// real round-trip.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PendingHandshake {
     /// Reserved session identifier returned by the FW.
     pub session_id: u16,
