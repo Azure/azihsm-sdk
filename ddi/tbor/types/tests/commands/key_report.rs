@@ -22,7 +22,9 @@
 //! * Imported ECC keys retain their public points and imported/sign/verify
 //!   flags (emu); generated keys carry generated/sign/derive flags.
 //! * CU rejection with a valid key on a finalized partition.
-//! * All supported symmetric key classes are rejected (emu); session-scoped ECC keys are rejected.
+//! * All supported symmetric key classes are rejected (emu).
+//! * Session-scoped P-384 ECC keys successfully produce signed reports;
+//!   the PID signature, public-key binding, and report data are verified.
 //! * Oversized envelopes and invalid sessions are rejected.
 //! * IV/ciphertext tampering fails authentication; the original key still works.
 //! * Default-PSK gate → `DefaultPskMustRotate` (dispatcher, pre-handler).
