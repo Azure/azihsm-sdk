@@ -46,6 +46,7 @@ use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
 use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
+use azihsm_ddi_tbor_types::TborStatus;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use zerocopy::TryFromBytes;
@@ -465,8 +466,7 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
     bytes
 }
 
-/// Drive `PartInit` → `PartFinal` so the partition is initialized and
-/// partition-local masking keys are available to a fuzz target.
+/// Drive `PartInit` → `PartFinal` so partition-local masking keys are available.
 pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
     let pota = CaKey::generate();
     let policy = known_good_part_policy(pota.raw_pub());
@@ -488,8 +488,7 @@ fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor
     }
 }
 
-/// Initialize a partition and create a test security domain so its
-/// masking key is available to a fuzz target.
+/// Initialize a partition and security domain so security-domain masking is available.
 pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     use zerocopy::IntoBytes;
 
@@ -553,10 +552,29 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         })
         .expect("sealing-key report generation should succeed");
 
+    let mut receiver_pub = [0u8; RAW_PUB_LEN];
+    let coord_len = RAW_PUB_LEN / 2;
+    for (dst, src) in receiver_pub[..coord_len]
+        .iter_mut()
+        .zip(sealing_key.pub_key[..coord_len].iter().rev())
+    {
+        *dst = *src;
+    }
+    for (dst, src) in receiver_pub[coord_len..]
+        .iter_mut()
+        .zip(sealing_key.pub_key[coord_len..].iter().rev())
+    {
+        *dst = *src;
+    }
+    let receiver = make_chain(&sata, &receiver_pub);
     let mfgr = make_chain(&CaKey::generate(), &pid_pub);
     let owner = make_chain(&CaKey::generate(), &pid_pub);
     let part_owner = make_chain(&sata, &pid_pub);
     let mut oob_items = Vec::new();
+    let receiver_chain = vec![
+        add_evidence_item(&mut oob_items, &receiver.root_der),
+        add_evidence_item(&mut oob_items, &receiver.leaf_der),
+    ];
     let mfgr_chain = vec![
         add_evidence_item(&mut oob_items, &mfgr.root_der),
         add_evidence_item(&mut oob_items, &mfgr.leaf_der),
@@ -574,6 +592,7 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     let req = TborSdCreateRemoteBackupReq {
         session_id: session.session_id,
         masked_sealing_key: sealing_key.masked_key,
+        receiver_cert_chain: receiver_chain,
         receiver_mfgr_cert_chain: mfgr_chain,
         receiver_owner_cert_chain: owner_chain,
         receiver_part_owner_cert_chain: part_owner_chain,
@@ -587,4 +606,30 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
     ctx.tbor_oob(&req, &oob)
         .expect("test security-domain creation should succeed");
+}
+
+/// Exercise key scopes that cannot be used by the backup fixtures' custom partition.
+pub fn exercise_non_partition_key_scope(
+    ctx: &TestCtx,
+    session: &SessionHandshake,
+    scope: KeyScope,
+) {
+    let req = TborSdSealingKeyGenReq {
+        session_id: session.session_id,
+        scope: scope.to_tbor(),
+    };
+    match scope {
+        KeyScope::SecurityDomain => {
+            create_test_security_domain(ctx, session);
+            ctx.tbor(&req)
+                .expect("security-domain-scoped sealing-key generation should succeed");
+        }
+        KeyScope::Unspecified | KeyScope::Session | KeyScope::Internal => {
+            finalize_partition(ctx, session);
+            ctx.expect_fw_reject(&req, TborStatus::UnsupportedKeyScope);
+        }
+        KeyScope::Ephemeral | KeyScope::Local => {
+            unreachable!("partition scopes are exercised by the backup fixture");
+        }
+    }
 }
