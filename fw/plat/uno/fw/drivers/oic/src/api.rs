@@ -175,13 +175,24 @@ impl<const DEPTH: usize> OicDriver<DEPTH> {
         let ocq_ctrl = regs.ocq_ch[ch].ctrl.get();
         let osq_ctrl = regs.osq_ch[ch].ctrl.get();
         let already_enabled = (ocq_ctrl & 0x1 != 0) && (osq_ctrl & 0x1 != 0);
-        // The queue must also already point at THIS firmware's ring buffers.
-        // A fw-update from a different image (or firmware family) leaves the
-        // channel enabled but programmed with foreign base addresses; attaching
-        // to that would read/write the wrong memory, so require a base-address
-        // match before adopting the hardware state.
-        let ours = regs.ocq_ch[ch].base_lo.get() == config.ocq_base
-            && regs.osq_ch[ch].base_lo.get() == config.osq_base;
+        // The queue must also already be programmed exactly as this firmware
+        // would program it: same ring bases, depths and OCQ tail-shadow
+        // address/mode. A fw-update from a different image (or firmware
+        // family) can leave the channel enabled with foreign or differently
+        // sized rings; attaching to that would read/write the wrong memory or
+        // wrap the indices at the wrong depth, so require a full match before
+        // adopting the hardware state.
+        let ocq = &regs.ocq_ch[ch];
+        let osq = &regs.osq_ch[ch];
+        let ours = ocq.base_lo.get() == config.ocq_base
+            && ocq.base_hi.get() == 0
+            && ocq.tail_shadow_lo.get() == config.ocq_tail_shadow
+            && ocq.tail_shadow_hi.get() == 0
+            && ocq.ctrl.is_set(OCQ_CHANNEL_CTRL::SHADOW_EN)
+            && ocq.ctrl.read(OCQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && osq.base_lo.get() == config.osq_base
+            && osq.base_hi.get() == 0
+            && osq.ctrl.read(OSQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH;
 
         // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
         // On a FwUpdateWarmReset the outbound queues were programmed and

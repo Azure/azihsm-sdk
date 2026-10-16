@@ -158,13 +158,25 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         let icq_ctrl = regs.icq_ch[ch].ctrl.get();
         let isq_ctrl = regs.isq_ch[ch].ctrl.get();
         let already_enabled = (icq_ctrl & 0x1 != 0) && (isq_ctrl & 0x1 != 0);
-        // The queue must also already point at THIS firmware's ring buffers.
-        // A fw-update from a different image (or firmware family) leaves the
-        // channel enabled but programmed with foreign base addresses; attaching
-        // to that would read/write the wrong memory, so require a base-address
-        // match before adopting the hardware state.
-        let ours = regs.icq_ch[ch].base_lo.get() == config.icq_base
-            && regs.isq_ch[ch].base_lo.get() == config.isq_base;
+        // The queue must also already be programmed exactly as this firmware
+        // would program it: same ring bases, depths, tail-shadow address/mode
+        // and buffer length. A fw-update from a different image (or firmware
+        // family) can leave the channel enabled with foreign or differently
+        // sized rings; attaching to that would read/write the wrong memory or
+        // wrap the indices at the wrong depth, so require a full match before
+        // adopting the hardware state.
+        let icq = &regs.icq_ch[ch];
+        let isq = &regs.isq_ch[ch];
+        let ours = icq.base_lo.get() == config.icq_base
+            && icq.base_hi.get() == 0
+            && icq.tail_shadow_lo.get() == config.icq_tail_shadow
+            && icq.tail_shadow_hi.get() == 0
+            && icq.ctrl.is_set(ICQ_CHANNEL_CTRL::SHADOW_EN)
+            && icq.ctrl.read(ICQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && isq.base_lo.get() == config.isq_base
+            && isq.base_hi.get() == 0
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::BUF_LEN) == config.io_size >> 4;
 
         // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
         // On a FwUpdateWarmReset the queues were programmed and enabled by the

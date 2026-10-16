@@ -993,6 +993,10 @@ impl IpcMessageType for IpcMessageShutdown {
     const LEN: usize = core::mem::size_of::<ShutdownInfo>();
 
     fn validate(&self) -> IpcResult<()> {
+        // The declared payload must be exactly the drain-time word.
+        if self.header.length() != Self::LEN as u32 {
+            return Err(IpcMessageErr::InvalidInputMessageForDecode.into());
+        }
         // Match the reference firmware's accepted drain-time window.
         if !matches!(self.info.drain_time_ms, 0..=60000) {
             return Err(IpcMessageErr::InvalidDrainTimeConfig.into());

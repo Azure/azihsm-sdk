@@ -110,6 +110,22 @@ impl UnoHsmPal {
             return Ok(());
         }
 
+        // A partition quarantined as `Faulted` (its free failed on a PCIe
+        // reset) still holds its tables and the keys inside them. Refuse to
+        // hand any of those tables to a different partition until the faulted
+        // owner is freed, so a failed cleanup can never expose its keys.
+        for idx in 0..NUM_PARTITIONS {
+            let other = HsmPartId::from(idx as u8);
+            if other == pid {
+                continue;
+            }
+            if let Ok(p) = PartStore::partition(other)
+                && matches!(p.state(), Ok(PartState::Faulted))
+                && p.res_mask() & mask != 0
+            {
+                return Err(HsmError::NotEnoughSpace);
+            }
+        }
         // A PF enabled before its resources were assigned is `Enabled` with no
         // resource mask yet (its identity/enabled keys are deferred); freeing
         // it would tear the enable down, so skip the free only in that exact
