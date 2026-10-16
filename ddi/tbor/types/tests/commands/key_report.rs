@@ -1046,7 +1046,7 @@ fn key_report_imported_rsa_crt_tampering_rejected() {
     imported_rsa_tampering_rejected(KEY_CLASS_RSA_CRT);
 }
 
-/// Rejects tampering with authenticated metadata of an imported RSA key.
+/// Verifies RSA/RSA-CRT authenticated metadata tampering fails GCM verification.
 #[cfg(feature = "emu")]
 fn imported_rsa_metadata_tampering_rejected(class: u8) {
     let ctx = TestCtx::new();
@@ -1061,8 +1061,9 @@ fn imported_rsa_metadata_tampering_rejected(class: u8) {
     let masked_key = imported.masked_key;
     let report_data = sample_report_data();
 
-    // Modify the last byte of the authenticated metadata (AAD).
-    let aad_offset = ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + ENVELOPE_AAD_LEN - 1;
+    // Modify authenticated metadata while preserving its valid encoding.
+    // This should reach the AES-GCM authentication check.
+    let aad_offset = ENVELOPE_HEADER_LEN + ENVELOPE_IV_LEN + 26;
 
     assert!(aad_offset < masked_key.len());
 
@@ -1075,7 +1076,7 @@ fn imported_rsa_metadata_tampering_rejected(class: u8) {
             masked_key: tampered,
             report_data,
         },
-        TborStatus::MaskedKeyDecodeFailed,
+        TborStatus::AesGcmDecryptTagDoesNotMatch,
     );
 
     // The original key remains valid after the rejected request.
