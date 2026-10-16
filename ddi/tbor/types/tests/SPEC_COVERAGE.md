@@ -446,12 +446,12 @@ Firmware integration coverage for the TBOR `KeyReport` command. Tests validate P
 | Default CO PSK is rejected | ✅ | `key_report::key_report_rejected_on_default_psk` | Expects `DefaultPskMustRotate` |
 | Different report-data patterns are preserved in signed reports | ✅ 🔁 | `key_report::key_report_report_data_patterns` | Covers zero-filled, 0xFF-filled, and patterned report data under Ephemeral and Local scopes |
 | Generated ECC keys on all supported curves can be attested | ✅ 🔁 | `key_report::key_report_generated_ecc_all_curves` | Tests P-256, P-384, and P-521 under Ephemeral and Local scopes; verifies Generated and Sign flags |
-| Symmetric key classes are rejected | ✅ 🔁 | `key_report::key_report_rejects_all_symmetric_key_classes_emu` | AES and HMAC-SHA256/384/512; expects `UnsupportedKeyType` |
+| Symmetric key classes are rejected | ✅ 🔁 | `key_report::key_report_rejects_all_symmetric_key_classes` | AES and HMAC-SHA256/384/512; expects `UnsupportedKeyType` |
 | Session-scoped ECC key produces a valid signed attestation report | ✅ (emu) | `key_report::key_report_session_scope_roundtrip` | Emulator-only; P-384 Session scope, verifies COSE_Sign1 signature, public-key binding, report data, and Generated/Sign flags (0x24) |
 | Oversized masked-key envelope is rejected | ✅ | `key_report::key_report_rejects_oversized_masked_key` | Uses `KEY_REPORT_MASKED_KEY_MAX_LEN + 1`; expects `TborInvalidFixedLength` |
 | Invalid session ID is rejected | ✅ | `key_report::key_report_rejects_invalid_session` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch` |
 | Tampered IV and ciphertext are rejected without affecting the original key | ✅ 🔁 | `key_report::key_report_rejects_tampered_iv_and_ciphertext` | Expects `AesGcmDecryptTagDoesNotMatch`; original masked key remains attestable |
-| Imported ECC keys on all supported curves can be attested | ✅ 🔁 | `key_report::key_report_imported_ecc_all_curves_emu` | P-256, P-384, and P-521; verifies Imported, Sign, and Verify flags |
+| Imported ECC keys on all supported curves can be attested | ✅ 🔁 | `key_report::key_report_imported_ecc_all_curves` | P-256, P-384, and P-521; verifies Imported, Sign, and Verify flags |
 | Crypto-User cannot attest a valid Local-scoped key after finalization | ✅ | `key_report::key_report_rejects_cu_with_valid_key_after_finalize` | Expects `InvalidPermissions` |
 | Generated ECC key with a non-empty label can be attested | ✅ | `key_report::key_report_generated_ecc_non_empty_label` | Verifies Generated and Sign flags |
 | Generated ECC key with maximum-length label can be attested | ✅ | `key_report::key_report_generated_ecc_max_label` | Uses `TBOR_KEY_LABEL_MAX_LEN` |
@@ -459,6 +459,18 @@ Firmware integration coverage for the TBOR `KeyReport` command. Tests validate P
 | Generated DERIVE-only ECC key with non-empty label can be attested | ✅ | `key_report::key_report_generated_ecc_derive_with_label` | Verifies Generated and Derive flags |
 | Generated ECC key with binary label can be attested | ✅ | `key_report::key_report_generated_ecc_binary_label` | Includes 0x00, 0x80, and 0xFF label bytes |
 | P-521 ECC key with maximum-length label can be attested | ✅ | `key_report::key_report_p521_with_max_label` | Exercises largest supported ECC curve and maximum key-label length |
+| Imported RSA-2048 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_roundtrip` | Verifies RSA COSE_Key modulus/exponent against host-generated key, report data, signature, and Imported/Sign/Verify flags |
+| Imported RSA-3072 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_3072_roundtrip` | Verifies 384-byte modulus, host-key binding, report data, and PID signature |
+| Imported RSA-4096 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_4096_roundtrip` | Exercises maximum supported RSA modulus size (512 bytes) and RSA COSE_Key encoding |
+| Imported RSA-CRT-2048 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_crt_roundtrip` | Verifies imported CRT key, independent host public-key binding, and signature |
+| Imported RSA-CRT-3072 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_crt_3072_roundtrip` | Verifies 384-byte modulus and CRT private-key import path |
+| Imported RSA-CRT-4096 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_crt_4096_roundtrip` | Tests maximum supported RSA-CRT size and 512-byte modulus attestation |
+| Imported RSA masked-key IV, ciphertext, and tag tampering is rejected | ✅ 🔁 (emu) | `key_report::key_report_imported_rsa_tampering_rejected` | Three corruption cases expect `AesGcmDecryptTagDoesNotMatch`; original key remains attestable |
+| Imported RSA-CRT masked-key IV, ciphertext, and tag tampering is rejected | ✅ 🔁 (emu) | `key_report::key_report_imported_rsa_crt_tampering_rejected` | Three corruption cases expect `AesGcmDecryptTagDoesNotMatch`; original key remains attestable |
+| Imported RSA masked-key metadata tampering is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_metadata_tampering_rejected` | Authenticated AAD corruption; expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Imported RSA-CRT masked-key metadata tampering is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_crt_metadata_tampering_rejected` | Authenticated AAD corruption; expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Imported RSA invalid session is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_invalid_session_rejected` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch`; valid session remains usable |
+| Imported RSA-CRT invalid session is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_crt_invalid_session_rejected` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch`; valid session remains usable |
   
 
 ## `EcdhDerive` (opcode in-session, gated)
