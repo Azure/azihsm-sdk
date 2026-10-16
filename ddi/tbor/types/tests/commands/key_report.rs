@@ -268,8 +268,14 @@ fn verify_key_report(
     );
 
     let cose_key = &decoded.public_key[..decoded.public_key_size as usize];
-    let (x_be, y_be) = cose_key_xy(cose_key);
+    let expected_curve = match sealing_pub_le.len() {
+        64 => 1,  // P-256
+        96 => 2,  // P-384
+        136 => 3, // P-521
+        other => panic!("unexpected public-key length {other}"),
+    };
 
+    let (x_be, y_be) = cose_key_xy(cose_key, expected_curve);
     // The COSE_Key holds big-endian coordinates; the sealing pubkey is
     // little-endian `x_le ‖ y_le`, so reverse each COSE_Key coordinate
     // and compare against the corresponding wire half.
@@ -297,9 +303,8 @@ fn verify_key_report(
     decoded
 }
 
-/// Walk a COSE_Key CBOR map and return its `(x, y)` byte strings
-/// (labels -2 / -3).
-fn cose_key_xy(cose_key: &[u8]) -> (Vec<u8>, Vec<u8>) {
+/// Parses an EC2 COSE_Key and verifies its key type and curve.
+fn cose_key_xy(cose_key: &[u8], expected_curve: u8) -> (Vec<u8>, Vec<u8>) {
     use minicbor::data::Type as CborType;
 
     let mut decoder = minicbor::Decoder::new(cose_key);
@@ -307,27 +312,44 @@ fn cose_key_xy(cose_key: &[u8]) -> (Vec<u8>, Vec<u8>) {
         .map()
         .expect("COSE_Key is a CBOR map")
         .expect("COSE_Key map length is known");
-    let (mut x_bytes, mut y_bytes): (Option<Vec<u8>>, Option<Vec<u8>>) = (None, None);
+
+    let mut kty = None;
+    let mut crv = None;
+    let mut x_bytes = None;
+    let mut y_bytes = None;
+
     for _ in 0..entries {
-        let label_ty = decoder.datatype().expect("COSE_Key entry has datatype");
-        let label = match label_ty {
+        let label = match decoder.datatype().expect("COSE_Key label datatype") {
             CborType::I8 | CborType::I16 | CborType::I32 | CborType::I64 => {
-                decoder.i64().expect("COSE_Key label decodes as int")
+                decoder.i64().expect("signed COSE label")
             }
+
             CborType::U8 | CborType::U16 | CborType::U32 | CborType::U64 => {
-                decoder.u64().expect("COSE_Key label decodes as uint") as i64
+                decoder.u64().expect("unsigned COSE label") as i64
             }
+
             other => panic!("unexpected COSE_Key label type {other:?}"),
         };
+
         match label {
-            -2 => x_bytes = Some(decoder.bytes().expect("pk_x bytes").to_vec()),
-            -3 => y_bytes = Some(decoder.bytes().expect("pk_y bytes").to_vec()),
-            _ => decoder.skip().expect("skip non-XY label value"),
+            1 => kty = Some(decoder.u8().expect("COSE key type")),
+            -1 => crv = Some(decoder.u8().expect("COSE curve")),
+            -2 => x_bytes = Some(decoder.bytes().expect("COSE X coordinate").to_vec()),
+            -3 => y_bytes = Some(decoder.bytes().expect("COSE Y coordinate").to_vec()),
+            _ => decoder.skip().expect("skip unknown COSE field"),
         }
     }
+
+    assert_eq!(kty, Some(2), "COSE key type must be EC2");
+    assert_eq!(
+        crv,
+        Some(expected_curve),
+        "COSE curve must match the expected ECC public key",
+    );
+
     (
-        x_bytes.expect("COSE_Key carries pk_x (label -2)"),
-        y_bytes.expect("COSE_Key carries pk_y (label -3)"),
+        x_bytes.expect("COSE_Key carries X coordinate"),
+        y_bytes.expect("COSE_Key carries Y coordinate"),
     )
 }
 
