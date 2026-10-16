@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 //! SoC driver — reads the boot-processor-published SoC reset reason.
 //!
 //! Mirrors the [`core_status`](azihsm_fw_uno_drivers_core_status) driver: a
@@ -54,4 +54,28 @@ pub fn reset_type() -> SocResetType {
     // the reference's volatile PSRAM access.
     let raw = unsafe { ((PSRAM_BASE + RESET_TYPE_OFFSET) as *const u32).read_volatile() };
     raw.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reset-reason decode drives the preserve-vs-wipe decision at boot:
+    /// only the two known warm-reset codes must map to their warm variants;
+    /// every other value (including an uninitialised or foreign word) must
+    /// fall through to `Por`, the fail-safe that triggers a destructive
+    /// partition-store init rather than trusting unknown preserved state.
+    #[test]
+    fn reset_type_decode_known_and_unknown() {
+        assert!(SocResetType::from(0) == SocResetType::Por);
+        assert!(SocResetType::from(1) == SocResetType::WarmReset);
+        assert!(SocResetType::from(2) == SocResetType::FwUpdateWarmReset);
+
+        for v in [3u32, 4, 0xFF, 0xFFFF_FFFF, 0xA3E0_3AFC] {
+            assert!(
+                SocResetType::from(v) == SocResetType::Por,
+                "unknown reset code {v:#x} must fail safe to Por"
+            );
+        }
+    }
 }

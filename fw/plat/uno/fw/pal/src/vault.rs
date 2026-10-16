@@ -28,6 +28,7 @@ use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
+use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmSessionManager;
@@ -35,6 +36,7 @@ use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
+use azihsm_fw_uno_drivers_part_store::NUM_PARTITIONS;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
@@ -367,6 +369,39 @@ fn fp_slot_alloc(res_mask: u128) -> HsmResult<(u8, u8)> {
         }
         Err(HsmError::NotEnoughSpace)
     })
+}
+
+/// Rebuild the slot bitmap from the bulk-key handles held in the vault.
+///
+/// The bitmap resets at boot while the GSRAM vault (and the engine's keys)
+/// survive a warm / fw-update reset, so each stored handle's slot is marked in
+/// use before any host IO can allocate. A malformed handle is skipped.
+pub(crate) fn fp_slots_rebuild() {
+    let mut bits = [0u8; NUM_FP_TABLES];
+    for idx in 0..NUM_PARTITIONS {
+        let res_mask = PartStore::partition(HsmPartId::from(idx as u8)).map_or(0, |p| p.res_mask());
+        if res_mask == 0 {
+            continue;
+        }
+        let _ = KeyVault::new(VaultStorage::new(res_mask)).for_each_key(|_id, kind, blob| {
+            if is_bulk_kind(kind) {
+                let bytes: &[u8] = blob;
+                if let [lo, hi] = *bytes {
+                    let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([lo, hi]));
+                    let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
+                    if vid < bits.len() && kidx < FP_MAX_SLOTS_PER_PART {
+                        bits[vid] |= 1 << kidx;
+                    }
+                }
+            }
+            Ok(())
+        });
+    }
+    FP_SLOTS.with(|slots| {
+        for (used, set) in slots.iter_mut().zip(bits.iter()) {
+            *used |= *set;
+        }
+    });
 }
 
 /// Release a previously allocated FP bulk-key slot in table `vault_id`.
