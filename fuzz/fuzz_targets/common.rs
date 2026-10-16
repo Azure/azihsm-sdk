@@ -553,38 +553,57 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         })
         .expect("sealing-key report generation should succeed");
 
-    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let mut sealing_pub = [0u8; RAW_PUB_LEN];
+    for (dst, src) in sealing_pub[..48]
+        .iter_mut()
+        .zip(sealing_key.pub_key[..48].iter().rev())
+    {
+        *dst = *src;
+    }
+    for (dst, src) in sealing_pub[48..]
+        .iter_mut()
+        .zip(sealing_key.pub_key[48..].iter().rev())
+    {
+        *dst = *src;
+    }
+
+    let receiver = make_chain(&sata, &sealing_pub);
+    let manufacturer = make_chain(&CaKey::generate(), &pid_pub);
     let owner = make_chain(&CaKey::generate(), &pid_pub);
-    let part_owner = make_chain(&sata, &pid_pub);
+    let partition_owner = make_chain(&sata, &pid_pub);
     let mut oob_items = Vec::new();
-    let mfgr_chain = vec![
-        add_evidence_item(&mut oob_items, &mfgr.root_der),
-        add_evidence_item(&mut oob_items, &mfgr.leaf_der),
+    let receiver_chain = vec![
+        add_evidence_item(&mut oob_items, &receiver.root_der),
+        add_evidence_item(&mut oob_items, &receiver.leaf_der),
+    ];
+    let manufacturer_chain = vec![
+        add_evidence_item(&mut oob_items, &manufacturer.root_der),
+        add_evidence_item(&mut oob_items, &manufacturer.leaf_der),
     ];
     let owner_chain = vec![
         add_evidence_item(&mut oob_items, &owner.root_der),
         add_evidence_item(&mut oob_items, &owner.leaf_der),
     ];
-    let part_owner_chain = vec![
-        add_evidence_item(&mut oob_items, &part_owner.root_der),
-        add_evidence_item(&mut oob_items, &part_owner.leaf_der),
+    let partition_owner_chain = vec![
+        add_evidence_item(&mut oob_items, &partition_owner.root_der),
+        add_evidence_item(&mut oob_items, &partition_owner.leaf_der),
     ];
     let report_descriptor = add_evidence_item(&mut oob_items, &report.report);
+    let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
     let req = TborSdCreateRemoteBackupReq {
         session_id: session.session_id,
         masked_sealing_key: sealing_key.masked_key,
-        receiver_mfgr_cert_chain: mfgr_chain,
+        receiver_cert_chain: receiver_chain,
+        receiver_mfgr_cert_chain: manufacturer_chain,
         receiver_owner_cert_chain: owner_chain,
-        receiver_part_owner_cert_chain: part_owner_chain,
+        receiver_part_owner_cert_chain: partition_owner_chain,
         receiver_report: ReportDescriptor {
             index: report_descriptor.index,
             length: report_descriptor.length,
         },
-        policy: <PartPolicy as TryFromBytes>::try_read_from_bytes(&policy_bytes)
-            .expect("security-domain policy should decode"),
+        policy,
     };
-    let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
     ctx.tbor_oob(&req, &oob)
         .expect("test security-domain creation should succeed");
 }
