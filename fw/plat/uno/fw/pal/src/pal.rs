@@ -1097,6 +1097,9 @@ impl HsmPal for UnoHsmPal {
                     "init: reset=warm/fwupdate -> keep store, rearm gate1"
                 );
                 azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+                // The slot bitmap is not preserved; re-mark the slots still
+                // referenced by the preserved vault before IO resumes.
+                crate::vault::fp_slots_rebuild();
             }
         }
         boot_status::set(BootStatus::Done);

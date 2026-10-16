@@ -324,6 +324,31 @@ impl<S: TableStorage> KeyVault<S> {
         Ok(())
     }
 
+    /// Visits every key in every owned table, live *and* disabled, passing
+    /// each key's id, kind, and stored material to `f`.
+    ///
+    /// Read-only walk used to rebuild external bookkeeping (e.g. a bulk-key
+    /// slot bitmap) from a vault that survived a reset.
+    pub fn for_each_key<F: FnMut(HsmKeyId, HsmVaultKeyKind, &DmaBuf) -> HsmResult<()>>(
+        &self,
+        mut f: F,
+    ) -> HsmResult<()> {
+        for table in 0..self.storage.table_count() {
+            if !self.storage.is_valid_table(table) {
+                continue;
+            }
+            for slot in 0..ENTRIES_PER_TABLE {
+                let entry = *self.storage.entry(table, slot)?;
+                if !entry.is_free() {
+                    let key_id = make_key_id(table, slot);
+                    let blob = self.key_present(key_id)?;
+                    f(key_id, entry.kind(), blob)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Deletes every key in every owned table, zeroing all material.
     pub async fn clear<G: HsmGdmaController>(
         &mut self,
