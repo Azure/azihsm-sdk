@@ -643,9 +643,12 @@ fn key_report_imported_ecc_all_curves() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
-    for key_len in [32usize, 48, 66] {
-        // Generate the private key independently on the host.
-        let key = EccPrivateKey::generate(key_len).expect("host ECC key generation");
+    for (curve, key_len) in [
+        (azihsm_crypto::EccCurve::P256, 32usize),
+        (azihsm_crypto::EccCurve::P384, 48),
+        (azihsm_crypto::EccCurve::P521, 66),
+    ] {
+        let key = EccPrivateKey::from_curve(curve).expect("host ECC key generation");
 
         // Extract the host public coordinates before importing.
         let (x_be, y_be) = key
