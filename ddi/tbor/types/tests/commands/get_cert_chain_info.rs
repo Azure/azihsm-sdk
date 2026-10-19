@@ -12,9 +12,9 @@
 //! path (same underlying cert store), and confirm an invalid slot is
 //! rejected.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_types::codec::DecodeError;
 use azihsm_ddi_tbor_types::codec::ResponseEncoder;
 use azihsm_ddi_tbor_types::codec::MAX_TOC_ENTRIES;
@@ -28,9 +28,6 @@ use azihsm_ddi_tbor_types::TborGetCertReq;
 use azihsm_ddi_tbor_types::TborResp;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::CERT_THUMBPRINT_LEN;
-
-use crate::commands::common::CO;
-use crate::commands::common::CU;
 
 const VALID_SLOT: u8 = 0;
 

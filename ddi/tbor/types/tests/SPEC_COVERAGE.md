@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 223 tests
+* emu: 252 tests
 * mock: 6 tests
 
 ## Legend
@@ -343,6 +343,50 @@ masked-key integrity, and unsupported SHA-1 generation.
 | CO rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_co_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key |
 | CU rejects SHA-1 HMAC generation with `InvalidArg` | ✅ | `hmac_generate_key::hmac_generate_key_cu_sha1_rejected` | Uses `HASH_ALGO_SHA1` with 32-byte key under rotated CU session |
 | Mismatched session ID while a valid CO session is active → `FileHandleSessionIdDoesNotMatch` | ✅ | `hmac_generate_key::hmac_generate_key_active_session_id_mismatch_rejected` | Sends `u16::MAX` while a rotated CO session remains active; verifies the valid session remains usable afterward |
+
+
+## `Hmac` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `Hmac` command.
+Tests compute HMAC tags using SHA-256, SHA-384, and SHA-512
+with generated and imported masked keys under Crypto-Officer (CO)
+and Crypto-User (CU) sessions.
+
+Coverage includes hash correctness, key scopes, session lifecycle,
+key labels, message-length boundaries, masked-key integrity,
+invalid requests, and CU authorization. SHA-1 HMAC is unsupported.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| SHA-256/384/512 generate valid deterministic HMAC tags | ✅ 🔁 | `hmac::hmac_roundtrip_all_hashes` | Verifies tag lengths, nonzero tags, determinism, and different-message separation |
+| Session-scoped HMAC key computes a valid tag | ✅ | `hmac::hmac_session_scope_roundtrip` | SHA-256 using Session scope |
+| Imported HMAC key produces consistent tags after repeated unwrap | ✅ | `hmac::hmac_unwrapped_key_roundtrip` | Verifies UnwrapKey-to-Hmac integration |
+| Empty message is accepted | ✅ | `hmac::hmac_empty_message` | SHA-256 returns a 32-byte tag |
+| Tampered masked-key authentication tag is rejected | ✅ | `hmac::hmac_rejects_tampered_key` | Expects `AesGcmDecryptTagDoesNotMatch` |
+| HMAC tags match host computation at message boundaries | ✅ 🔁 | `hmac::hmac_matches_host_at_message_boundaries` | SHA-256/384/512; includes padding boundaries and maximum message length |
+| Session-scoped HMAC works before partition finalization | ✅ 🔁 | `hmac::hmac_session_scope_before_finalize` | Exercises all three SHA-2 algorithms |
+| Non-HMAC masked key is rejected | ✅ | `hmac::hmac_rejects_non_hmac_key` | AES key produces `InvalidKeyType` |
+| Variable key lengths work across supported scopes | ✅ 🔁 | `hmac::hmac_variable_key_lengths_all_scopes` | SHA-256/384/512 across Session, Ephemeral, and Local scopes |
+| Invalid session ID is rejected | ✅ | `hmac::hmac_rejects_invalid_session` | Expects `FileHandleSessionIdDoesNotMatch` |
+| Session keys expire while Ephemeral/Local keys survive reopening | ✅ 🔁 | `hmac::hmac_scope_behavior_after_session_reopen` | Verifies key lifetime across CO sessions |
+| Message exceeding maximum supported length is rejected | ✅ | `hmac::hmac_rejects_oversized_message` | Expects `TborInvalidFixedLength` |
+| Out-of-range masked-key lengths are rejected | ✅ 🔁 | `hmac::hmac_rejects_out_of_range_masked_key_lengths` | Covers zero, below-minimum, and above-maximum lengths |
+| Tampered masked-key IV is rejected | ✅ | `hmac::hmac_rejects_tampered_iv` | Expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Tampered masked-key ciphertext is rejected | ✅ | `hmac::hmac_rejects_tampered_ciphertext` | Expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Rotated CU session supports all hashes and provisioned scopes | ✅ 🔁 | `hmac::hmac_crypto_user_all_hashes_and_scopes` | SHA-256/384/512 across Session, Ephemeral, and Local; distinct keys produce distinct tags |
+| Closed session rejects subsequent HMAC operations | ✅ | `hmac::hmac_rejects_closed_session` | Expects `SessionNotFound` |
+| Masked HMAC key remains reusable across repeated operations | ✅ 🔁 | `hmac::hmac_masked_key_reusable_after_multiple_calls` | Verifies determinism and unchanged host-side key bytes |
+| Arbitrary binary message matches host HMAC | ✅ | `hmac::hmac_all_byte_values_matches_host` | Tests every byte value from `0x00` through `0xff` |
+| Corrupted masked-key header is rejected | ✅ | `hmac::hmac_rejects_corrupted_masked_key_header` | Corrupts the first header byte and expects `InvalidArg`; original key remains usable |
+| Switching HMAC algorithms does not retain stale state | ✅ 🔁 | `hmac::hmac_alternating_hashes_do_not_leak_state` | Alternates SHA-256/384/512 and verifies earlier tags remain stable |
+| Non-empty HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_non_empty_key_label` | Generated labeled SHA-256 key successfully computes HMAC |
+| Labeled HMAC keys work with every supported hash | ✅ 🔁 | `hmac::hmac_generate_key_with_label_all_hashes` | SHA-256/384/512; verifies tag lengths and key reuse |
+| Binary HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_binary_key_label` | Includes null and non-ASCII label bytes |
+| Maximum-length HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_max_length_key_label` | Uses `TBOR_KEY_LABEL_MAX_LEN` |
+| Labeled Session-scoped key expires after session reopening | ✅ | `hmac::hmac_labeled_session_key_rejected_after_session_reopen` | Expects `AesGcmDecryptTagDoesNotMatch` |
+| CU accepts labeled HMAC keys across all hashes and scopes | ✅ 🔁 | `hmac::hmac_cu_labeled_keys_all_hashes_and_scopes` | Rotated CU; SHA-256/384/512 across Session, Ephemeral, and Local; verifies deterministic reuse |
+| CU handles empty, boundary-length, and maximum-length messages | ✅ 🔁 | `hmac::hmac_cu_message_boundaries_all_hashes` | Rotated CU; SHA-256/384/512 at padding/block boundaries and `HMAC_MSG_MAX_LEN` |
+| Imported HMAC keys with SIGN and VERIFY permissions compute valid MACs | ✅ 🔁 | `hmac::hmac_accepts_key_with_sign_permission` | Tests SHA-256, SHA-384, and SHA-512 using `UnwrapKey` with `KEY_USAGE_SIGN \| KEY_USAGE_VERIFY`; verifies correct MAC tag lengths |
 
 
 ## `EccGenerateKey` (opcode in-session, gated)
