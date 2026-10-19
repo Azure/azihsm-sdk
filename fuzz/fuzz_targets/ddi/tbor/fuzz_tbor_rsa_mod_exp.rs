@@ -190,17 +190,16 @@ fn import_rsa_key(
         KEY_CLASS_RSA
     };
 
-    ctx
-        .tbor(&TborUnwrapKeyReq {
-            session_id,
-            scope,
-            key_class,
-            key_usage,
-            oaep_hash_algo: RSA_OAEP_SHA256,
-            wrapped_blob,
-            key_label: key_label.to_vec(),
-        })
-        .map(|resp| resp.masked_key)
+    ctx.tbor(&TborUnwrapKeyReq {
+        session_id,
+        scope,
+        key_class,
+        key_usage,
+        oaep_hash_algo: RSA_OAEP_SHA256,
+        wrapped_blob,
+        key_label: key_label.to_vec(),
+    })
+    .map(|resp| resp.masked_key)
 }
 
 fuzz_target!(|input: FuzzInput| {
@@ -256,10 +255,7 @@ fuzz_target!(|input: FuzzInput| {
             || known_usage == (KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT);
         let import_expected_success = matches!(
             input.key_scope,
-            KeyScope::Session
-                | KeyScope::Ephemeral
-                | KeyScope::Local
-                | KeyScope::SecurityDomain
+            KeyScope::Session | KeyScope::Ephemeral | KeyScope::Local | KeyScope::SecurityDomain
         ) && valid_rsa_usage
             && input.key_label.len() <= TBOR_KEY_LABEL_MAX_LEN;
         if generate_valid_key && import_succeeded != import_expected_success {
