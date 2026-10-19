@@ -28,6 +28,7 @@ use azihsm_crypto::ExportableKey;
 use azihsm_crypto::Verifier;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
+use azihsm_ddi_tbor_test_harness::coord_sizes;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
@@ -62,19 +63,6 @@ const SCOPE_UNSPECIFIED: u8 = 0b000;
 /// `KeyScope::Internal` discriminant.
 #[cfg(feature = "emu")]
 const SCOPE_INTERNAL: u8 = 0b101;
-
-/// Per-curve wire sizes: `(wire_coord_len, raw_coord_len)`.
-///
-/// `wire_coord_len` is the padded on-wire component size (P-521 → 68);
-/// `raw_coord_len` is the cryptographic component size (P-521 → 66).
-fn coord_sizes(pub_len: usize) -> (usize, usize) {
-    match pub_len {
-        64 => (32, 32),
-        96 => (48, 48),
-        136 => (68, 66),
-        _ => panic!("unexpected public-key length {pub_len}"),
-    }
-}
 
 /// Generate an ECC key on-device for `curve` under `scope`.
 fn generate_in_scope(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) -> (Vec<u8>, Vec<u8>) {

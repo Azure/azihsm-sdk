@@ -16,6 +16,7 @@ use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::coord_sizes;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
 use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
@@ -58,7 +59,6 @@ pub type DdiTest = AzihsmDdi;
 
 const P256_COORD_LEN: usize = 32;
 const P384_COORD_LEN: usize = RAW_PUB_LEN / 2;
-const P521_COORD_LEN: usize = 66;
 const MACH_SEED_PATTERN_BASE: u8 = 0x40;
 const POTA_THUMBPRINT_PATTERN_BASE: u8 = 0x80;
 const PUBKEY_PATTERN_HIGH_BIT: u8 = 0x80;
@@ -161,11 +161,7 @@ impl EccCurve {
     /// Raw (unpadded) coordinate length in bytes; also the length of an
     /// ECDH shared secret (the X coordinate).
     pub fn coord_len(self) -> usize {
-        match self {
-            Self::P256 => P256_COORD_LEN,
-            Self::P384 => P384_COORD_LEN,
-            Self::P521 => P521_COORD_LEN,
-        }
+        coord_sizes(self.wire_pub_key_len()).1
     }
 
     /// Largest digest the firmware zero-extends into the ECDSA field.
