@@ -13,9 +13,11 @@
 //!
 //! All state is in GSRAM, so a [`KeyVault`] is constructed per call over a
 //! lightweight [`VaultStorage`](azihsm_fw_uno_drivers_vault::VaultStorage)
-//! handle that carries only the calling partition's resource mask.  The only
-//! PAL-resident state is the fast-path bulk-key slot bitmap and the lock
-//! that serializes bulk-key registration against teardown.
+//! handle that carries only the calling partition's resource mask.  The
+//! fast-path bulk-key slot bitmap is in GSRAM too
+//! ([`FpSlotMap`](azihsm_fw_uno_drivers_vault::FpSlotMap)); the only
+//! PAL-resident state is the lock that serializes bulk-key registration
+//! against teardown.
 //!
 //! Following the reference firmware, the SDK `meta` (key label) is not
 //! stored (see the [`KeyVault`] crate docs).
@@ -28,7 +30,6 @@ use azihsm_fw_hsm_pal_traits::HsmAlloc;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyId;
-use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSessId;
 use azihsm_fw_hsm_pal_traits::HsmSessionManager;
@@ -36,7 +37,6 @@ use azihsm_fw_hsm_pal_traits::HsmSessionState;
 use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
-use azihsm_fw_uno_drivers_part_store::NUM_PARTITIONS;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_vault::VaultStorage;
 use azihsm_fw_uno_key_vault::KeyVault;
@@ -285,7 +285,8 @@ fn session_bulk_slots(io: &impl HsmIo, session: u16) -> HsmResult<[u8; NUM_FP_TA
 // Fast-path (FP) bulk-key IPC helpers
 // ---------------------------------------------------------------------------
 
-use azihsm_fw_single_cell::SingleCell;
+use azihsm_fw_uno_drivers_vault::FP_SLOT_TABLES;
+use azihsm_fw_uno_drivers_vault::FpSlotMap;
 
 use crate::ipc::AesBulk256KeyId;
 use crate::ipc::AesBulkKeyType;
@@ -324,16 +325,17 @@ fn is_bulk_kind(kind: HsmVaultKeyKind) -> bool {
 const FP_MAX_SLOTS_PER_PART: u8 = 7;
 
 /// Number of global FP key-vault tables (resource groups), ids `0..=64`.
-const NUM_FP_TABLES: usize = 65;
+const NUM_FP_TABLES: usize = FP_SLOT_TABLES;
 
-/// Per-table FP bulk-key slot occupancy bitmap (bit `i` set = slot `i` in
-/// use).  Tables are global and each is owned by at most one partition;
-/// a partition may own several (its `res_mask`), so a bulk key is placed
-/// in a free slot of one of the calling partition's owned tables — the
-/// same table-based scheme the HSM key vault uses, giving `7 × owned`
-/// capacity rather than a single table's 7 slots.  The FP engine
-/// addresses bulk keys by `(vault_id = table, key_index = slot)`.
-static FP_SLOTS: SingleCell<[u8; NUM_FP_TABLES]> = SingleCell::new([0u8; NUM_FP_TABLES]);
+// Per-table FP bulk-key slot occupancy bitmap ([`FpSlotMap`], bit `i` set =
+// slot `i` in use).  Tables are global and each is owned by at most one
+// partition; a partition may own several (its `res_mask`), so a bulk key is
+// placed in a free slot of one of the calling partition's owned tables — the
+// same table-based scheme the HSM key vault uses, giving `7 × owned`
+// capacity rather than a single table's 7 slots.  The FP engine addresses
+// bulk keys by `(vault_id = table, key_index = slot)`.  The map is in GSRAM
+// beside the vault holding those handles, so both survive warm and
+// fw-update resets together (reference `cdma_key_vault_meta_data`).
 
 /// Validate a partition id ([`HsmIo::pid`]) as the PCIe function number the
 /// fast-path engine matches against.
@@ -355,7 +357,7 @@ fn part_id_to_pcie_fn(part_id: u8) -> HsmResult<u8> {
 /// 0..=6 slot — mirroring the HSM key vault's table-based allocation so
 /// bulk-key capacity scales with the partition's owned tables.
 fn fp_slot_alloc(res_mask: u128) -> HsmResult<(u8, u8)> {
-    FP_SLOTS.with(|slots| {
+    FpSlotMap::with(|slots| {
         for (table, used) in slots.iter_mut().enumerate().take(NUM_FP_TABLES) {
             if res_mask & (1u128 << table) == 0 {
                 continue; // table not owned by this partition
@@ -371,42 +373,9 @@ fn fp_slot_alloc(res_mask: u128) -> HsmResult<(u8, u8)> {
     })
 }
 
-/// Rebuild the slot bitmap from the bulk-key handles held in the vault.
-///
-/// The bitmap resets at boot while the GSRAM vault (and the engine's keys)
-/// survive a warm / fw-update reset, so each stored handle's slot is marked in
-/// use before any host IO can allocate. A malformed handle is skipped.
-pub(crate) fn fp_slots_rebuild() {
-    let mut bits = [0u8; NUM_FP_TABLES];
-    for idx in 0..NUM_PARTITIONS {
-        let res_mask = PartStore::partition(HsmPartId::from(idx as u8)).map_or(0, |p| p.res_mask());
-        if res_mask == 0 {
-            continue;
-        }
-        let _ = KeyVault::new(VaultStorage::new(res_mask)).for_each_key(|_id, kind, blob| {
-            if is_bulk_kind(kind) {
-                let bytes: &[u8] = blob;
-                if let [lo, hi] = *bytes {
-                    let id = AesBulk256KeyId::from_bits(u16::from_le_bytes([lo, hi]));
-                    let (vid, kidx) = (usize::from(id.vault_id()), id.key_index());
-                    if vid < bits.len() && kidx < FP_MAX_SLOTS_PER_PART {
-                        bits[vid] |= 1 << kidx;
-                    }
-                }
-            }
-            Ok(())
-        });
-    }
-    FP_SLOTS.with(|slots| {
-        for (used, set) in slots.iter_mut().zip(bits.iter()) {
-            *used |= *set;
-        }
-    });
-}
-
 /// Release a previously allocated FP bulk-key slot in table `vault_id`.
 fn fp_slot_free(vault_id: u8, key_index: u8) {
-    FP_SLOTS.with(|slots| {
+    FpSlotMap::with(|slots| {
         let idx = usize::from(vault_id);
         if idx < slots.len() && key_index < FP_MAX_SLOTS_PER_PART {
             slots[idx] &= !(1 << key_index);
@@ -417,7 +386,7 @@ fn fp_slot_free(vault_id: u8, key_index: u8) {
 /// Clear the slot bits set in `bits` (one bitmap byte per table).  Used to
 /// release a batch of slots after their vault entries have been removed.
 fn fp_slots_free_bits(bits: &[u8; NUM_FP_TABLES]) {
-    FP_SLOTS.with(|slots| {
+    FpSlotMap::with(|slots| {
         for (used, clear) in slots.iter_mut().zip(bits.iter()) {
             *used &= !*clear;
         }
@@ -428,7 +397,7 @@ fn fp_slots_free_bits(bits: &[u8; NUM_FP_TABLES]) {
 /// partition reset, where the engine's own function teardown removes the
 /// keys (see `vault_clear`).
 fn fp_slots_free_mask(res_mask: u128) {
-    FP_SLOTS.with(|slots| {
+    FpSlotMap::with(|slots| {
         for (table, used) in slots.iter_mut().enumerate().take(NUM_FP_TABLES) {
             if res_mask & (1u128 << table) != 0 {
                 *used = 0;
@@ -507,7 +476,9 @@ async fn fp_bulk_create(
     // `info` is scrubbed on drop, on every exit from this future.
     let sent = fp_send_key_update(pal, &info).await;
     // On failure the backend may already own the key; keep the slot reserved
-    // (don't free it) so a later create can't alias it — reclaimed on reset.
+    // (don't free it) so a later create can't alias it — reclaimed on
+    // partition reset. The reservation is in GSRAM, so it also holds across
+    // a warm / fw-update reset.
     sent?;
 
     let bulk_id = AesBulk256KeyId::new()

@@ -1087,6 +1087,8 @@ impl HsmPal for UnoHsmPal {
             SocResetType::Por => {
                 info!("boot", "init: reset=POR -> partition store init_default");
                 azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+                // FP slot map: SP zeroes GSRAM on POR; kept across
+                // warm/fw-update with the vault.
             }
             SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
                 // The SP decides impactless vs impactful updates; an impactful
@@ -1097,9 +1099,6 @@ impl HsmPal for UnoHsmPal {
                     "init: reset=warm/fwupdate -> keep store, rearm gate1"
                 );
                 azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
-                // The slot bitmap is not preserved; re-mark the slots still
-                // referenced by the preserved vault before IO resumes.
-                crate::vault::fp_slots_rebuild();
             }
         }
         boot_status::set(BootStatus::Done);
