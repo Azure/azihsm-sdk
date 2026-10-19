@@ -99,22 +99,13 @@ impl Evidence {
     }
 }
 
-fn push_item(oob: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
-    let descriptor = CertDescriptor {
-        index: oob.len() as u8,
-        length: U16::new(bytes.len() as u16),
-    };
-    oob.push(bytes.to_vec());
-    descriptor
-}
-
 fn push_chain(
     oob: &mut Vec<Vec<u8>>,
     chain: &azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain,
 ) -> Vec<CertDescriptor> {
     vec![
-        push_item(oob, &chain.root_der),
-        push_item(oob, &chain.leaf_der),
+        common::add_evidence_item(oob, &chain.root_der),
+        common::add_evidence_item(oob, &chain.leaf_der),
     ]
 }
 
@@ -129,7 +120,7 @@ fn make_evidence_with_sata(
     let mfgr = push_chain(&mut oob, &make_chain(&CaKey::generate(), pid_pub));
     let owner = push_chain(&mut oob, &make_chain(&CaKey::generate(), pid_pub));
     let part_owner = push_chain(&mut oob, &make_chain(sata, pid_pub));
-    let report = push_item(&mut oob, report_bytes);
+    let report = common::add_evidence_item(&mut oob, report_bytes);
 
     Evidence {
         receiver,

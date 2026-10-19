@@ -490,7 +490,7 @@ pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
         .expect("PartFinal should succeed");
 }
 
-fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
+pub fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
     let index = u8::try_from(oob_items.len()).expect("evidence count fits descriptor index");
     let length = u16::try_from(der.len()).expect("evidence item length fits descriptor");
     oob_items.push(der.to_vec());
