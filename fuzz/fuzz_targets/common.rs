@@ -28,6 +28,9 @@ use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::ECC_DIGEST_MAX_LEN;
+use azihsm_ddi_tbor_types::ECC_PUB_KEY_MAX_LEN;
+use azihsm_ddi_tbor_types::ECC_SIG_MAX_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -52,6 +55,15 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 use zerocopy::TryFromBytes;
 
 pub type DdiTest = AzihsmDdi;
+
+const P256_COORD_LEN: usize = 32;
+const P384_COORD_LEN: usize = RAW_PUB_LEN / 2;
+const P521_COORD_LEN: usize = 66;
+const MACH_SEED_PATTERN_BASE: u8 = 0x40;
+const POTA_THUMBPRINT_PATTERN_BASE: u8 = 0x80;
+const PUBKEY_PATTERN_HIGH_BIT: u8 = 0x80;
+const SATA_PUBKEY_PATTERN_BASE: u8 = 0x20;
+const POLICY_INFO_FILL: u8 = 0xAB;
 
 /// Wire discriminants for the TBOR `KeyScope` enum.
 pub const KEY_SCOPE_UNSPECIFIED: u8 = 0b000;
@@ -150,27 +162,27 @@ impl EccCurve {
     /// ECDH shared secret (the X coordinate).
     pub fn coord_len(self) -> usize {
         match self {
-            Self::P256 => 32,
-            Self::P384 => 48,
-            Self::P521 => 66,
+            Self::P256 => P256_COORD_LEN,
+            Self::P384 => P384_COORD_LEN,
+            Self::P521 => P521_COORD_LEN,
         }
     }
 
     /// Largest digest the firmware zero-extends into the ECDSA field.
     pub fn max_digest_len(self) -> usize {
         match self {
-            Self::P256 => 32,
-            Self::P384 => 48,
-            Self::P521 => 64,
+            Self::P256 => P256_COORD_LEN,
+            Self::P384 => P384_COORD_LEN,
+            Self::P521 => ECC_DIGEST_MAX_LEN,
         }
     }
 
     /// Wire `r ‖ s` length, each component padded to the coordinate width.
     pub fn wire_sig_len(self) -> usize {
         match self {
-            Self::P256 => 64,
-            Self::P384 => 96,
-            Self::P521 => 136,
+            Self::P256 => P256_COORD_LEN * 2,
+            Self::P384 => P384_COORD_LEN * 2,
+            Self::P521 => ECC_SIG_MAX_LEN,
         }
     }
 
@@ -178,9 +190,9 @@ impl EccCurve {
     /// coordinate width (P-521: 66 -> 68 bytes).
     pub fn wire_pub_key_len(self) -> usize {
         match self {
-            Self::P256 => 64,
-            Self::P384 => 96,
-            Self::P521 => 136,
+            Self::P256 => P256_COORD_LEN * 2,
+            Self::P384 => RAW_PUB_LEN,
+            Self::P521 => ECC_PUB_KEY_MAX_LEN,
         }
     }
 }
@@ -396,13 +408,13 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
 /// Fixed `PartInit` machine seed (`0x40 + i`), mirroring the canonical
 /// fixture used by the `PartInit` integration suite.
 pub fn mach_seed() -> [u8; MACH_SEED_LEN] {
-    core::array::from_fn(|i| 0x40 + i as u8)
+    core::array::from_fn(|i| MACH_SEED_PATTERN_BASE + i as u8)
 }
 
 /// Fixed `PartInit` POTA thumbprint (`0x80 ^ i`), mirroring the canonical
 /// fixture used by the `PartInit` integration suite.
 pub fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
-    core::array::from_fn(|i| 0x80 ^ i as u8)
+    core::array::from_fn(|i| POTA_THUMBPRINT_PATTERN_BASE ^ i as u8)
 }
 
 /// Fill a 96-byte `PolicyPubKey::data` slot with a deterministic
@@ -415,7 +427,7 @@ pub fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
 pub fn fill_ecc384_pubkey_pattern(fill: u8) -> [u8; POLICY_MAX_KEY_LEN] {
     let mut data = [0u8; POLICY_MAX_KEY_LEN];
     for (i, b) in data.iter_mut().enumerate() {
-        *b = (fill.wrapping_add(i as u8)) | 0x80;
+        *b = (fill.wrapping_add(i as u8)) | PUBKEY_PATTERN_HIGH_BIT;
     }
     data
 }
@@ -457,9 +469,9 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
     policy.sata_pub_key = PolicyPubKey::new(
         PolicyKeyKind::Ecc384,
         POLICY_MAX_KEY_LEN as u16,
-        fill_ecc384_pubkey_pattern(0x20),
+        fill_ecc384_pubkey_pattern(SATA_PUBKEY_PATTERN_BASE),
     );
-    policy.info = [0xAB; POLICY_INFO_LEN];
+    policy.info = [POLICY_INFO_FILL; POLICY_INFO_LEN];
 
     let mut bytes = [0u8; PART_POLICY_LEN];
     bytes.copy_from_slice(policy.as_bytes());
@@ -553,7 +565,7 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         .expect("sealing-key report generation should succeed");
 
     let mut receiver_pub = [0u8; RAW_PUB_LEN];
-    let coord_len = RAW_PUB_LEN / 2;
+    let coord_len = P384_COORD_LEN;
     for (dst, src) in receiver_pub[..coord_len]
         .iter_mut()
         .zip(sealing_key.pub_key[..coord_len].iter().rev())

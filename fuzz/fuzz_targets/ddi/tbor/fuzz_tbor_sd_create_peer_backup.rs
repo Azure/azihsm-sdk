@@ -23,11 +23,13 @@ use azihsm_ddi_tbor_types::MASKED_SD_LEN;
 use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
+use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyFlags;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::ReportDescriptor;
+use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
 use azihsm_ddi_tbor_types::TborKeyReportReq;
 use azihsm_ddi_tbor_types::TborPartInfoReq;
 use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
@@ -40,6 +42,12 @@ use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
+
+const P384_COORD_LEN: usize = SD_SEALING_PUB_KEY_LEN / 2;
+const SEC1_UNCOMPRESSED: u8 = 0x04;
+const POLICY_MUTATION_MASK: u8 = 1;
+const MIN_REPEAT_CALLS: usize = 2;
+const REPEAT_COUNT_VARIANTS: u8 = 3;
 
 #[derive(Debug, Clone, Copy, Arbitrary)]
 enum Fault {
@@ -70,7 +78,7 @@ enum Fault {
 struct FuzzInput {
     fault: Fault,
     key_scope: common::KeyScope,
-    policy_info: [u8; 64],
+    policy_info: [u8; POLICY_INFO_LEN],
     report_data: [u8; KEY_REPORT_DATA_LEN],
     mutation_mask: u8,
     repeat_count: u8,
@@ -136,11 +144,11 @@ fn make_evidence_with_sata(
     }
 }
 
-fn public_key_be(wire_le: &[u8; 96]) -> [u8; 96] {
-    let mut out = [0u8; 96];
-    for i in 0..48 {
-        out[i] = wire_le[47 - i];
-        out[48 + i] = wire_le[95 - i];
+fn public_key_be(wire_le: &[u8; SD_SEALING_PUB_KEY_LEN]) -> [u8; SD_SEALING_PUB_KEY_LEN] {
+    let mut out = [0u8; SD_SEALING_PUB_KEY_LEN];
+    for i in 0..P384_COORD_LEN {
+        out[i] = wire_le[P384_COORD_LEN - 1 - i];
+        out[P384_COORD_LEN + i] = wire_le[SD_SEALING_PUB_KEY_LEN - 1 - i];
     }
     out
 }
@@ -150,7 +158,7 @@ fn build_policy(
     sata: &CaKey,
     pid: &[u8],
     pid_pub: &[u8; RAW_PUB_LEN],
-    info: [u8; 64],
+    info: [u8; POLICY_INFO_LEN],
     allow_cloning: bool,
 ) -> PartPolicy {
     let mut bytes = common::known_good_part_policy(pota.raw_pub());
@@ -185,7 +193,7 @@ fn checked_success(ctx: &TestCtx, req: &TborSdCreatePeerBackupReq, oob: &[&[u8]]
         "peer backup response must not be all zero",
     );
     assert_eq!(
-        response.pok_peer_backup[0], 0x04,
+        response.pok_peer_backup[0], SEC1_UNCOMPRESSED,
         "HPKE encapsulated key must begin with an uncompressed P-384 point",
     );
 }
@@ -392,7 +400,7 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         match input.fault {
-            Fault::PolicyMismatch => req.policy.info[0] ^= 1,
+            Fault::PolicyMismatch => req.policy.info[0] ^= POLICY_MUTATION_MASK,
             Fault::InvalidSenderTag if !mutation_is_noop => {
                 req.masked_sealing_key[MASKED_SEALING_KEY_LEN - 1] ^= input.mutation_mask;
             }
@@ -443,7 +451,7 @@ fuzz_target!(|input: FuzzInput| {
         if should_succeed {
             let oob = evidence.oob_slices();
             let calls = if matches!(input.fault, Fault::Repeat) {
-                2 + usize::from(input.repeat_count % 3)
+                MIN_REPEAT_CALLS + usize::from(input.repeat_count % REPEAT_COUNT_VARIANTS)
             } else {
                 1
             };

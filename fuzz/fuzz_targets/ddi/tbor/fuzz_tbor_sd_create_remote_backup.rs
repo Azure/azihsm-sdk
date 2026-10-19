@@ -39,6 +39,9 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
+const CHAIN_LEAF_INDEX: usize = 1;
+const POLICY_MUTATION_MASK: u8 = 1;
+
 /// Each variant starts from a freshly provisioned, otherwise-valid
 /// partition and request. Mutations therefore reach distinct handler gates
 /// instead of spending most inputs on malformed TBOR framing.
@@ -218,7 +221,7 @@ fn build_fixture(
 
     let mut oob_items = Vec::new();
     let receiver_desc = push_chain(&mut oob_items, receiver_chain);
-    let receiver_leaf_index = usize::from(receiver_desc[1].index);
+    let receiver_leaf_index = usize::from(receiver_desc[CHAIN_LEAF_INDEX].index);
     let mut mfgr_desc = Vec::new();
     let mut owner_desc = Vec::new();
     let mut part_owner_desc = Vec::new();
@@ -357,7 +360,7 @@ fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
             assert_rejected(ctx, &fixture, TborStatus::InvalidArg);
         }
         Mutation::PolicyHashMismatch => {
-            fixture.request.policy.info[0] ^= 1;
+            fixture.request.policy.info[0] ^= POLICY_MUTATION_MASK;
             let bound_policy = <PartPolicy as TryFromBytes>::try_read_from_bytes(&fixture.policy)
                 .expect("bound policy image");
             assert_ne!(

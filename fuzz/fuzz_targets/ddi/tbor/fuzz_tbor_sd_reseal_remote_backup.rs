@@ -38,6 +38,9 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
+const CHAIN_LEAF_INDEX: usize = 1;
+const POLICY_MUTATION_MASK: u8 = 1;
+
 /// Every case starts with real keys, evidence, policy, and a source backup.
 /// Mutations therefore exercise handler validation and crypto paths rather
 /// than spending most fuzz iterations on undecodable request bytes.
@@ -155,10 +158,10 @@ fn build_reseal_evidence(
     let mut oob_items = Vec::new();
     let (src_mfgr, src_owner, src_part_owner, src_report, src_report_index) =
         push_evidence(&mut oob_items, pid_pub, sata_key, src_report);
-    let src_leaf_index = usize::from(src_mfgr[1].index);
+    let src_leaf_index = usize::from(src_mfgr[CHAIN_LEAF_INDEX].index);
     let (dest_mfgr, dest_owner, dest_part_owner, dest_report, dest_report_index) =
         push_evidence(&mut oob_items, pid_pub, sata_key, dest_report);
-    let dest_leaf_index = usize::from(dest_mfgr[1].index);
+    let dest_leaf_index = usize::from(dest_mfgr[CHAIN_LEAF_INDEX].index);
 
     debug_assert_eq!(src_report_index, usize::from(src_report.index));
     debug_assert_eq!(dest_report_index, usize::from(dest_report.index));
@@ -436,7 +439,7 @@ fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
             );
         }
         Mutation::PolicyHashMismatch => {
-            fixture.request.policy.info[0] ^= 1;
+            fixture.request.policy.info[0] ^= POLICY_MUTATION_MASK;
             assert_rejected(ctx, &fixture);
         }
         Mutation::SourceReportOutOfRange => {

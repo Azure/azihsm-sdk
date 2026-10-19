@@ -6,6 +6,8 @@
 #[path = "../../common.rs"]
 mod common;
 
+use azihsm_crypto::aead_envelope::AeadAlg;
+use azihsm_crypto::aead_envelope::HEADER_LEN as ENVELOPE_HEADER_LEN;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
@@ -34,7 +36,9 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
-const ENVELOPE_CIPHERTEXT_OFFSET: usize = 8 + 12 + 192;
+const MASKED_KEY_METADATA_LEN: usize = 192;
+const ENVELOPE_CIPHERTEXT_OFFSET: usize =
+    ENVELOPE_HEADER_LEN + AeadAlg::AesGcm256.iv_len() + MASKED_KEY_METADATA_LEN;
 
 #[derive(Arbitrary, Clone, Copy, Debug)]
 enum Mutation {
