@@ -147,6 +147,8 @@ fn main() {
         .allowlist_var("EC_PKEY_NO_PARAMETERS")
         .allowlist_var("BIO_CTRL_INFO")
         .allowlist_var("EVP_PKEY_.*")
+        .allowlist_var("EVP_CIPH_.*")
+        .allowlist_var("EVP_CTRL_.*")
         .allowlist_var("RSA_FLAG_.*")
         .allowlist_var("RSA_PKCS1_.*")
         .allowlist_var("ERR_LIB_ENGINE")

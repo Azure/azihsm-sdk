@@ -171,10 +171,20 @@ fn evp_pkey_sign(pkey: *mut ffi::EVP_PKEY, digest: &[u8], md: *const ffi::EVP_MD
 /// [`EngineData`] so the same flow runs on the mock (always) and on real
 /// hardware (the `hw_tests` smokes). Only the `open` differs between the two.
 mod round_trips {
+    use std::ffi::CString;
+    use std::ffi::c_int;
+    use std::ffi::c_void;
+    use std::ptr::null;
+    use std::ptr::null_mut;
+
+    use azihsm_api::HsmAesCbcAlgo;
+    use azihsm_api::HsmAesKey;
+    use azihsm_api::HsmAesKeyGenAlgo;
     use azihsm_api::HsmEccCurve;
     use azihsm_api::HsmEccKeyGenAlgo;
     #[cfg(feature = "mock")]
     use azihsm_api::HsmEccPrivateKey;
+    use azihsm_api::HsmEncrypter;
     use azihsm_api::HsmGenericSecretKeyUnmaskAlgo;
     use azihsm_api::HsmHmacAlgo;
     use azihsm_api::HsmHmacKeyUnmaskAlgo;
@@ -184,6 +194,11 @@ mod round_trips {
     use azihsm_api::HsmKeyManager;
     use azihsm_api::HsmKeyPropsBuilder;
     use azihsm_api::HsmSigner;
+    use azihsm_ossl_engine_core::cipher_method::AES_BLOCK;
+    use azihsm_ossl_engine_core::cipher_method::AZIHSM_CTRL_SET_KEY_URI;
+    use azihsm_ossl_engine_core::cipher_method::register_aes_cbc_ciphers;
+    use azihsm_ossl_engine_core::cipher_method::release_aes_cbc_ciphers;
+    use azihsm_ossl_engine_core::error::RetCode;
     use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
@@ -668,6 +683,222 @@ mod round_trips {
         let _ = slot.take(&mut engine)?;
         // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
         unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        Ok(())
+    }
+
+    /// `len` bytes of a repeating 0..=255 pattern.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| u8::try_from(i & usize::from(u8::MAX)).unwrap_or_default())
+            .collect()
+    }
+
+    /// Run `input` through a fresh context of `engine_raw`'s AES-CBC `nid`
+    /// cipher with the key at `uri` attached (init, ctrl, then an init setting
+    /// `iv`), in `chunk`-byte updates plus the final. `None` if a step fails.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    fn aes_cbc(
+        engine_raw: *mut ffi::ENGINE,
+        nid: c_int,
+        uri: &str,
+        iv: &[u8],
+        encrypt: bool,
+        input: &[u8],
+        chunk: usize,
+    ) -> Option<Vec<u8>> {
+        let ok = RetCode::Success as c_int;
+        let uri = CString::new(uri).unwrap();
+        let enc = c_int::from(encrypt);
+        // Room for every byte plus a block of buffering and a block of padding.
+        let mut out = vec![0u8; input.len().saturating_add(AES_BLOCK.saturating_mul(2))];
+        let mut total = 0usize;
+        let mut n: c_int = 0;
+        // SAFETY: standard EVP cipher calls on a fresh context, freed below; uri
+        // is NUL-terminated and out has room for everything written.
+        let done = unsafe {
+            let cipher = ffi::ENGINE_get_cipher(engine_raw, nid);
+            assert!(!cipher.is_null(), "engine cipher {nid}");
+            let ctx = ffi::EVP_CIPHER_CTX_new();
+            assert!(!ctx.is_null());
+            let uri_ptr = uri.as_ptr().cast_mut().cast::<c_void>();
+            let mut done = ffi::EVP_CipherInit_ex(ctx, cipher, engine_raw, null(), null(), enc)
+                == ok
+                && ffi::EVP_CIPHER_CTX_ctrl(ctx, AZIHSM_CTRL_SET_KEY_URI, 0, uri_ptr) == ok
+                && ffi::EVP_CipherInit_ex(ctx, null(), null_mut(), null(), iv.as_ptr(), enc) == ok;
+            for piece in input.chunks(chunk) {
+                let len = c_int::try_from(piece.len()).unwrap();
+                done = done
+                    && ffi::EVP_CipherUpdate(
+                        ctx,
+                        out[total..].as_mut_ptr(),
+                        &mut n,
+                        piece.as_ptr(),
+                        len,
+                    ) == ok;
+                total = total.saturating_add(usize::try_from(n).unwrap());
+            }
+            done = done && ffi::EVP_CipherFinal_ex(ctx, out[total..].as_mut_ptr(), &mut n) == ok;
+            ffi::EVP_CIPHER_CTX_free(ctx);
+            ffi::ERR_clear_error();
+            done
+        };
+        out.truncate(total.saturating_add(usize::try_from(n).unwrap()));
+        done.then_some(out)
+    }
+
+    /// The SDK's own AES-CBC (PKCS#7) encryption of `msg` under `key` and
+    /// `iv`: the reference the engine's output must equal.
+    fn sdk_cbc_encrypt(key: &HsmAesKey, iv: &[u8], msg: &[u8]) -> EngineResult<Vec<u8>> {
+        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec())
+            .map_err(|e| EngineError::wrap("AES-CBC algo", e))?;
+        HsmEncrypter::encrypt_vec(&mut algo, key, msg)
+            .map_err(|e| EngineError::wrap("SDK AES-CBC", e))
+    }
+
+    /// Generate a persistent `bits`-bit AES key on the open HSM and write its
+    /// masked blob to `path`. The key is deleted again if the blob cannot be
+    /// written.
+    fn generate_aes_blob(data: &EngineData, bits: u32, path: &Path) -> EngineResult<HsmAesKey> {
+        let key = data.with_session(|session| {
+            let props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Secret)
+                .key_kind(HsmKeyKind::Aes)
+                .bits(bits)
+                .can_encrypt(true)
+                .can_decrypt(true)
+                .is_session(false)
+                .build()
+                .map_err(|e| EngineError::wrap("build AES props", e))?;
+            HsmKeyManager::generate_key(session, &mut HsmAesKeyGenAlgo::default(), props)
+                .map_err(|e| EngineError::wrap("generate AES key", e))
+        })?;
+        let written = key
+            .masked_key_vec()
+            .map_err(|e| EngineError::wrap("export AES masked key", e))
+            .and_then(|masked| {
+                write_key_material(path, &masked)
+                    .map_err(|e| EngineError::wrap("write AES blob", e))
+            });
+        match written {
+            Ok(()) => Ok(key),
+            Err(e) => {
+                crate::context::delete_hsm_key(key, "AES test key");
+                Err(e)
+            }
+        }
+    }
+
+    /// AES-CBC with HSM keys through the engine's ciphers. An AES key of each
+    /// size is generated in the HSM and its masked blob attached to engine
+    /// cipher contexts: the output for messages up to several device requests
+    /// long equals the SDK's own AES-CBC with the same key and decrypts back;
+    /// a key attaches only to the cipher of its size; a non-AES URI and
+    /// missing, garbage or EC blobs are refused; a released key is deleted from
+    /// the HSM. Backend-agnostic.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_aes_cbc(data: EngineData, dir: &Path) -> EngineResult<()> {
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        register_aes_cbc_ciphers::<crate::aes::AzihsmAesCbc>(&engine)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+        let data = slot
+            .get(&engine)
+            .ok_or(EngineError::NullParam("engine_data"))?;
+        let pid = std::process::id();
+        let iv = [0x24u8; AES_BLOCK];
+        let ciphers = [
+            (c_int::try_from(ffi::NID_aes_128_cbc).unwrap(), 128u32),
+            (c_int::try_from(ffi::NID_aes_192_cbc).unwrap(), 192),
+            (c_int::try_from(ffi::NID_aes_256_cbc).unwrap(), 256),
+        ];
+
+        // An AES key of each size in the HSM, and its masked blob on disk.
+        let mut guards = Vec::new();
+        let mut keys = Vec::new();
+        for (_, bits) in ciphers {
+            let path = dir.join(format!("aes-cbc-{bits}-{pid}.bin"));
+            guards.push(TempFile(path.clone()));
+            let key = generate_aes_blob(data, bits, &path)?;
+            keys.push((bits, key, format!("azihsm://{};type=aes", path.display())));
+        }
+
+        for (key_bits, key, uri) in &keys {
+            for (nid, bits) in ciphers {
+                if bits != *key_bits {
+                    assert!(
+                        aes_cbc(engine_raw, nid, uri, &iv, true, b"x", AES_BLOCK).is_none(),
+                        "a {key_bits}-bit key must not attach to AES-{bits}-CBC"
+                    );
+                    continue;
+                }
+                for len in [0usize, 33, 4113] {
+                    let msg = pattern(len);
+                    let expected = sdk_cbc_encrypt(key, &iv, &msg)?;
+                    for chunk in [1, 1000] {
+                        let ct = aes_cbc(engine_raw, nid, uri, &iv, true, &msg, chunk);
+                        assert_eq!(
+                            ct.as_ref(),
+                            Some(&expected),
+                            "{bits}-bit, {len} bytes, chunk {chunk}"
+                        );
+                    }
+                    let pt = aes_cbc(engine_raw, nid, uri, &iv, false, &expected, 1000);
+                    assert_eq!(pt, Some(msg), "{bits}-bit, {len} bytes");
+                }
+            }
+        }
+
+        // Refused key URIs: another key type, a missing blob, a garbage blob,
+        // and an EC key's blob labelled aes.
+        let (nid128, _) = ciphers[0];
+        let garbage = dir.join(format!("aes-cbc-garbage-{pid}.bin"));
+        let _garbage_guard = TempFile(garbage.clone());
+        write_key_material(&garbage, &[0x5au8; 64])
+            .map_err(|e| EngineError::wrap("write garbage blob", e))?;
+        let ec_path = dir.join(format!("aes-cbc-ec-{pid}.bin"));
+        let _ec_guard = TempFile(ec_path.clone());
+        let (ec_blob, _) = generate_masked(data, HsmEccCurve::P256)?;
+        write_key_material(&ec_path, &ec_blob)
+            .map_err(|e| EngineError::wrap("write EC blob", e))?;
+        for uri in [
+            format!("azihsm://{};type=ec", guards[0].0.display()),
+            format!(
+                "azihsm://{};type=aes",
+                dir.join("no-such-aes-key.bin").display()
+            ),
+            format!("azihsm://{};type=aes", garbage.display()),
+            format!("azihsm://{};type=aes", ec_path.display()),
+        ] {
+            assert!(
+                aes_cbc(engine_raw, nid128, &uri, &iv, true, b"x", AES_BLOCK).is_none(),
+                "{uri} must be refused"
+            );
+        }
+
+        // A released key is deleted from the HSM: the engine's key wrapper
+        // deletes it on drop, which a second handle observes.
+        for (bits, key, _) in keys {
+            let observer = key.clone();
+            assert!(
+                sdk_cbc_encrypt(&observer, &iv, b"x").is_ok(),
+                "{bits}-bit key usable"
+            );
+            drop(crate::aes::CbcKey::new(key));
+            assert!(
+                sdk_cbc_encrypt(&observer, &iv, b"x").is_err(),
+                "a released {bits}-bit key must be deleted from the HSM"
+            );
+        }
+
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: every cipher context above is freed; engine_raw is the
+        // ENGINE_new ref from new_test_engine.
+        unsafe {
+            release_aes_cbc_ciphers(&engine);
+            ffi::ENGINE_free(engine_raw);
+        }
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         Ok(())
     }
@@ -2099,6 +2330,21 @@ mod mock {
         }
     }
 
+    // AES-CBC with HSM keys through the engine's ciphers, cross-checked
+    // against the SDK on the same device (see round_trips::run_aes_cbc).
+    #[test]
+    #[serial]
+    fn aes_cbc_via_engine_ciphers() {
+        let scratch = Scratch::new("aes-cbc");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_aes_cbc(data, &scratch.0).unwrap();
+    }
+
     // A signature produced through a loaded/imported RSA key (HSM PKCS#1 v1.5
     // via our RSA_METHOD sign slot, reached through EVP_DigestSign like the ABI
     // and CLI do) must verify against the key's public half in software (see
@@ -2582,5 +2828,19 @@ mod hw_tests {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
         round_trips::run_session_keys(data, &std::env::temp_dir())
+    }
+
+    /// Hardware AES-CBC through the engine's ciphers, same flow as the mock
+    /// test (see [`super::round_trips::run_aes_cbc`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine aes_cbc_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn aes_cbc_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_aes_cbc(data, &std::env::temp_dir())
     }
 }

@@ -62,16 +62,13 @@ pub fn load_key(
     key_id: &str,
 ) -> EngineResult<*mut ffi::EVP_PKEY> {
     let parsed = uri::parse(key_id)?;
-
-    // First real caller of the lazy HSM open (idempotent).
-    data.open_hsm_from_env()?;
-    let masked = read_masked_key(&parsed.masked_key_path)?;
+    let path = &parsed.masked_key_path;
     match parsed.key_type {
-        KeyType::Ec => load_ec(engine, data, &masked),
-        KeyType::Rsa => crate::rsaload::load_rsa(engine, data, &masked),
+        KeyType::Ec => load_ec(engine, data, &open_and_read(data, path)?),
+        KeyType::Rsa => crate::rsaload::load_rsa(engine, data, &open_and_read(data, path)?),
         // The blob does not record RSA-PSS-ness; the URI type selects it.
         KeyType::RsaPss => {
-            let pkey = crate::rsaload::load_rsa(engine, data, &masked)?;
+            let pkey = crate::rsaload::load_rsa(engine, data, &open_and_read(data, path)?)?;
             // SAFETY: pkey is the owning RSA key load_rsa just returned; on
             // failure it is still ours to free.
             unsafe {
@@ -82,7 +79,21 @@ pub fn load_key(
             }
             Ok(pkey)
         }
+        // A symmetric key is attached to a cipher context instead; refused
+        // without opening the HSM.
+        KeyType::Aes => Err(EngineError::Other(
+            "aes keys are not private keys: attach them to an AES cipher context \
+             with AZIHSM_CTRL_SET_KEY_URI"
+                .into(),
+        )),
     }
+}
+
+/// Open the HSM (the loader is the first real caller of the lazy, idempotent
+/// open) and read the masked-key blob at `path`.
+fn open_and_read(data: &EngineData, path: &Path) -> EngineResult<Zeroizing<Vec<u8>>> {
+    data.open_hsm_from_env()?;
+    read_masked_key(path)
 }
 
 /// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
@@ -429,5 +440,21 @@ mod tests {
         let oversize = usize::try_from(MAX_MASKED_KEY_SIZE + 1).unwrap();
         fs::write(&p, vec![0u8; oversize]).unwrap();
         assert!(read_masked_key(&p).is_err());
+    }
+
+    // An aes URI is refused before the HSM is opened or the blob read.
+    #[test]
+    #[allow(unsafe_code)]
+    fn load_key_refuses_aes_without_opening_the_hsm() {
+        let data = EngineData::new();
+        // SAFETY: a fresh ENGINE, freed below; load_key fails before using it.
+        let raw = unsafe { ffi::ENGINE_new() };
+        // SAFETY: raw is the non-null ENGINE just created.
+        let engine = unsafe { Engine::from_ptr(std::ptr::NonNull::new(raw).unwrap()) };
+        let err = load_key(&engine, &data, "azihsm:///no/such/key.bin;type=aes").unwrap_err();
+        assert!(err.to_string().contains("AZIHSM_CTRL_SET_KEY_URI"), "{err}");
+        assert!(!data.is_hsm_open());
+        // SAFETY: raw is the ENGINE_new ref from above.
+        unsafe { ffi::ENGINE_free(raw) };
     }
 }

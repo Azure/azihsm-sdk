@@ -30,6 +30,9 @@ mod logging;
 mod uri;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod aes;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod keyload;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
