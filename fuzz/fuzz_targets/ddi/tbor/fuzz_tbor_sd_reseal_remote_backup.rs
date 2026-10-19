@@ -270,44 +270,6 @@ fn build_policy_and_finalize(
     (policy_bytes, pid_pub)
 }
 
-fn build_source_backup(
-    ctx: &TestCtx,
-    session_id: u16,
-    policy: &[u8; PART_POLICY_LEN],
-    pid_pub: &[u8; RAW_PUB_LEN],
-    sata_key: &CaKey,
-    masked_sender_key: &[u8; MASKED_SEALING_KEY_LEN],
-    receiver_pub: &[u8; RAW_PUB_LEN],
-    receiver_report: &[u8],
-) -> [u8; POK_REMOTE_BACKUP_LEN] {
-    let mut oob_items = Vec::new();
-    let receiver_chain = push_chain(&mut oob_items, &make_chain(sata_key, receiver_pub));
-    let mfgr = push_chain(&mut oob_items, &make_chain(&CaKey::generate(), pid_pub));
-    let owner = push_chain(&mut oob_items, &make_chain(&CaKey::generate(), pid_pub));
-    let part_owner = push_chain(&mut oob_items, &make_chain(sata_key, pid_pub));
-    let report_item = push_item(&mut oob_items, receiver_report);
-    let oob: Vec<&[u8]> = oob_items.iter().map(Vec::as_slice).collect();
-    let policy = PartPolicy::try_read_from_bytes(policy).expect("policy image is canonical");
-
-    let request = TborSdCreateRemoteBackupReq {
-        session_id,
-        masked_sealing_key: *masked_sender_key,
-        receiver_cert_chain: receiver_chain,
-        receiver_mfgr_cert_chain: mfgr,
-        receiver_owner_cert_chain: owner,
-        receiver_part_owner_cert_chain: part_owner,
-        receiver_report: ReportDescriptor {
-            index: report_item.index,
-            length: report_item.length,
-        },
-        policy,
-    };
-    let response = ctx
-        .tbor_oob(&request, &oob)
-        .expect("create real source remote backup");
-    response.pok_remote_backup
-}
-
 fn build_fixture(ctx: &TestCtx, wrong_receiver_key: bool, key_scope: common::KeyScope) -> Fixture {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let sata_key = CaKey::generate();
@@ -322,16 +284,31 @@ fn build_fixture(ctx: &TestCtx, wrong_receiver_key: bool, key_scope: common::Key
     let wrong_receiver_key = wrong_receiver_key
         .then(|| sealing_key_report_and_pub(ctx, session.session_id, key_scope).0);
 
-    let src_remote_backup = build_source_backup(
-        ctx,
-        session.session_id,
-        &policy,
-        &pid_pub,
-        &sata_key,
-        &masked_sender,
-        &receiver_pub,
-        &receiver_report,
-    );
+    let mut oob_items = Vec::new();
+    let receiver_chain = push_chain(&mut oob_items, &make_chain(&sata_key, &receiver_pub));
+    let mfgr = push_chain(&mut oob_items, &make_chain(&CaKey::generate(), &pid_pub));
+    let owner = push_chain(&mut oob_items, &make_chain(&CaKey::generate(), &pid_pub));
+    let part_owner = push_chain(&mut oob_items, &make_chain(&sata_key, &pid_pub));
+    let report_item = push_item(&mut oob_items, &receiver_report);
+    let oob: Vec<&[u8]> = oob_items.iter().map(Vec::as_slice).collect();
+
+    let request = TborSdCreateRemoteBackupReq {
+        session_id: session.session_id,
+        masked_sealing_key: masked_sender,
+        receiver_cert_chain: receiver_chain,
+        receiver_mfgr_cert_chain: mfgr,
+        receiver_owner_cert_chain: owner,
+        receiver_part_owner_cert_chain: part_owner,
+        receiver_report: ReportDescriptor {
+            index: report_item.index,
+            length: report_item.length,
+        },
+        policy: PartPolicy::try_read_from_bytes(&policy).expect("policy image is canonical"),
+    };
+    let src_remote_backup = ctx
+        .tbor_oob(&request, &oob)
+        .expect("create real source remote backup")
+        .pok_remote_backup;
 
     let evidence = build_reseal_evidence(&pid_pub, &sata_key, &sender_report, &destination_report);
     let request = TborSdResealRemoteBackupReq {
