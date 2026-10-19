@@ -22,6 +22,7 @@
 //! | Requested `key_type` | Vault kind | Output length |
 //! |---|---|---|
 //! | `Aes128` / `Aes192` / `Aes256` | `Aes128` / `Aes192` / `Aes256` | 16 / 24 / 32 |
+//! | `AesGcmBulk256` / `AesGcmBulk256Unapproved` / `AesXtsBulk256` | same kind (bulk; registered with the bulk-crypto backend) | 32 |
 //! | `HmacSha256` / `384` / `512` | `VarLenHmacSha256` / `384` / `512` | 32 / 48 / 64 |
 //! | `VarHmac256` / `384` / `512` | `VarLenHmacSha256` / `384` / `512` | `key_length` |
 //!
@@ -85,7 +86,7 @@ pub(crate) fn validate_input_secret(kind: HsmVaultKeyKind) -> HsmResult<()> {
 /// into the vault kind, OKM length, and attribute family.
 ///
 /// See the [module docs](self) for the full mapping.  Unsupported
-/// output types (ECC / RSA / Secret / XTS bulk) return
+/// output types (ECC / RSA / Secret) return
 /// [`HsmError::InvalidKeyType`].
 pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmResult<KdfTarget> {
     let aes = |kind, out_len| {
@@ -108,6 +109,7 @@ pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmRe
         DdiKeyType::Aes192 => aes(HsmVaultKeyKind::Aes192, 24),
         DdiKeyType::Aes256 => aes(HsmVaultKeyKind::Aes256, 32),
 
+        DdiKeyType::AesXtsBulk256 => aes(HsmVaultKeyKind::AesXtsBulk256, 32),
         DdiKeyType::AesGcmBulk256 => aes(HsmVaultKeyKind::AesGcmBulk256, 32),
         DdiKeyType::AesGcmBulk256Unapproved => aes(HsmVaultKeyKind::AesGcmBulk256Unapproved, 32),
 
