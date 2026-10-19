@@ -64,20 +64,4 @@ pub use session::encrypt_psk_envelope;
 pub use session::SessionHandshake;
 pub use session::SessionOpenInitOptions;
 pub use session_guard::SessionGuard;
-
-/// Per-curve wire sizes: `(wire_coord_len, raw_coord_len)`.
-///
-/// `wire_coord_len` is the padded on-wire component size (P-521: 68);
-/// `raw_coord_len` is the cryptographic component size (P-521: 66).
-///
-/// # Panics
-///
-/// Panics if `pub_len` is not a supported wire public-key length (64, 96, or 136).
-pub fn coord_sizes(pub_len: usize) -> (usize, usize) {
-    match pub_len {
-        64 => (32, 32),
-        96 => (48, 48),
-        136 => (68, 66),
-        _ => panic!("unexpected public-key length {pub_len}"),
-    }
-}
+pub use session::coord_sizes;

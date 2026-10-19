@@ -29,9 +29,6 @@ use azihsm_ddi_tbor_types::CertDescriptor;
 use azihsm_ddi_tbor_types::ECC_CURVE_P256;
 use azihsm_ddi_tbor_types::ECC_CURVE_P384;
 use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-use azihsm_ddi_tbor_types::ECC_DIGEST_MAX_LEN;
-use azihsm_ddi_tbor_types::ECC_PUB_KEY_MAX_LEN;
-use azihsm_ddi_tbor_types::ECC_SIG_MAX_LEN;
 use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
 use azihsm_ddi_tbor_types::MACH_SEED_LEN;
@@ -167,28 +164,24 @@ impl EccCurve {
     /// Largest digest the firmware zero-extends into the ECDSA field.
     pub fn max_digest_len(self) -> usize {
         match self {
-            Self::P256 => P256_COORD_LEN,
-            Self::P384 => P384_COORD_LEN,
-            Self::P521 => ECC_DIGEST_MAX_LEN,
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 64,
         }
     }
 
     /// Wire `r ‖ s` length, each component padded to the coordinate width.
     pub fn wire_sig_len(self) -> usize {
-        match self {
-            Self::P256 => P256_COORD_LEN * 2,
-            Self::P384 => P384_COORD_LEN * 2,
-            Self::P521 => ECC_SIG_MAX_LEN,
-        }
+        coord_sizes(self.wire_pub_key_len()).0 * 2
     }
 
     /// Wire `x ‖ y` public-key length, each coordinate padded to the wire
     /// coordinate width (P-521: 66 -> 68 bytes).
     pub fn wire_pub_key_len(self) -> usize {
         match self {
-            Self::P256 => P256_COORD_LEN * 2,
-            Self::P384 => RAW_PUB_LEN,
-            Self::P521 => ECC_PUB_KEY_MAX_LEN,
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
         }
     }
 }
