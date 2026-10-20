@@ -17,6 +17,7 @@ pub mod part_final;
 pub mod part_init;
 pub mod psk_change;
 
+pub use crypto::coord_sizes;
 pub use finish::build_mac_fin;
 pub use finish::session_open_finish;
 pub use finish::session_open_finish_with_mac;

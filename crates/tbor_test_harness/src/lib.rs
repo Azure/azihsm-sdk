@@ -59,6 +59,7 @@ pub use fixture::ROTATED_CO_PSK;
 pub use fixture::ROTATED_CU_PSK;
 pub use session::build_mac_fin;
 pub use session::build_part_init_mach_seed_aad;
+pub use session::coord_sizes;
 pub use session::encrypt_mach_seed_envelope;
 pub use session::encrypt_psk_envelope;
 pub use session::SessionHandshake;
