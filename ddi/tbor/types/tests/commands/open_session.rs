@@ -836,6 +836,26 @@ fn rejected_suite_does_not_consume_session_slot() {
     session
         .close()
         .expect("session close after recovery must succeed");
+    // Verify the rejected suite did not leak any CU session slots.
+    let other_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(ctx.path()))
+        .collect();
+
+    let _other_sessions: Vec<_> = other_ctxs
+        .iter()
+        .enumerate()
+        .map(|(index, other_ctx)| {
+            other_ctx
+                .open_session(CU, SessionType::PlainText)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "CU session {} of {} must succeed after \
+                         unsupported suite rejection: {:?}",
+                        index, CU_SESSION_LIMIT, e
+                    )
+                })
+        })
+        .collect();
 }
 
 /// An invalid public key must not leave stale pending-session state behind.
@@ -859,6 +879,27 @@ fn rejected_pk_init_does_not_consume_session_slot() {
     session
         .close()
         .expect("session close after recovery must succeed");
+
+    // Verify the rejected public key did not leak any CU session slots.
+    let other_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(ctx.path()))
+        .collect();
+
+    let _other_sessions: Vec<_> = other_ctxs
+        .iter()
+        .enumerate()
+        .map(|(index, other_ctx)| {
+            other_ctx
+                .open_session(CU, SessionType::PlainText)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "CU session {} of {} must succeed after \
+                         invalid pk_init rejection: {:?}",
+                        index, CU_SESSION_LIMIT, e
+                    )
+                })
+        })
+        .collect();
 }
 
 // ---------------------------------------------------------------------------
@@ -941,8 +982,10 @@ fn failed_finish_mac_reclaims_session_state() {
                 .open_session(CU, SessionType::PlainText)
                 .unwrap_or_else(|e| {
                     panic!(
-                        "CU recovery session {index} of {CU_SESSION_LIMIT} must succeed \
-                         after failed Phase-2 reclaimed its pending slot: {e:?}"
+                        "CU recovery session {} of {} must succeed \
+                     after failed Phase-2 reclaimed its pending slot: \
+                     {:?}",
+                        index, CU_SESSION_LIMIT, e
                     )
                 })
         })
