@@ -27,7 +27,9 @@ struct FuzzInput {
     /// handler's inactive-session rejection path.
     close_session_before_request: bool,
     /// Scope requested for `SdSealingKeyGen`.
-    key_scope: common::KeyScope,
+    key_scope: u8,
+    /// Restrict the arbitrary scope to known wire discriminants.
+    use_valid_key_scope: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -40,7 +42,7 @@ fn expected_outcome(
     request_session_id: u16,
     active_session_id: u16,
     session_was_closed: bool,
-    scope: common::KeyScope,
+    scope: u8,
 ) -> Expected {
     // The emulator/driver rejects a request with no session bound to the
     // handle before firmware dispatch. A mismatched ID on an otherwise
@@ -52,19 +54,22 @@ fn expected_outcome(
         return Expected::Reject(TborStatus::FileHandleSessionIdDoesNotMatch);
     }
     match scope {
-        common::KeyScope::Ephemeral
-        | common::KeyScope::Local
-        | common::KeyScope::SecurityDomain => Expected::Success,
-        common::KeyScope::Unspecified | common::KeyScope::Session | common::KeyScope::Internal => {
-            Expected::Reject(TborStatus::UnsupportedKeyScope)
-        }
+        common::KEY_SCOPE_EPHEMERAL
+        | common::KEY_SCOPE_LOCAL
+        | common::KEY_SCOPE_SECURITY_DOMAIN => Expected::Success,
+        _ => Expected::Reject(TborStatus::UnsupportedKeyScope),
     }
 }
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        if input.key_scope == common::KeyScope::SecurityDomain {
+        let scope = if input.use_valid_key_scope {
+            common::derive_valid_key_scope(input.key_scope)
+        } else {
+            input.key_scope
+        };
+        if scope == common::KEY_SCOPE_SECURITY_DOMAIN {
             common::create_test_security_domain(ctx, &session);
         } else {
             common::finalize_partition(ctx, &session);
@@ -75,8 +80,6 @@ fuzz_target!(|input: FuzzInput| {
         } else {
             input.fuzzed_session_id
         };
-        let scope = input.key_scope.to_tbor();
-
         if input.close_session_before_request {
             ctx.session_close(session.session_id)
                 .expect("session close before fuzzed request should succeed");
@@ -86,7 +89,7 @@ fuzz_target!(|input: FuzzInput| {
             session_id,
             session.session_id,
             input.close_session_before_request,
-            input.key_scope,
+            scope,
         );
         let req = TborSdSealingKeyGenReq { session_id, scope };
         let result = ctx.tbor(&req);

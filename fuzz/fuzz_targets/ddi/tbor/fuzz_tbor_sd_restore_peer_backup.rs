@@ -139,7 +139,8 @@ struct FuzzInput {
     bytes: ByteMutation,
     descriptors: DescriptorMutation,
     report: ReportMutation,
-    key_scope: common::KeyScope,
+    use_valid_key_scope: bool,
+    key_scope: u8,
 }
 
 struct Evidence {
@@ -232,7 +233,7 @@ struct PeerBackup {
     session_id: u16,
 }
 
-fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<PeerBackup> {
+fn create_peer_backup(ctx: &TestCtx, key_scope: u8) -> Option<PeerBackup> {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx
         .tbor(&TborPartInfoReq::new())
@@ -276,14 +277,14 @@ fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<Peer
         .expect("PartFinal should succeed")
         .local_mk_backup;
 
-    let bootstrap_scope = if key_scope == common::KeyScope::SecurityDomain {
-        common::KeyScope::Local
+    let bootstrap_scope = if key_scope == common::KEY_SCOPE_SECURITY_DOMAIN {
+        common::KEY_SCOPE_LOCAL
     } else {
         key_scope
     };
     let sealing_key = match ctx.tbor(&TborSdSealingKeyGenReq {
         session_id: session.session_id,
-        scope: bootstrap_scope.to_tbor(),
+        scope: bootstrap_scope,
     }) {
         Ok(key) => key,
         Err(DdiError::TborStatus(status)) if status == TborStatus::UnsupportedKeyScope => {
@@ -331,11 +332,11 @@ fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<Peer
         .tbor_oob(&create_remote, &evidence.oob())
         .expect("SdCreateRemoteBackup should succeed");
 
-    let (peer_sealing_key, peer_evidence) = if key_scope == common::KeyScope::SecurityDomain {
+    let (peer_sealing_key, peer_evidence) = if key_scope == common::KEY_SCOPE_SECURITY_DOMAIN {
         let sealing_key = ctx
             .tbor(&TborSdSealingKeyGenReq {
                 session_id: session.session_id,
-                scope: key_scope.to_tbor(),
+                scope: key_scope,
             })
             .expect("SecurityDomain-scope key generation should succeed after SD creation");
         let report = ctx
@@ -462,7 +463,12 @@ fn mutate_request(
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        let Some(backup) = create_peer_backup(ctx, input.key_scope) else {
+        let key_scope = if input.use_valid_key_scope {
+            common::derive_valid_key_scope(input.key_scope)
+        } else {
+            input.key_scope
+        };
+        let Some(backup) = create_peer_backup(ctx, key_scope) else {
             return;
         };
 
@@ -489,15 +495,13 @@ fuzz_target!(|input: FuzzInput| {
         let oob = evidence.oob();
         let result = ctx.tbor_oob(&req, &oob);
 
-        if changed || input.key_scope != common::KeyScope::Local {
+        if changed || key_scope != common::KEY_SCOPE_LOCAL {
             match result {
                 Err(err @ DdiError::DriverError(_)) => {
                     panic!("SdRestorePeerBackup transport/driver failure: {err:?}");
                 }
                 Err(_) => {}
-                Ok(_) => panic!(
-                    "the selected mutation should make SdRestorePeerBackup fail"
-                ),
+                Ok(_) => panic!("the selected mutation should make SdRestorePeerBackup fail"),
             }
         } else {
             let response = result.expect("the unmodified valid peer restore should succeed");

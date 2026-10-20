@@ -60,6 +60,11 @@ pub const KEY_SCOPE_LOCAL: u8 = 0b011;
 pub const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 pub const KEY_SCOPE_INTERNAL: u8 = 0b101;
 
+/// Map an arbitrary byte to a known TBOR `KeyScope` wire discriminant.
+pub fn derive_valid_key_scope(key_scope: u8) -> u8 {
+    key_scope % (KEY_SCOPE_INTERNAL + 1)
+}
+
 /// TBOR key scopes (wire `KeyScope` discriminants) used by fuzz targets.
 #[derive(Arbitrary, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyScope {
