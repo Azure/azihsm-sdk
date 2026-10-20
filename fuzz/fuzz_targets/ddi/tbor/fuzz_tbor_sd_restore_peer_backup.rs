@@ -7,33 +7,10 @@
 mod common;
 
 use azihsm_ddi_interface::DdiError;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_types::CertDescriptor;
-use azihsm_ddi_tbor_types::EVIDENCE_CHAIN_MAX_CERTS;
-use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::MASKED_SD_LEN;
-use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
-use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::ReportDescriptor;
-use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
-use azihsm_ddi_tbor_types::TborKeyReportReq;
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
-use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdRestorePeerBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_test_harness::x509_fixture::*;
+use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -499,9 +476,7 @@ fuzz_target!(|input: FuzzInput| {
                 Err(err) => {
                     panic!("SdRestorePeerBackup unexpected error: {err:?}");
                 }
-                Ok(_) => panic!(
-                    "the selected mutation should make SdRestorePeerBackup fail"
-                ),
+                Ok(_) => panic!("the selected mutation should make SdRestorePeerBackup fail"),
             }
         } else {
             let response = result.expect("the unmodified valid peer restore should succeed");
