@@ -354,9 +354,10 @@ fn assert_success(ctx: &TestCtx, fixture: &Fixture) -> [u8; POK_REMOTE_BACKUP_LE
 
 fn assert_rejected(ctx: &TestCtx, fixture: &Fixture) {
     let oob = fixture.evidence.oob();
+    let result = ctx.tbor_oob(&fixture.request, &oob);
     assert!(
-        ctx.tbor_oob(&fixture.request, &oob).is_err(),
-        "invalid SdResealRemoteBackup fixture must be rejected",
+        matches!(&result, Err(azihsm_ddi_interface::DdiError::TborStatus(_))),
+        "invalid SdResealRemoteBackup fixture must be rejected by firmware",
     );
 }
 

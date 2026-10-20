@@ -377,9 +377,10 @@ fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
             );
             if changed {
                 let oob: Vec<&[u8]> = fixture.oob_items.iter().map(Vec::as_slice).collect();
+                let result = ctx.tbor_oob(&fixture.request, &oob);
                 assert!(
-                    ctx.tbor_oob(&fixture.request, &oob).is_err(),
-                    "tampered receiver certificate must be rejected",
+                    matches!(&result, Err(azihsm_ddi_interface::DdiError::TborStatus(_))),
+                    "tampered receiver certificate must be rejected by firmware",
                 );
             } else {
                 assert_success(ctx, &fixture);
@@ -393,9 +394,10 @@ fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
                 assert_success(ctx, &fixture);
             } else {
                 let oob: Vec<&[u8]> = fixture.oob_items.iter().map(Vec::as_slice).collect();
+                let result = ctx.tbor_oob(&fixture.request, &oob);
                 assert!(
-                    ctx.tbor_oob(&fixture.request, &oob).is_err(),
-                    "corrupted masked sealing key must be rejected",
+                    matches!(&result, Err(azihsm_ddi_interface::DdiError::TborStatus(_))),
+                    "corrupted masked sealing key must be rejected by firmware",
                 );
             }
         }
