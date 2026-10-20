@@ -62,8 +62,7 @@ struct FuzzInput {
     target: MutationTarget,
     offset: u16,
     mask: u8,
-    use_valid_key_scope: bool,
-    key_scope: u8,
+    key_scope: common::KeyScope,
 }
 
 #[derive(Clone)]
@@ -164,7 +163,7 @@ fn build_policy(
     policy_bytes.copy_from_slice(policy.as_bytes());
 }
 
-fn create_restore_fixture(ctx: &TestCtx, key_scope: u8) -> Option<RestoreFixture> {
+fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<RestoreFixture> {
     let source_session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx
         .tbor(&TborPartInfoReq::new())
@@ -205,14 +204,14 @@ fn create_restore_fixture(ctx: &TestCtx, key_scope: u8) -> Option<RestoreFixture
         .expect("PartFinal should succeed")
         .local_mk_backup;
 
-    let bootstrap_scope = if key_scope == common::KEY_SCOPE_SECURITY_DOMAIN {
-        common::KEY_SCOPE_LOCAL
+    let bootstrap_scope = if key_scope == common::KeyScope::SecurityDomain {
+        common::KeyScope::Local
     } else {
         key_scope
     };
     let sealing_key = match ctx.tbor(&TborSdSealingKeyGenReq {
         session_id: source_session.session_id,
-        scope: bootstrap_scope,
+        scope: bootstrap_scope.to_tbor(),
     }) {
         Ok(key) => key,
         Err(DdiError::TborStatus(status)) if status == TborStatus::UnsupportedKeyScope => {
@@ -260,12 +259,11 @@ fn create_restore_fixture(ctx: &TestCtx, key_scope: u8) -> Option<RestoreFixture
         .tbor_oob(&create_req, &evidence.oob())
         .expect("SdCreateRemoteBackup should succeed");
 
-    let (restore_sealing_key, restore_evidence) = if key_scope == common::KEY_SCOPE_SECURITY_DOMAIN
-    {
+    let (restore_sealing_key, restore_evidence) = if key_scope == common::KeyScope::SecurityDomain {
         let sealing_key = ctx
             .tbor(&TborSdSealingKeyGenReq {
                 session_id: source_session.session_id,
-                scope: key_scope,
+                scope: key_scope.to_tbor(),
             })
             .expect("SecurityDomain-scope key generation should succeed after SD creation");
         let report = ctx
@@ -435,12 +433,7 @@ fn mutate_request(
 
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
-        let key_scope = if input.use_valid_key_scope {
-            common::derive_valid_key_scope(input.key_scope)
-        } else {
-            input.key_scope
-        };
-        let Some(fixture) = create_restore_fixture(ctx, key_scope) else {
+        let Some(fixture) = create_restore_fixture(ctx, input.key_scope) else {
             return;
         };
         let mut evidence = fixture.evidence.clone();
@@ -461,7 +454,7 @@ fuzz_target!(|input: FuzzInput| {
         let oob = evidence.oob();
         let result = ctx.tbor_oob(&req, &oob);
 
-        if changed || key_scope != common::KEY_SCOPE_LOCAL {
+        if changed || input.key_scope != common::KeyScope::Local {
             match result {
                 Err(DdiError::TborStatus(_)) => {}
                 Err(err) => {
