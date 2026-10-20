@@ -54,8 +54,6 @@ use zerocopy::TryFromBytes;
 
 pub type DdiTest = AzihsmDdi;
 
-const P256_COORD_LEN: usize = 32;
-const P384_COORD_LEN: usize = RAW_PUB_LEN / 2;
 const MACH_SEED_PATTERN_BASE: u8 = 0x40;
 const POTA_THUMBPRINT_PATTERN_BASE: u8 = 0x80;
 const PUBKEY_PATTERN_HIGH_BIT: u8 = 0x80;
@@ -554,7 +552,7 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         .expect("sealing-key report generation should succeed");
 
     let mut receiver_pub = [0u8; RAW_PUB_LEN];
-    let coord_len = P384_COORD_LEN;
+    let coord_len = EccCurve::P384.coord_len();
     for (dst, src) in receiver_pub[..coord_len]
         .iter_mut()
         .zip(sealing_key.pub_key[..coord_len].iter().rev())
