@@ -423,7 +423,7 @@ fn mutate_request(
             mutate_oob_item(evidence, &fixture.evidence.part_owner_cert_chain, input)
         }
         MutationTarget::SenderReportOob => {
-            let report = [fixture.evidence.report.index.into()];
+            let report = [fixture.evidence.report.index];
             let descriptors = [CertDescriptor {
                 index: report[0],
                 length: fixture.evidence.report.length,
