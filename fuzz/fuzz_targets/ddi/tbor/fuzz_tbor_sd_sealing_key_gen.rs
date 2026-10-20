@@ -33,6 +33,8 @@ enum Expected {
     Reject(TborStatus),
 }
 
+/// Determine the expected `SdSealingKeyGen` result from the session state,
+/// requested session ID, and key scope, checking session errors first.
 fn expected_outcome(
     request_session_id: u16,
     active_session_id: u16,

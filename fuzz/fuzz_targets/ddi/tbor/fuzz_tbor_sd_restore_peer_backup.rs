@@ -24,6 +24,7 @@ enum ByteMutation {
 }
 
 impl ByteMutation {
+    /// Apply the selected byte flip, returning whether the buffer changed.
     fn apply(&self, bytes: &mut [u8]) -> bool {
         match self {
             Self::Keep => false,
@@ -46,6 +47,8 @@ enum DescriptorMutation {
 }
 
 impl DescriptorMutation {
+    /// Corrupt a certificate descriptor or exceed the chain's schema limit,
+    /// returning whether the descriptor list changed.
     fn apply(&self, descriptors: &mut Vec<CertDescriptor>) -> bool {
         match self {
             Self::Keep => false,
@@ -80,6 +83,7 @@ enum ReportMutation {
 }
 
 impl ReportMutation {
+    /// Corrupt the report's OOB index or length, returning whether it changed.
     fn apply(&self, report: &mut ReportDescriptor) -> bool {
         match self {
             Self::Keep => false,
@@ -129,10 +133,13 @@ struct Evidence {
 }
 
 impl Evidence {
+    /// Borrow the evidence items as OOB buffers in descriptor-index order.
     fn oob(&self) -> Vec<&[u8]> {
         self.items.iter().map(Vec::as_slice).collect()
     }
 
+    /// Collect the certificate and report OOB indices used by peer restore,
+    /// excluding the receiver chain used only during remote-backup creation.
     fn referenced_indices(&self) -> Vec<u8> {
         self.manufacturer
             .iter()
@@ -144,6 +151,8 @@ impl Evidence {
     }
 }
 
+/// Append certificate or report bytes to the OOB items and return their
+/// index and length as a certificate descriptor.
 fn push_cert(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
     let descriptor = CertDescriptor {
         index: items.len() as u8,
@@ -153,6 +162,8 @@ fn push_cert(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
     descriptor
 }
 
+/// Build receiver and partition certificate chains plus report descriptors
+/// for remote-backup creation and the subsequent peer-backup operations.
 fn build_evidence(
     pid_pub: &[u8; RAW_PUB_LEN],
     sealing_pub: &[u8; RAW_PUB_LEN],
@@ -209,6 +220,12 @@ struct PeerBackup {
     session_id: u16,
 }
 
+/// Create remote and peer backups, then reset and reinitialize the partition
+/// with its prior local masking key so the peer backup is ready for restore.
+///
+/// Security-domain-scope keys are generated after remote-backup creation
+/// establishes the SD. Returns `None` after closing the session if bootstrap
+/// sealing-key generation rejects an unsupported scope.
 fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<PeerBackup> {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx
@@ -390,6 +407,8 @@ fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<Peer
     })
 }
 
+/// Apply the selected mutation to the peer-restore request or its referenced
+/// OOB evidence, returning whether any input changed.
 fn mutate_request(
     input: &FuzzInput,
     session_id: u16,

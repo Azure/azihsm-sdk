@@ -56,6 +56,7 @@ struct SenderEvidence {
 }
 
 impl SenderEvidence {
+    /// Borrow the sender evidence as OOB buffers in descriptor-index order.
     fn oob(&self) -> Vec<&[u8]> {
         self.items.iter().map(Vec::as_slice).collect()
     }
@@ -70,6 +71,8 @@ struct RestoreFixture {
     prev_sd_mk_backup: [u8; SD_MK_BACKUP_LEN],
 }
 
+/// Append certificate or report bytes to the OOB items and return their
+/// index and length as a certificate descriptor.
 fn push_oob_item(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
     let descriptor = CertDescriptor {
         index: items.len() as u8,
@@ -79,6 +82,8 @@ fn push_oob_item(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
     descriptor
 }
 
+/// Append a two-certificate DER chain to the OOB items and return its
+/// descriptors in chain order.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: [&[u8]; 2]) -> Vec<CertDescriptor> {
     chain
         .into_iter()
@@ -86,6 +91,9 @@ fn push_chain(items: &mut Vec<Vec<u8>>, chain: [&[u8]; 2]) -> Vec<CertDescriptor
         .collect()
 }
 
+/// Build sender and partition certificate chains plus report descriptors
+/// for remote-backup creation and restore. The sender chain uses SATA;
+/// the partition-owner chain uses SAPOTA.
 fn build_sender_evidence(
     pid_pub: &[u8; RAW_PUB_LEN],
     sender_pub: &[u8; RAW_PUB_LEN],
@@ -118,6 +126,8 @@ fn build_sender_evidence(
     }
 }
 
+/// Set the SATA, SAPOTA, and backup-partition trust anchors, require a trusted
+/// sender key, and copy the updated policy into its wire-format buffer.
 fn build_policy(
     policy_bytes: &mut [u8; azihsm_ddi_tbor_types::PART_POLICY_LEN],
     policy: &mut PartPolicy,
@@ -143,6 +153,12 @@ fn build_policy(
     policy_bytes.copy_from_slice(policy.as_bytes());
 }
 
+/// Create a remote backup, then reset and reinitialize the partition with
+/// its prior local masking key to prepare the restore request's fixture.
+///
+/// Security-domain-scope restore keys are generated after backup creation
+/// establishes the SD. Returns `None` after closing the session if bootstrap
+/// sealing-key generation rejects an unsupported scope.
 fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<RestoreFixture> {
     let source_session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx
@@ -307,6 +323,8 @@ fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<
     })
 }
 
+/// Flip at least one bit at a wrapped byte offset, returning `false` only
+/// when the buffer is empty.
 fn flip(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
     if bytes.is_empty() {
         return false;
@@ -316,6 +334,8 @@ fn flip(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
     true
 }
 
+/// Corrupt a selected certificate descriptor's OOB index or length,
+/// returning `false` only when the descriptor list is empty.
 fn invalidate_descriptor(descriptors: &mut [CertDescriptor], input: &FuzzInput) -> bool {
     if descriptors.is_empty() {
         return false;
@@ -329,6 +349,7 @@ fn invalidate_descriptor(descriptors: &mut [CertDescriptor], input: &FuzzInput) 
     true
 }
 
+/// Corrupt the report's OOB index or length according to the fuzzed mask.
 fn invalidate_report(report: &mut ReportDescriptor, input: &FuzzInput) {
     if input.mask & 1 == 0 {
         report.index = u8::MAX;
@@ -337,6 +358,8 @@ fn invalidate_report(report: &mut ReportDescriptor, input: &FuzzInput) {
     }
 }
 
+/// Flip a byte in an OOB item selected through the supplied descriptors,
+/// returning whether a referenced, nonempty item was changed.
 fn mutate_oob_item(
     evidence: &mut SenderEvidence,
     descriptors: &[CertDescriptor],
@@ -352,6 +375,8 @@ fn mutate_oob_item(
     flip(item, input.offset, input.mask)
 }
 
+/// Apply the selected mutation to the remote-restore request or its sender
+/// OOB evidence, returning whether any input changed.
 fn mutate_request(
     input: &FuzzInput,
     fixture: &RestoreFixture,
