@@ -463,10 +463,10 @@ fuzz_target!(|input: FuzzInput| {
 
         if changed || key_scope != common::KEY_SCOPE_LOCAL {
             match result {
-                Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
-                    panic!("SdRestoreRemoteBackup transport/driver failure: {err:?}");
+                Err(DdiError::TborStatus(_)) => {}
+                Err(err) => {
+                    panic!("SdRestoreRemoteBackup unexpected error: {err:?}");
                 }
-                Err(_) => {}
                 Ok(_response) => panic!(
                     "the selected mutation should make SdRestoreRemoteBackup fail: \
                      target={:?}",

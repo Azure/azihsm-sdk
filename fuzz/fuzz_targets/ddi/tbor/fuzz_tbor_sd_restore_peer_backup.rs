@@ -497,10 +497,14 @@ fuzz_target!(|input: FuzzInput| {
 
         if changed || key_scope != common::KEY_SCOPE_LOCAL {
             match result {
-                Err(err @ DdiError::DriverError(_)) => {
-                    panic!("SdRestorePeerBackup transport/driver failure: {err:?}");
+                Err(DdiError::TborStatus(_)) => {}
+                Err(DdiError::TborEncodeError)
+                    if req.src_mfgr_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS
+                        || req.src_owner_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS
+                        || req.src_part_owner_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS => {}
+                Err(err) => {
+                    panic!("SdRestorePeerBackup unexpected error: {err:?}");
                 }
-                Err(_) => {}
                 Ok(_) => panic!("the selected mutation should make SdRestorePeerBackup fail"),
             }
         } else {
