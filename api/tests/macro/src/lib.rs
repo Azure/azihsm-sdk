@@ -75,6 +75,13 @@ pub fn partition_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Returns a compile error if:
 /// - The function is marked as async
+///
+/// # Session Selection
+///
+/// The session kind is selected once at compile time for the whole test binary.
+///
+/// The test crate uses `open_session` by default. Enabling its
+/// `session-ex-tests` feature selects `open_session_ex` instead.
 #[proc_macro_attribute]
 pub fn session_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
@@ -83,22 +90,13 @@ pub fn session_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Attribute macro for tests that use MBOR under `mock` and TBOR under
-/// a firmware-backed test feature.
-#[proc_macro_attribute]
-pub fn dual_session_test(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as ItemFn);
-    make_dual_session_test(item)
-        .unwrap_or_else(|err| err.to_compile_error())
-        .into()
-}
-
 /// Generates the implementation for the `api_test` attribute macro.
 ///
 /// This function transforms the input test function into a test that:
 /// 1. Initializes tracing
-/// 2. Creates a named tracing span for the test
-/// 3. Enters the span and executes the original test function
+/// 2. Acquires the shared partition lock
+/// 3. Creates a named tracing span for the test
+/// 4. Enters the span and executes the original test function
 ///
 /// # Arguments
 ///
@@ -129,6 +127,7 @@ fn make_api_test(item: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
         fn #name() #return_type {
             #item
             crate::utils::api::init();
+            let _partition_guard = crate::utils::partition::PARTITION_LOCK.lock();
             let span = tracing::span!(tracing::Level::INFO, stringify!(#name));
             let _span_guard = span.enter();
             #name()
@@ -218,33 +217,6 @@ fn make_session_test(item: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
             let span = tracing::span!(tracing::Level::INFO, stringify!(#name), );
             let _span_guard = span.enter();
             crate::utils::session::with_session(|session| {
-                #name(session)
-            });
-        }
-    })
-}
-
-fn make_dual_session_test(item: ItemFn) -> syn::Result<proc_macro2::TokenStream> {
-    if item.sig.asyncness.is_some() {
-        return Err(Error::new(
-            item.sig.fn_token.span(),
-            "test function must not be async",
-        ));
-    }
-
-    let name = &item.sig.ident;
-    let return_type = &item.sig.output;
-    let attrs = &item.attrs;
-
-    Ok(quote! {
-        #[::core::prelude::v1::test]
-        #(#attrs)*
-        fn #name() #return_type {
-            #item
-            crate::utils::api::init();
-            let span = tracing::span!(tracing::Level::INFO, stringify!(#name), );
-            let _span_guard = span.enter();
-            crate::utils::session::with_dual_session(|session| {
                 #name(session)
             });
         }

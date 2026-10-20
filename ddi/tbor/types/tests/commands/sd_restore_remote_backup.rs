@@ -23,6 +23,7 @@
 //! * Restore before finalize → `InvalidArg`.
 
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
@@ -43,9 +44,11 @@ use zerocopy::TryFromBytes;
 use crate::commands::part_init::mach_seed;
 use crate::commands::part_init::pota_thumbprint;
 use crate::commands::sd_create_remote_backup::backing_part_policy;
+use crate::commands::sd_create_remote_backup::backing_part_policy_trusted;
 use crate::commands::sd_create_remote_backup::backup_request;
 use crate::commands::sd_create_remote_backup::build_receiver_evidence;
-use crate::commands::sd_create_remote_backup::masked_key_and_report;
+use crate::commands::sd_create_remote_backup::evidence_from_chains;
+use crate::commands::sd_create_remote_backup::masked_key_report_and_pub;
 use crate::commands::sd_create_remote_backup::ReceiverEvidence;
 
 /// A remote backup produced by the first device's `CreateSD`, replayed on
@@ -91,12 +94,66 @@ fn create_remote_backup(seed: &[u8], sata: &CaKey, pota: &CaKey) -> RemoteBackup
         .expect("PartFinal")
         .local_mk_backup;
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, sata, &report);
     let req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let resp = ctx
         .tbor_oob(&req, &evidence.oob())
         .expect("SdCreateRemoteBackup");
+
+    RemoteBackup {
+        masked_sealing_key: masked,
+        evidence,
+        policy,
+        src_remote_backup: resp.pok_remote_backup,
+        prev_sd_mk_backup: resp.sd_mk_backup,
+        local_mk_backup,
+    }
+}
+
+/// Drive device 1 under a **trusted-SA-key** policy
+/// (`require_trusted_sa_key` set): finalize, `CreateSD` with full
+/// SAPOTA-anchored evidence, and capture everything device 2 needs to
+/// restore the domain remotely with evidence verification enabled.
+fn create_remote_backup_trusted(sata: &CaKey, sapota: &CaKey, pota: &CaKey) -> RemoteBackup {
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+
+    let info = ctx.tbor(&TborPartInfoReq::new()).expect("PartInfo");
+    let mut pid_pub = [0u8; RAW_PUB_LEN];
+    pid_pub.copy_from_slice(&info.pid_pub_key);
+    let policy = backing_part_policy_trusted(
+        &info.pid,
+        &info.pid_pub_key,
+        &sata.raw_pub(),
+        &sapota.raw_pub(),
+        &pota.raw_pub(),
+    );
+
+    let init = ctx
+        .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit");
+    let chain = make_pta_chain(pota, &pta_pub_from_csr(&init.pta_csr));
+    let local_mk_backup = ctx
+        .part_final(&session, &policy, &[], &chain.der_items())
+        .expect("PartFinal")
+        .local_mk_backup;
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    // The sender/receiver chain leaf is the attested sealing key, SATA-
+    // anchored; the evidence part-owner chain is SAPOTA-anchored and every
+    // evidence leaf certifies `pid_pub` (the report signer).
+    let receiver = make_chain(sata, &rcvr_pub);
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(sapota, &pid_pub);
+    let evidence = evidence_from_chains(&receiver, &mfgr, &owner, &part_owner, &report);
+
+    let req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
+    let resp = ctx
+        .tbor_oob(&req, &evidence.oob())
+        .expect("SdCreateRemoteBackup trusted-SA");
 
     RemoteBackup {
         masked_sealing_key: masked,
@@ -118,6 +175,7 @@ fn restore_remote_req(session_id: u16, backup: &RemoteBackup) -> TborSdRestoreRe
             .try_into()
             .expect("masked sealing key is exactly MASKED_SEALING_KEY_LEN bytes"),
         policy: PartPolicy::try_read_from_bytes(&backup.policy).expect("policy image is canonical"),
+        sender_cert_chain: backup.evidence.receiver.clone(),
         sender_mfgr_cert_chain: backup.evidence.mfgr.clone(),
         sender_owner_cert_chain: backup.evidence.owner.clone(),
         sender_part_owner_cert_chain: backup.evidence.part_owner.clone(),
@@ -172,6 +230,50 @@ fn sd_restore_remote_backup_roundtrip() {
 }
 
 #[test]
+fn sd_restore_remote_backup_trusted_sa_roundtrip() {
+    let sata = CaKey::generate();
+    let sapota = CaKey::generate();
+    let pota = CaKey::generate();
+
+    // Device 1: finalize + CreateSD under a trusted-SA-key policy.
+    let backup = create_remote_backup_trusted(&sata, &sapota, &pota);
+
+    // Device 2 (reboot): restore PartLocalMK, then restore the SD.  Under
+    // `require_trusted_sa_key` the handler validates the sender certificate
+    // chain (SATA) *and* the full attestation evidence (SAPOTA), requiring
+    // the attested key to equal the sender key.
+    let ctx = TestCtx::new();
+    let session = bootstrap_rotated_co(&ctx, &ROTATED_CO_PSK);
+    let init = ctx
+        .part_init(&session, &mach_seed(), &backup.policy, &pota_thumbprint())
+        .expect("PartInit (device 2)");
+    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(
+        &session,
+        &backup.policy,
+        &backup.local_mk_backup,
+        &chain.der_items(),
+    )
+    .expect("PartFinal must restore PartLocalMK from the prior backup");
+
+    let req = restore_remote_req(session.session_id, &backup);
+    let resp = ctx
+        .tbor_oob(&req, &backup.evidence.oob())
+        .expect("SdRestoreRemoteBackup trusted-SA roundtrip");
+
+    assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN);
+    assert!(
+        resp.pok_local_backup.iter().any(|&b| b != 0),
+        "pok_local_backup must not be all-zero",
+    );
+    assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+    assert!(
+        resp.sd_mk_backup.iter().any(|&b| b != 0),
+        "sd_mk_backup must not be all-zero",
+    );
+}
+
+#[test]
 fn sd_restore_remote_backup_is_one_shot() {
     let seed = mach_seed();
     let sata = CaKey::generate();
@@ -198,8 +300,8 @@ fn sd_restore_remote_backup_is_one_shot() {
     ctx.part_final(&session, &policy, &[], &chain.der_items())
         .expect("PartFinal");
 
-    let (masked, report) = masked_key_and_report(&ctx, session.session_id);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let create_req = backup_request(session.session_id, masked.clone(), &evidence, &policy);
     let created = ctx
         .tbor_oob(&create_req, &evidence.oob())
@@ -231,6 +333,7 @@ fn sd_restore_remote_backup_rejects_before_finalize() {
         session_id: session.session_id,
         masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
         policy: PartPolicy::zeroed(),
+        sender_cert_chain: Vec::new(),
         sender_mfgr_cert_chain: Vec::new(),
         sender_owner_cert_chain: Vec::new(),
         sender_part_owner_cert_chain: Vec::new(),

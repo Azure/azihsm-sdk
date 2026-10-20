@@ -14,9 +14,7 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::PtaChain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
 use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
 use azihsm_ddi_tbor_types::LOCAL_MK_BACKUP_LEN;
-use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::MAX_CERTS;
-use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -183,22 +181,6 @@ struct FuzzInput {
     chain_mutation: ChainMutation,
 }
 
-fn mach_seed() -> [u8; MACH_SEED_LEN] {
-    let mut v = [0u8; MACH_SEED_LEN];
-    for (i, b) in v.iter_mut().enumerate() {
-        *b = 0x40 + i as u8;
-    }
-    v
-}
-
-fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
-    let mut v = [0u8; POTA_THUMBPRINT_LEN];
-    for (i, b) in v.iter_mut().enumerate() {
-        *b = 0x80 ^ i as u8;
-    }
-    v
-}
-
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         // Fresh-slate CO session under a rotated (non-default) PSK — the
@@ -212,7 +194,12 @@ fuzz_target!(|input: FuzzInput| {
 
         // PartInit: transition the partition to PartState::Initializing.
         let init = ctx
-            .part_init(&session, &mach_seed(), &policy, &pota_thumbprint())
+            .part_init(
+                &session,
+                &common::mach_seed(),
+                &policy,
+                &common::pota_thumbprint(),
+            )
             .expect("PartInit should succeed");
 
         // Build the valid PTA chain anchored to the POTA key, then apply

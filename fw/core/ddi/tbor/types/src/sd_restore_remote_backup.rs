@@ -102,11 +102,26 @@ pub struct TborSdRestoreRemoteBackupReq<'a> {
     #[tbor(buffer, len = 484)]
     pub policy: &'a [u8],
 
+    /// Sender key certificate-chain descriptors (root→leaf), carried out
+    /// of band.  **Always present** (spec `SndrCertChain`): the chain is
+    /// validated and anchored to the policy **SATA** key, and its leaf
+    /// public key is the sender public key (`SndrPub`) that sealed
+    /// `src_remote_backup` and HPKE-Auth-opens it.
+    #[tbor(buffer, max_len = 24)]
+    pub sender_cert_chain: &'a [CertDescriptor],
+
     /// Sender side-band attestation evidence (manufacturer / owner /
     /// partition-owner certificate chains plus the attestation report).
     /// Spliced in as the [`Evidence`](crate::evidence::Evidence) field
-    /// group's four TOC entries; its attested key is the sender public key
-    /// that sealed `src_remote_backup`.
+    /// group's four TOC entries.
+    ///
+    /// **Optional** (spec `Option<SndrEvidence>`): required and verified
+    /// only when the policy sets `require_trusted_sa_key`.  When the flag
+    /// is clear, send the group empty (empty cert chains and a
+    /// zero-length report descriptor); the handler ignores it.  When the
+    /// flag is set, the partition-owner chain is anchored to the policy
+    /// **SAPOTA** key and the report must attest the same `SndrPub`
+    /// recovered from `sender_cert_chain`.
     #[tbor(include)]
     pub sender_evidence: Evidence<'a>,
 
@@ -166,6 +181,8 @@ mod tests {
             .masked_sealing_key(&masked)
             .unwrap()
             .policy(&policy)
+            .unwrap()
+            .sender_cert_chain(&chain)
             .unwrap()
             .sender_evidence(|e| {
                 e.mfgr_cert_chain(&chain)?

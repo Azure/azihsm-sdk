@@ -37,6 +37,8 @@ namespace
 bool create_sd_local_backup(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
+
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_local
@@ -48,6 +50,7 @@ bool create_sd_local_backup(
     azihsm_sd_create_remote_backup_params params{
         &policy_buf,
         &masked_buf,
+        receiver_chain,
         &receiver,
     };
 
@@ -141,7 +144,7 @@ class azihsm_sd_create_peer_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, sd_test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, session_ex_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
@@ -185,13 +188,14 @@ TEST_F(azihsm_sd_create_peer_backup_test, create_peer_backup_roundtrip)
         ASSERT_FALSE(key.report.empty());
 
         // Self-peer backup: the same attested key is sender and destination.
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         // Create the security domain to obtain the device-local backup.
         std::vector<uint8_t> local_backup;
         ASSERT_TRUE(create_sd_local_backup(
             ctx.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             ctx.policy,
             local_backup

@@ -403,6 +403,8 @@ mod round_trips {
         )?;
         azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
             crate::rsaimport::AzihsmRsaImport,
+            crate::rsasign::AzihsmRsaPssSign,
+            crate::rsadecrypt::AzihsmRsaDecrypt,
         >(&engine)?;
         Ok((engine, engine_raw))
     }
@@ -555,6 +557,121 @@ mod round_trips {
         Ok(())
     }
 
+    /// Session keys through the real keygen/import paths: `azihsm.session:true`
+    /// with no `azihsm.masked_key` (a session key's blob would only unmask
+    /// within the creating HSM session). Generates EC P-384 signing and
+    /// agreement keys and imports a software RSA key; each must carry the HSM
+    /// session flag, the signing keys sign through the engine (verifying in
+    /// software) and the agreement key derives. Backend-agnostic.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_session_keys(data: EngineData, dir: &Path) -> EngineResult<()> {
+        use openssl::rsa::Rsa;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+        let verify = |pub_der: &[u8], md: MessageDigest, msg: &[u8], sig: &[u8]| {
+            let pubkey = PKey::public_key_from_der(pub_der).unwrap();
+            let mut verifier = Verifier::new(md, &pubkey).unwrap();
+            verifier.update(msg).unwrap();
+            verifier.verify(sig).unwrap()
+        };
+
+        // EC: session keygen, no blob.
+        let ec_raw = try_armed_keygen(engine_raw, "P-384", None, &[("azihsm.session", "true")])
+            .map_err(|e| EngineError::Other(format!("EC session keygen failed: {e}")))?;
+        // SAFETY: ec_raw is the owning EVP_PKEY from keygen; the HSM key its
+        // EC_KEY carries is retained by the engine data while the key lives.
+        let ec_session = unsafe {
+            let hsm = crate::keyload::ec_key_hsm_key(ffi::EVP_PKEY_get0_EC_KEY(ec_raw));
+            !hsm.is_null() && (*hsm).is_session()
+        };
+        assert!(ec_session, "generated EC key must be an HSM session key");
+        let msg = b"engine session key signing";
+        // SAFETY: EVP_sha384 returns a process-lifetime constant.
+        let sig = evp_digest_sign(ec_raw, msg, unsafe { ffi::EVP_sha384() });
+        // SAFETY: ec_raw is the owning EVP_PKEY from keygen.
+        let ec_key: PKey<Public> = unsafe { PKey::from_ptr(ec_raw.cast()) };
+        let ec_pub = ec_key
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode EC session pub", e))?;
+        assert!(
+            verify(&ec_pub, MessageDigest::sha384(), msg, &sig),
+            "EC session key signature must verify"
+        );
+
+        // EC keyAgreement: a session agreement key derives against a software
+        // peer (buffer mode yields the derived secret's masked blob).
+        let agree_raw = try_armed_keygen(
+            engine_raw,
+            "P-384",
+            None,
+            &[
+                ("azihsm.session", "true"),
+                ("azihsm.key_usage", "keyAgreement"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("EC session agreement keygen failed: {e}")))?;
+        // SAFETY: agree_raw is the owning EVP_PKEY from keygen (see above).
+        let agree_session = unsafe {
+            let hsm = crate::keyload::ec_key_hsm_key(ffi::EVP_PKEY_get0_EC_KEY(agree_raw));
+            !hsm.is_null() && (*hsm).is_session()
+        };
+        assert!(
+            agree_session,
+            "generated agreement key must be an HSM session key"
+        );
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let peer = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let derived = derive_masked(engine_raw, agree_raw, peer.as_ptr().cast(), None);
+        assert!(!derived.is_empty(), "EC session agreement key must derive");
+        // SAFETY: agree_raw is the owning EVP_PKEY from keygen.
+        unsafe { ffi::EVP_PKEY_free(agree_raw) };
+
+        // RSA: session import, no blob.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+        let input_der = sw_pkey
+            .private_key_to_pkcs8()
+            .map_err(|e| EngineError::wrap("encode pkcs8", e))?;
+        let rsa_pub = sw_pkey
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode sw pub", e))?;
+        let input_path = dir.join(format!("rsa-session-in-{}.der", std::process::id()));
+        let _input_guard = TempFile(input_path.clone());
+        write_key_material(&input_path, &input_der)
+            .map_err(|e| EngineError::wrap("write input der", e))?;
+        let rsa_raw = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "2048"),
+                ("azihsm.input_key", input_path.to_str().unwrap()),
+                ("azihsm.session", "true"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("RSA session import failed: {e}")))?;
+        let hsm = crate::rsasign::hsm_key_from_pkey(rsa_raw);
+        // SAFETY: the imported key's HSM handle is retained by the engine data
+        // while rsa_raw lives.
+        let rsa_session = !hsm.is_null() && unsafe { (*hsm).is_session() };
+        assert!(rsa_session, "imported RSA key must be an HSM session key");
+        // SAFETY: EVP_sha256 returns a process-lifetime constant.
+        let sig = evp_digest_sign(rsa_raw, msg, unsafe { ffi::EVP_sha256() });
+        assert!(
+            verify(&rsa_pub, MessageDigest::sha256(), msg, &sig),
+            "RSA session key signature must verify"
+        );
+
+        // SAFETY: rsa_raw is the owning EVP_PKEY from the import.
+        unsafe { ffi::EVP_PKEY_free(rsa_raw) };
+        drop(ec_key);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        Ok(())
+    }
+
     /// Import a software RSA key into the HSM, then sign a digest through the
     /// engine (HSM PKCS#1 v1.5 via `EVP_DigestSign`, routed to our RSA_METHOD
     /// sign slot) and verify the signature against the public half in software.
@@ -658,6 +775,103 @@ mod round_trips {
         unsafe { ffi::ENGINE_free(engine_raw) };
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         // input_path removed by _input_guard on drop.
+        Ok(())
+    }
+
+    /// A pure software RSA key (no HSM handle) signed with PSS through the engine
+    /// must be REJECTED, never delegated to a software signature. This exercises
+    /// the real `EVP_PKEY_sign` dispatch on a ctx bound to the engine — so our
+    /// `EVP_PKEY_METHOD` sign override actually runs — rather than calling the
+    /// handler directly; a regression that delegated software PSS would fail here.
+    /// No HSM is opened (the reject precedes any HSM work); only the mock unit
+    /// test drives it (the hardware smokes do not need a software-key path).
+    #[cfg(feature = "mock")]
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_rsa_pss_rejects_software_key(data: EngineData) -> EngineResult<()> {
+        use std::ffi::CString;
+
+        use openssl::rsa::Rsa;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+
+        // A software RSA-2048 key that was never imported into the HSM.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+
+        let pad_key = CString::new("rsa_padding_mode").unwrap();
+        let pad_val = CString::new("pss").unwrap();
+        let digest = [0u8; 32];
+        // SAFETY: a standard EVP_PKEY_sign sequence on a ctx bound to our engine
+        // (so the override dispatches); the software key carries no HSM handle, so
+        // the real sign must fail. Every rc is checked and the ctx is freed.
+        let rejected = unsafe {
+            let ctx = ffi::EVP_PKEY_CTX_new(sw_pkey.as_ptr().cast(), engine_raw);
+            assert!(!ctx.is_null(), "EVP_PKEY_CTX_new(sw pkey, engine)");
+            assert_eq!(ffi::EVP_PKEY_sign_init(ctx), 1, "EVP_PKEY_sign_init");
+            let md256 = ffi::EVP_sha256();
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl(
+                    ctx,
+                    -1,
+                    ffi::EVP_PKEY_OP_TYPE_SIG_CONST,
+                    ffi::EVP_PKEY_CTRL_MD_CONST,
+                    0,
+                    md256.cast_mut().cast(),
+                ),
+                1,
+                "set signature md"
+            );
+            assert_eq!(
+                ffi::EVP_PKEY_CTX_ctrl_str(ctx, pad_key.as_ptr(), pad_val.as_ptr()),
+                1,
+                "set rsa_padding_mode:pss"
+            );
+            // The size query succeeds (AUTOARGLEN, no ownership check); the real
+            // sign must then fail for this software key.
+            let mut siglen: usize = 0;
+            assert_eq!(
+                ffi::EVP_PKEY_sign(
+                    ctx,
+                    std::ptr::null_mut(),
+                    &mut siglen,
+                    digest.as_ptr(),
+                    digest.len(),
+                ),
+                1,
+                "PSS size query"
+            );
+            let mut sig = vec![0u8; siglen];
+            let rc = ffi::EVP_PKEY_sign(
+                ctx,
+                sig.as_mut_ptr(),
+                &mut siglen,
+                digest.as_ptr(),
+                digest.len(),
+            );
+            ffi::EVP_PKEY_CTX_free(ctx);
+            rc != 1
+        };
+        // Capture the queued error to pin that the ownership gate in sign_inner
+        // rejected — not pss_sign's backstop null-key guard. A regression removing
+        // only the owns() early-reject would fall through to pss_sign (whose guard
+        // still errors), so `rejected` alone would not catch it; the distinct
+        // gate message would.
+        let err_text = openssl::error::ErrorStack::get().to_string();
+        assert!(
+            rejected,
+            "software-key RSA-PSS through the engine must be rejected, not signed"
+        );
+        assert!(
+            err_text.contains("software RSA signing through the engine is not supported"),
+            "expected the ownership gate to reject, not pss_sign's backstop; got: {err_text}"
+        );
+
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         Ok(())
     }
 
@@ -970,7 +1184,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             "P-384",
-            &agree_blob,
+            Some(&agree_blob),
             &[("azihsm.key_usage", "keyAgreement")],
         )
         .map_err(|e| EngineError::Other(format!("keyAgreement keygen failed: {e}")))?;
@@ -1300,7 +1514,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             curve,
-            &blob_path,
+            Some(&blob_path),
             &[
                 ("azihsm.session", "false"),
                 ("azihsm.key_usage", "keyAgreement"),
@@ -1430,17 +1644,17 @@ mod round_trips {
     pub(super) fn try_armed_keygen(
         engine_raw: *mut ffi::ENGINE,
         curve: &str,
-        blob: &Path,
+        blob: Option<&Path>,
         extra: &[(&str, &str)],
     ) -> Result<*mut ffi::EVP_PKEY, String> {
         use std::ffi::CString;
         use std::ffi::c_int;
 
         let cstr = |s: &str| CString::new(s).unwrap();
-        let mut opts = vec![
-            (cstr("ec_paramgen_curve"), cstr(curve)),
-            (cstr("azihsm.masked_key"), cstr(blob.to_str().unwrap())),
-        ];
+        let mut opts = vec![(cstr("ec_paramgen_curve"), cstr(curve))];
+        if let Some(blob) = blob {
+            opts.push((cstr("azihsm.masked_key"), cstr(blob.to_str().unwrap())));
+        }
         opts.extend(extra.iter().map(|(k, v)| (cstr(k), cstr(v))));
 
         // SAFETY: standard EVP_PKEY keygen sequence against our engine; every
@@ -1502,7 +1716,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             curve,
-            &blob_path,
+            Some(&blob_path),
             &[
                 ("azihsm.session", "false"),
                 ("azihsm.key_usage", "digitalSignature"),
@@ -1902,6 +2116,16 @@ mod mock {
         round_trips::run_rsa_sign(data, &scratch.0).unwrap();
     }
 
+    // A software RSA key signed with PSS through the engine must be rejected (the
+    // sign override never falls back to a software signature) — driven through a
+    // real EVP_PKEY_sign on an engine-bound ctx, not the handler directly (see
+    // round_trips::run_rsa_pss_rejects_software_key). No HSM is opened.
+    #[test]
+    #[serial]
+    fn rsa_pss_software_key_rejected() {
+        round_trips::run_rsa_pss_rejects_software_key(EngineData::new()).unwrap();
+    }
+
     // Import an external RSA key through the pre-wrapped path
     // (`azihsm.wrapped_key`): wrap a software PKCS#8 against the HSM's
     // unwrapping public key, import, and verify the masked kind and reloaded
@@ -2054,41 +2278,19 @@ mod mock {
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
 
-    // The provider-parity options accept only their implemented values:
-    // session keys and keyAgreement usage must fail keygen with a clear
-    // "not yet supported" error (never mint an unusable key silently).
+    // `azihsm.session:true` generates EC keys and imports an RSA key as HSM
+    // session keys without a masked blob (see round_trips::run_session_keys).
     #[test]
     #[serial]
-    #[allow(unsafe_code)]
-    fn keygen_rejects_unsupported_option_values() {
-        let scratch = Scratch::new("keygen-opts");
+    fn session_keys_via_pkey_methods() {
+        let scratch = Scratch::new("session-keys");
         let data = EngineData::new();
         data.open_hsm_with(
             caller_settings(&scratch),
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
-
-        let blob = scratch.0.join("opts.bin");
-        let err = round_trips::try_armed_keygen(
-            engine_raw,
-            "P-384",
-            &blob,
-            &[("azihsm.session", "true")],
-        )
-        .expect_err("azihsm.session:true must fail keygen");
-        assert!(
-            err.contains("not yet supported") && err.contains("session keys"),
-            "missing clear error for azihsm.session:true: {err}"
-        );
-        assert!(!blob.exists(), "no blob may be written on failure");
-
-        let slot = crate::engine_impl::engine_data_slot().unwrap();
-        let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
-        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
-        unsafe { ffi::ENGINE_free(engine_raw) };
+        round_trips::run_session_keys(data, &scratch.0).unwrap();
     }
 
     // A curve the HSM does not implement must fail keygen cleanly (the armed
@@ -2107,7 +2309,7 @@ mod mock {
         let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
 
         let blob = scratch.0.join("bad_curve.bin");
-        let err = round_trips::try_armed_keygen(engine_raw, "secp256k1", &blob, &[])
+        let err = round_trips::try_armed_keygen(engine_raw, "secp256k1", Some(&blob), &[])
             .expect_err("keygen with an unsupported curve must fail");
         assert!(
             err.contains("unsupported curve"),
@@ -2366,5 +2568,19 @@ mod hw_tests {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
         round_trips::run_hkdf(data, &std::env::temp_dir())
+    }
+
+    /// Hardware session keys, same flow as the mock test (see
+    /// [`super::round_trips::run_session_keys`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine session_keys_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn session_keys_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_session_keys(data, &std::env::temp_dir())
     }
 }

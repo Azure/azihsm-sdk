@@ -16,7 +16,7 @@ const azihsm_byte *azihsm_generate_key_report(
 | Parameter        | Name                              | Description                                  |
 | ---------------- | --------------------------------- | -------------------------------------------- |
 | [in] key_handle  | [azihsm_handle](#azihsm_handle)   | key handle to attest                         |
-| [in] report_data | [azihsm_buffer*](#azihsm_buffer)  | additional data to be included in report     |
+| [in] report_data | [azihsm_buffer*](#azihsm_buffer)  | exactly 128 bytes of additional data to be included in report |
 | [in, out] report | [azihsm_buffer *](#azihsm_buffer) | attestation report for the key        &nbsp; |
 
 **Returns**

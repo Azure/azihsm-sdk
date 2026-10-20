@@ -25,6 +25,8 @@ use open_enum::open_enum;
 use zerocopy::FromBytes;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
+use zeroize::Zeroize;
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -58,6 +60,12 @@ pub struct IpcMessage {
 }
 
 const _: () = assert!(core::mem::size_of::<IpcMessage>() == IPC_MESSAGE_LENGTH * 4);
+
+impl Zeroize for IpcMessage {
+    fn zeroize(&mut self) {
+        self.data.zeroize();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // IO controller / channel identifiers
@@ -159,6 +167,9 @@ pub enum IpcMessageOpCode {
     /// FP error log.
     FpErrLog = 0x9,
 
+    /// Trigger a crash on a remote core (test hook).
+    TriggerCrash = 0x47,
+
     /// Set resource.
     SetResource = 0x7f,
 }
@@ -174,6 +185,7 @@ impl TryFrom<u8> for IpcMessageOpCode {
             0x06 => Self::CdmaIo,
             0x07 => Self::AesKeyUpdate,
             0x09 => Self::FpErrLog,
+            0x47 => Self::TriggerCrash,
             0x7F => Self::SetResource,
             _ => return Err(IpcMessageErr::InvalidOpcodeConversion.into()),
         })
@@ -684,4 +696,272 @@ pub fn encode_pfn_enable_disable_ack(
     let mut out = *original_buf;
     out[0] = ack_header.into_bits();
     out
+}
+
+// ---------------------------------------------------------------------------
+// IpcMessageKeyUpdate (opcode 0x7) — HSM → FP bulk AES key push
+// ---------------------------------------------------------------------------
+
+/// AES bulk key type carried in [`AesKeyFlag`].
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AesBulkKeyType {
+    /// AES-XTS bulk key.
+    Xts = 0,
+
+    /// AES-GCM bulk key (FIPS-approved).
+    Gcm = 1,
+
+    /// AES-GCM bulk key (unapproved — host-supplied IV).
+    GcmUnapproved = 2,
+}
+
+impl AesBulkKeyType {
+    /// 2-bit encoding used by [`AesKeyFlag::key_type`].
+    const fn into_bits(self) -> u8 {
+        self.0
+    }
+
+    /// Decode from the 2-bit [`AesKeyFlag::key_type`] field.
+    const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+}
+
+/// Key-update action for [`KeyUpdateInfo::action`].
+#[repr(u8)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum KeyUpdateAction {
+    /// Delete a single bulk key.
+    Delete = 0,
+
+    /// Delete all session-scoped bulk keys for a given session.
+    DeleteSessionOnly = 1,
+
+    /// Delete all bulk keys.
+    DeleteAll = 2,
+
+    /// Create (import) a bulk key.
+    Create = 3,
+}
+
+/// Per-key flags for a [`KeyUpdateInfo`].
+#[bitfield(u8)]
+#[derive(IntoBytes, Immutable, FromBytes)]
+pub struct AesKeyFlag {
+    /// Whether the key is session-scoped.
+    pub session_only: bool,
+
+    /// Bulk key type (`AesBulkKeyType`).
+    #[bits(2)]
+    pub key_type: AesBulkKeyType,
+
+    /// Reserved.
+    #[bits(5)]
+    _rsvd: u8,
+}
+
+/// `AesKeyUpdate` payload: push (or delete) an AES-256 bulk key on FP.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, IntoBytes, Immutable, FromBytes)]
+pub struct KeyUpdateInfo {
+    /// FP key slot index within `resource_id` (0..=6).
+    pub key_index: u8,
+
+    /// FP vault (resource-group / table) id owning the key.
+    pub resource_id: u8,
+
+    /// Target partition (PCIe function).
+    pub pfn: u8,
+
+    /// Action (`KeyUpdateAction`).
+    pub action: u8,
+
+    /// Owning session id.
+    pub session_id: u16,
+
+    /// Owning application (short app) id.
+    pub app_id: u8,
+
+    /// Per-key flags (`AesKeyFlag`).
+    pub flag: u8,
+
+    /// Raw 32-byte AES-256 key material (zero for delete actions).
+    pub key_data: [u8; 32],
+}
+
+impl Zeroize for KeyUpdateInfo {
+    fn zeroize(&mut self) {
+        self.key_data.zeroize();
+    }
+}
+
+/// `AesKeyUpdate` IPC message body (opcode `AesKeyUpdate`, 0x7).
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes, KnownLayout)]
+pub struct IpcMessageKeyUpdate {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Key update payload.
+    pub info: KeyUpdateInfo,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageKeyUpdate::LEN],
+}
+
+const _: () =
+    assert!(core::mem::size_of::<IpcMessageKeyUpdate>() == core::mem::size_of::<IpcMessage>());
+
+// Lock the wire layout to the reference firmware's 40-byte body.
+const _: () = assert!(core::mem::size_of::<KeyUpdateInfo>() == 40);
+
+impl IpcMessageType for IpcMessageKeyUpdate {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::AesKeyUpdate;
+    const LEN: usize = core::mem::size_of::<KeyUpdateInfo>();
+
+    fn validate(&self) -> IpcResult<()> {
+        Ok(())
+    }
+}
+
+impl IpcMessageEncoderTrait for IpcMessageKeyUpdate {
+    fn encode(mut self) -> IpcMessage {
+        // The typed body holds raw AES key material in `info.key_data`;
+        // copy it into the wire `IpcMessage` and immediately scrub the
+        // typed copy so no second stack image of the key lingers past this
+        // encode.  The caller must scrub the returned `IpcMessage`.
+        let mut ipc_message = IpcMessage {
+            data: [0; IPC_MESSAGE_LENGTH],
+        };
+        ipc_message.as_mut_bytes().copy_from_slice(self.as_bytes());
+        self.info.key_data.zeroize();
+        ipc_message
+    }
+}
+
+/// FP-addressable AES-256 bulk key id, returned to the host as
+/// `bulk_key_id`.  Packs a 3-bit slot index and 7-bit vault id into a
+/// `u16` (matching the reference firmware's `AesBulk256KeyId`).
+#[bitfield(u16)]
+#[derive(IntoBytes, Immutable, FromBytes)]
+pub struct AesBulk256KeyId {
+    /// FP key slot index within the vault (0..=6).
+    #[bits(3)]
+    pub key_index: u8,
+
+    /// FP vault (resource-group / table) id.
+    #[bits(7)]
+    pub vault_id: u8,
+
+    /// Reserved.
+    #[bits(6)]
+    _rsvd: u8,
+}
+
+// ---------------------------------------------------------------------------
+// IpcMessageTriggerCrash (opcode 0x47)
+// ---------------------------------------------------------------------------
+
+/// Crash mechanism requested on the target core.
+///
+/// Wire values mirror the reference firmware's `CrashType`.
+#[repr(u32)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum CrashType {
+    /// Trigger a hard fault.
+    HardFault = 1,
+
+    /// Trigger the explicit-crash path.
+    ExplicitCrash = 2,
+
+    /// Trigger a panic.
+    Panic = 3,
+
+    /// Stop forward progress.
+    Hang = 4,
+}
+
+/// Target processor for a crash request.
+///
+/// Wire values mirror the reference firmware's `SocCpuId`. See [`CrashType`]
+/// for why these are re-declared rather than shared with the DDI enum.
+#[repr(u32)]
+#[open_enum]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoBytes, Immutable, FromBytes)]
+pub enum SocCpuId {
+    /// Admin core.
+    Admin = 0,
+
+    /// HSM core.
+    Hsm = 1,
+
+    /// Fast-path core 0.
+    Fp0 = 2,
+
+    /// Fast-path core 1.
+    Fp1 = 3,
+
+    /// Fast-path core 2.
+    Fp2 = 4,
+}
+
+/// `TriggerCrash` IPC message body (opcode `TriggerCrash`, 0x47).
+///
+/// Outbound only: the HSM core asks another core to crash itself. Mirrors the
+/// reference firmware's `IpcMessageTriggerCrash`, which the Admin core decodes.
+#[repr(C)]
+#[derive(Debug, IntoBytes, Immutable, FromBytes)]
+pub struct IpcMessageTriggerCrash {
+    /// IPC header fields.
+    pub header: IpcMessageHeader,
+
+    /// Crash mechanism to execute on the target core.
+    pub crash_type: CrashType,
+
+    /// Core that should execute the crash.
+    pub cpu_id: SocCpuId,
+
+    /// Reserved padding so the body fills the 60-byte payload area.
+    pub _rsvd: [u8; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageTriggerCrash::LEN],
+}
+
+const _: () =
+    assert!(core::mem::size_of::<IpcMessageTriggerCrash>() == core::mem::size_of::<IpcMessage>());
+
+// Lock the wire layout: two 4-byte enums, no padding.
+const _: () = assert!(IpcMessageTriggerCrash::LEN == 8);
+
+impl IpcMessageType for IpcMessageTriggerCrash {
+    const OP: IpcMessageOpCode = IpcMessageOpCode::TriggerCrash;
+    const LEN: usize = core::mem::size_of::<CrashType>() + core::mem::size_of::<SocCpuId>();
+
+    fn validate(&self) -> IpcResult<()> {
+        Ok(())
+    }
+}
+
+/// Encode a `TriggerCrash` request targeting `cpu_id`.
+///
+/// `tag` is echoed by the responder, matching the reference request/response
+/// tagging convention. A responder may acknowledge before crashing; the
+/// requester does not wait for or depend on that acknowledgement.
+pub fn encode_trigger_crash(
+    tag: u8,
+    cpu_id: SocCpuId,
+    crash_type: CrashType,
+) -> [u32; IPC_MESSAGE_LENGTH] {
+    let msg = IpcMessageTriggerCrash {
+        header: IpcMessageHeader::new()
+            .with_msg_op(IpcMessageOpCode::TriggerCrash as u32)
+            .with_tag(tag as u32)
+            .with_length(IpcMessageTriggerCrash::LEN as u32),
+        crash_type,
+        cpu_id,
+        _rsvd: [0; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageTriggerCrash::LEN],
+    };
+    IpcMessageEncoder::encode(msg).data
 }

@@ -56,7 +56,9 @@ use azihsm_fw_uno_drivers_oic::ChannelConfig as OicChannelConfig;
 use azihsm_fw_uno_drivers_oic::OicDriver;
 use azihsm_fw_uno_drivers_rng::RngDriver;
 use azihsm_fw_uno_drivers_sha::ShaDriver;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_drivers_systick as systick_driver;
+use azihsm_fw_uno_drivers_tcon::Tcon;
 use azihsm_fw_uno_drivers_upka::UpkaDriver;
 use azihsm_fw_uno_pac::Interrupt;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_OFFSET;
@@ -76,13 +78,32 @@ use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_RING_STRIDE;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_CI_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_PI_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_RING_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::ISQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_RX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_RX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_RX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::psram::PSRAM_BASE;
 use azihsm_fw_uno_trace::tracing::*;
 use embassy_futures::select::Either;
 use embassy_futures::select::select;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -111,7 +132,7 @@ pub enum BootPhase {
 const IO_QUEUE_DEPTH: usize = 32;
 
 /// Number of IPC pairs configured for the firmware.
-const IPC_PAIRS: usize = 2;
+const IPC_PAIRS: usize = 4;
 
 /// IPC channel identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,6 +142,10 @@ pub enum IpcChannel {
     AdminMessage = 0,
     /// Admin → HSM event notifications.
     AdminEvent = 1,
+    /// HSM → FP bulk-key requests (with response).
+    FpMessage = 2,
+    /// HSM → Admin requests (HSM is the requestor, Admin the responder).
+    AdminRequest = 3,
 }
 
 // ── NVIC wake dispatch ─────────────────────────────────────────
@@ -297,11 +322,17 @@ pub struct UnoHsmPal {
     /// it; initialise this table saturated (any value `>= ` capacity) to make
     /// the first scrub cover the whole slot instead.
     pub(crate) io_peak: IoAllocTable,
+
+    /// Serializes bulk-key registration with the fast-path engine against
+    /// bulk-key deletion and session teardown, so a key for a session that is
+    /// being torn down can't be registered with the engine after the
+    /// session's engine-side delete (see `vault.rs`).
+    pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
 // executor on a single-core Cortex-M7 with no preemptive ISRs.  The
-// interior-mutable field (Cell<BootPhase>) is never accessed from
+// interior-mutable fields (e.g. Cell<BootPhase>) are never accessed from
 // interrupt context, so concurrent access is impossible despite the
 // asserted Sync.
 unsafe impl Sync for UnoHsmPal {}
@@ -370,6 +401,40 @@ impl Default for UnoHsmPal {
                     depth: 0,
                     msg_len: 0,
                 },
+                // Pair 2: send bulk-key requests to the bulk-crypto
+                // backend and await the response (desc 15 out, 16 in)
+                // over the PSRAM HSM↔backend IPC rings.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: 16,
+                    outbound_desc: 15,
+                    tx_ring_base: PSRAM_BASE + HSM_TO_FP_IPC_TX_RING_OFFSET,
+                    tx_pi: PSRAM_BASE + HSM_TO_FP_IPC_TX_PI_OFFSET,
+                    tx_ci: PSRAM_BASE + HSM_TO_FP_IPC_TX_CI_OFFSET,
+                    rx_ring_base: PSRAM_BASE + HSM_TO_FP_IPC_RX_RING_OFFSET,
+                    rx_pi: PSRAM_BASE + HSM_TO_FP_IPC_RX_PI_OFFSET,
+                    rx_ci: PSRAM_BASE + HSM_TO_FP_IPC_RX_CI_OFFSET,
+                    depth: HSM_TO_FP_IPC_TX_RING_COUNT as u16,
+                    msg_len: (HSM_TO_FP_IPC_TX_RING_STRIDE / 4) as u16,
+                },
+                // Pair 3: send requests to Admin (desc 13 in, 12 out).
+                //
+                // Descriptor numbers and ring addresses mirror the reference
+                // `hsm_to_admin_ipc_channel_config` — the Admin core runs the
+                // reference firmware, so both ends must agree exactly.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: 13,
+                    outbound_desc: 12,
+                    tx_ring_base: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_RING_OFFSET,
+                    tx_pi: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET,
+                    tx_ci: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET,
+                    rx_ring_base: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_RING_OFFSET,
+                    rx_pi: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_PI_OFFSET,
+                    rx_ci: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_CI_OFFSET,
+                    depth: IPC_HSM_ADMIN_RX_RING_COUNT as u16,
+                    msg_len: (IPC_HSM_ADMIN_RX_RING_STRIDE / 4) as u16,
+                },
             ],
         };
 
@@ -385,6 +450,7 @@ impl Default for UnoHsmPal {
             boot_phase: Cell::new(BootPhase::WaitNormalBoot),
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
+            fp_bulk_lock: Mutex::new(()),
         }
     }
 }
@@ -509,6 +575,14 @@ impl UnoHsmPal {
         self.gdma.init();
         self.boot_phase.set(BootPhase::Running);
         boot_status::set(BootStatus::Run);
+
+        // Enable the TCON wakeup1 receiver now that the Admin bootstrap
+        // handshake is complete. This IRQ is the cross-core crash-notification
+        // trigger: a faulting peer core arms it, and the NVIC-vectored
+        // trampoline in `azihsm_fw_uno_fault` then collects this core's dump.
+        // Enabling it earlier risks a wakeup during partial init.
+        Nvic::unpend(Interrupt::TCON_WAKEUP1);
+        Nvic::enable(Interrupt::TCON_WAKEUP1);
 
         #[cfg(feature = "semihosting")]
         azihsm_fw_uno_drivers_semihosting::sys_ready();
@@ -730,19 +804,16 @@ impl UnoHsmPal {
 
 /// Platform hook for test-only commands.
 ///
-/// With `mcr_test_action` this routes `TestAction` to
-/// `crate::test_dispatch`; without it, and for TBOR in either case, uno
-/// claims nothing and the firmware answers every opcode exactly as it
-/// did before the hook existed.
+/// With either validation feature this routes its MBOR commands to
+/// `crate::test_hooks`; without both, and for TBOR in all cases, uno
+/// claims nothing.
 impl HsmCustomDispatch for UnoHsmPal {
-    #[cfg(feature = "mcr_test_action")]
-    async fn mbor_dispatch(&self, _io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
-        // `Infallible` — the handler has no success path, so there is
-        // no response to hand back and nothing to match on.
-        crate::test_dispatch::mbor_dispatch(req).map(|never| match never {})
+    #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
+    async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        crate::test_hooks::mbor_dispatch(self, io, req).await
     }
 
-    #[cfg(not(feature = "mcr_test_action"))]
+    #[cfg(not(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks")))]
     async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
         Err(HsmError::UnsupportedCmd)
     }
@@ -782,9 +853,50 @@ impl HsmPal for UnoHsmPal {
         systick_driver::init();
         self.rng.init();
         self.ipc.init();
+        // Zero the indices of the HSM→Admin queue this core produces into.
+        // Mirrors the reference `hsm_to_admin_ipc_channel_config`, which
+        // zeroes the tx queue's ci/pi because the HSM owns that queue; the
+        // Admin core zeroes the reply queue from its own side. Without this,
+        // stale indices left in GSRAM by a previous boot desynchronize the
+        // ring. Must run before the channel is enabled.
+        unsafe {
+            core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET) as *mut u32, 0);
+            core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET) as *mut u32, 0);
+        }
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
-        azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+        self.ipc.enable(IpcChannel::FpMessage as u8);
+        // The HSM owns initialization of the HSM↔backend ring indices (the
+        // reference firmware zeroes them at channel setup).  Clear all
+        // four so the send/recv PI/CI comparisons start from a known
+        // state regardless of prior PSRAM contents.
+        // SAFETY: these are the fixed HSM↔backend PSRAM index words; writing
+        // 0 is the documented reset value and no aliasing borrow exists.
+        unsafe {
+            ((PSRAM_BASE + HSM_TO_FP_IPC_TX_PI_OFFSET) as *mut u32).write_volatile(0);
+            ((PSRAM_BASE + HSM_TO_FP_IPC_TX_CI_OFFSET) as *mut u32).write_volatile(0);
+            ((PSRAM_BASE + HSM_TO_FP_IPC_RX_PI_OFFSET) as *mut u32).write_volatile(0);
+            ((PSRAM_BASE + HSM_TO_FP_IPC_RX_CI_OFFSET) as *mut u32).write_volatile(0);
+        }
+
+        self.ipc.enable(IpcChannel::AdminRequest as u8);
+        // Start the crash-notify wakeup timer disarmed. `on_boot_complete`
+        // enables the NVIC receiver after the Admin handshake; the timer
+        // itself is armed only when sending a crash notification.
+        Tcon::disable_wakeup_timer1();
+        // Recovery boot: only a cold (power-on) boot wipes the partition
+        // store. On a warm / fw-update reset the GSRAM-resident store survived,
+        // so preserve every partition's persisted state (res_mask, keys, creds,
+        // sessions) and only re-arm Gate 1. Mirrors the reference `HsmEnv::new`
+        // constructor selection on `SocInfo::reset_type` (`env.rs`).
+        match azihsm_fw_uno_drivers_soc::reset_type() {
+            SocResetType::Por => {
+                azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+            }
+            SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
+                azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+            }
+        }
         boot_status::set(BootStatus::Done);
     }
 

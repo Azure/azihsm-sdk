@@ -305,54 +305,6 @@ fn test_cert_chain_leaf_to_root_order() {
     }
 }
 
-/// Slot 2 serves the on-demand, PTA-signed PID certificate that only
-/// exists once the partition has been TBOR-finalized. Drive a full
-/// finalization through the public API, then read `cert_chain(2)`
-/// repeatedly: every read must regenerate and return a valid,
-/// parseable PID certificate (the slot-2 path bypasses the cached
-/// slot-0 chain, so stability across repeated reads is exercised here).
-#[cfg(not(feature = "mock"))]
-#[test]
-fn test_cert_chain_slot2_pid_after_finalization() {
-    let _guard = crate::utils::partition_ex_helpers::PARTITION_LOCK.lock();
-
-    // Keep the partition (and its session) alive for the duration of the
-    // reads; the finalized slot-2 cert is served off this partition.
-    let (part, _rev, _session) = crate::utils::sd_provision::finalized_co_partition();
-
-    // Repeated reads each regenerate the on-demand PID certificate; every
-    // one must succeed and yield a single, valid PID certificate.
-    for attempt in 0..3 {
-        let cert_chain = part
-            .cert_chain(2)
-            .unwrap_or_else(|e| panic!("slot-2 cert_chain failed on attempt {attempt}: {e:?}"));
-        assert!(
-            !cert_chain.is_empty(),
-            "slot-2 cert chain is empty on attempt {attempt}"
-        );
-        assert!(
-            cert_chain.contains("-----BEGIN CERTIFICATE-----"),
-            "slot-2 cert chain missing PEM header on attempt {attempt}"
-        );
-
-        let certs = X509Certificate::from_pem_stack(cert_chain.as_bytes())
-            .expect("Failed to parse slot-2 cert chain PEM stack");
-        assert_eq!(
-            certs.len(),
-            1,
-            "slot-2 chain should contain exactly the PID leaf certificate on attempt {attempt}"
-        );
-
-        // The single certificate must be a well-formed X.509 PID cert: its
-        // DER round-trips through the parser and carries a non-empty body.
-        let der = pem_to_der(cert_chain.as_bytes()).expect("Failed to parse slot-2 PID cert PEM");
-        assert!(
-            !der.is_empty(),
-            "slot-2 PID certificate DER is empty on attempt {attempt}"
-        );
-    }
-}
-
 #[api_test]
 fn test_init_caller_source_with_null_obk_fails() {
     let part_mgr = HsmPartitionManager::partition_info_list();

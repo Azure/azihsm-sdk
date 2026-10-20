@@ -14,20 +14,75 @@ use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
+use azihsm_ddi_tbor_test_harness::SessionHandshake;
 use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
+use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
+use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
+use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
+use azihsm_ddi_tbor_types::CertDescriptor;
+use azihsm_ddi_tbor_types::ECC_CURVE_P256;
+use azihsm_ddi_tbor_types::ECC_CURVE_P384;
+use azihsm_ddi_tbor_types::ECC_CURVE_P521;
+use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
+use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
+use azihsm_ddi_tbor_types::MACH_SEED_LEN;
 use azihsm_ddi_tbor_types::PART_POLICY_LEN;
 use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
 use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
 use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
+use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
 use azihsm_ddi_tbor_types::PartPolicy;
 use azihsm_ddi_tbor_types::PolicyKeyKind;
 use azihsm_ddi_tbor_types::PolicyPubKey;
 use azihsm_ddi_tbor_types::PolicyVer;
+use azihsm_ddi_tbor_types::ReportDescriptor;
 use azihsm_ddi_tbor_types::SessionType;
+use azihsm_ddi_tbor_types::TborKeyReportReq;
+use azihsm_ddi_tbor_types::TborPartInfoReq;
+use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
+use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
+use zerocopy::TryFromBytes;
 
 pub type DdiTest = AzihsmDdi;
+
+/// Wire discriminants for the TBOR `KeyScope` enum.
+pub const KEY_SCOPE_UNSPECIFIED: u8 = 0b000;
+pub const KEY_SCOPE_SESSION: u8 = 0b001;
+pub const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
+pub const KEY_SCOPE_LOCAL: u8 = 0b011;
+pub const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
+pub const KEY_SCOPE_INTERNAL: u8 = 0b101;
+
+/// TBOR key scopes (wire `KeyScope` discriminants) used by fuzz targets.
+#[derive(Arbitrary, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyScope {
+    Unspecified,
+    Session,
+    Ephemeral,
+    Local,
+    SecurityDomain,
+    Internal,
+}
+
+impl KeyScope {
+    pub fn to_tbor(self) -> u8 {
+        match self {
+            Self::Unspecified => KEY_SCOPE_UNSPECIFIED,
+            Self::Session => KEY_SCOPE_SESSION,
+            Self::Ephemeral => KEY_SCOPE_EPHEMERAL,
+            Self::Local => KEY_SCOPE_LOCAL,
+            Self::SecurityDomain => KEY_SCOPE_SECURITY_DOMAIN,
+            Self::Internal => KEY_SCOPE_INTERNAL,
+        }
+    }
+}
 
 /// Fuzz operations corresponding to the TOC builder methods on
 /// [`Encoder`].
@@ -67,6 +122,150 @@ impl FuzzRole {
         match self {
             FuzzRole::Co => SessionType::Authenticated,
             FuzzRole::Cu => SessionType::PlainText,
+        }
+    }
+}
+
+/// TBOR ECC curves (wire `EccCurve` discriminants) for generated keys.
+///
+/// Shadows the `azihsm_crypto::EccCurve` glob import within this module.
+#[derive(Arbitrary, Debug, Clone, Copy)]
+pub enum EccCurve {
+    P256,
+    P384,
+    P521,
+}
+
+impl EccCurve {
+    pub fn to_tbor(self) -> u8 {
+        match self {
+            Self::P256 => ECC_CURVE_P256,
+            Self::P384 => ECC_CURVE_P384,
+            Self::P521 => ECC_CURVE_P521,
+        }
+    }
+
+    /// Raw (unpadded) coordinate length in bytes; also the length of an
+    /// ECDH shared secret (the X coordinate).
+    pub fn coord_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 66,
+        }
+    }
+
+    /// Largest digest the firmware zero-extends into the ECDSA field.
+    pub fn max_digest_len(self) -> usize {
+        match self {
+            Self::P256 => 32,
+            Self::P384 => 48,
+            Self::P521 => 64,
+        }
+    }
+
+    /// Wire `r ‖ s` length, each component padded to the coordinate width.
+    pub fn wire_sig_len(self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
+        }
+    }
+
+    /// Wire `x ‖ y` public-key length, each coordinate padded to the wire
+    /// coordinate width (P-521: 66 -> 68 bytes).
+    pub fn wire_pub_key_len(self) -> usize {
+        match self {
+            Self::P256 => 64,
+            Self::P384 => 96,
+            Self::P521 => 136,
+        }
+    }
+}
+
+/// TBOR AES key sizes supported by `AesGenerateKey`.
+#[derive(Arbitrary, Debug)]
+pub enum AesKeySize {
+    Aes128,
+    Aes192,
+    Aes256,
+}
+
+impl AesKeySize {
+    pub fn to_tbor(&self) -> u8 {
+        match self {
+            Self::Aes128 => AES_KEY_SIZE_128,
+            Self::Aes192 => AES_KEY_SIZE_192,
+            Self::Aes256 => AES_KEY_SIZE_256,
+        }
+    }
+}
+
+fn bounded_appended_bytes(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+    let len = usize::arbitrary(u)? % (MACH_SEED_ENVELOPE_MAX_LEN + 1);
+    Ok(u.bytes(len)?.to_vec())
+}
+
+/// Post-seal mutation applied to a wire-valid `PartInit`
+/// `mach_seed_envelope`.
+///
+/// `None` ships the sealed envelope untouched so the handler advances
+/// past AEAD authentication into the policy / thumbprint / seed
+/// pipeline. The other variants exercise the envelope parser's header,
+/// AAD, ciphertext, tag, and length-reject paths without leaving them
+/// buried under negligible-probability arbitrary-byte inputs.
+#[derive(Arbitrary, Debug)]
+pub enum EnvelopeMutation {
+    /// Ship the sealed envelope unchanged.
+    None,
+    /// XOR a fuzzed mask into a fuzzed offset (offset wrapped modulo
+    /// envelope length). Exercises AEAD tag / ciphertext tampering.
+    FlipByte { offset: u16, mask: u8 },
+    /// Truncate to `len % (envelope.len() + 1)` bytes. Exercises
+    /// short-envelope rejects and post-decrypt length checks.
+    Truncate { len: u16 },
+    /// Append fuzzed trailing bytes (bounded) to exercise over-length
+    /// rejects.
+    Append(#[arbitrary(with = bounded_appended_bytes)] Vec<u8>),
+}
+
+impl EnvelopeMutation {
+    pub fn apply(&self, envelope: &mut Vec<u8>) {
+        match self {
+            EnvelopeMutation::None => {}
+            EnvelopeMutation::FlipByte { offset, mask } => {
+                if !envelope.is_empty() && *mask != 0 {
+                    let idx = (*offset as usize) % envelope.len();
+                    envelope[idx] ^= *mask;
+                }
+            }
+            EnvelopeMutation::Truncate { len } => {
+                let cap = envelope.len() + 1;
+                envelope.truncate((*len as usize) % cap);
+            }
+            EnvelopeMutation::Append(extra) => {
+                envelope.extend_from_slice(extra);
+            }
+        }
+    }
+
+    /// `true` iff this mutation would leave the sealed envelope byte-
+    /// identical (matches the `None` variant or a no-op offset/mask/len/
+    /// extra choice inside a mutation variant). Drives the "expect
+    /// success" classification for the result assertion.
+    pub fn is_noop(&self, envelope: &[u8]) -> bool {
+        match self {
+            EnvelopeMutation::None => true,
+            EnvelopeMutation::FlipByte { mask, .. } => *mask == 0 || envelope.is_empty(),
+            EnvelopeMutation::Truncate { len } => {
+                // `Vec::truncate(new_len)` only shrinks when `new_len <
+                // envelope.len()`; `apply` computes
+                // `len % (envelope.len() + 1)` so a no-op requires the
+                // modulo to land on `envelope.len()`.
+                (*len as usize) % (envelope.len() + 1) == envelope.len()
+            }
+            EnvelopeMutation::Append(extra) => extra.is_empty(),
         }
     }
 }
@@ -193,6 +392,18 @@ pub fn validate_toc_entry(op: &EncoderTOCBuilders, entry: TocEntry<'_>) {
     }
 }
 
+/// Fixed `PartInit` machine seed (`0x40 + i`), mirroring the canonical
+/// fixture used by the `PartInit` integration suite.
+pub fn mach_seed() -> [u8; MACH_SEED_LEN] {
+    core::array::from_fn(|i| 0x40 + i as u8)
+}
+
+/// Fixed `PartInit` POTA thumbprint (`0x80 ^ i`), mirroring the canonical
+/// fixture used by the `PartInit` integration suite.
+pub fn pota_thumbprint() -> [u8; POTA_THUMBPRINT_LEN] {
+    core::array::from_fn(|i| 0x80 ^ i as u8)
+}
+
 /// Fill a 96-byte `PolicyPubKey::data` slot with a deterministic
 /// pattern seeded by `fill`: `(fill + i) | 0x80`.
 ///
@@ -237,8 +448,11 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
         major: POLICY_VERSION_MAJOR,
         minor: 0,
     };
-    policy.pota_pub_key =
-        PolicyPubKey::new(PolicyKeyKind::Ecc384, POLICY_MAX_KEY_LEN as u16, pota_pub_key);
+    policy.pota_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        pota_pub_key,
+    );
     policy.sata_pub_key = PolicyPubKey::new(
         PolicyKeyKind::Ecc384,
         POLICY_MAX_KEY_LEN as u16,
@@ -249,4 +463,128 @@ pub fn known_good_part_policy(pota_pub_key: [u8; POLICY_MAX_KEY_LEN]) -> [u8; PA
     let mut bytes = [0u8; PART_POLICY_LEN];
     bytes.copy_from_slice(policy.as_bytes());
     bytes
+}
+
+/// Drive `PartInit` → `PartFinal` so the partition is initialized and
+/// partition-local masking keys are available to a fuzz target.
+pub fn finalize_partition(ctx: &TestCtx, session: &SessionHandshake) {
+    let pota = CaKey::generate();
+    let policy = known_good_part_policy(pota.raw_pub());
+    let init = ctx
+        .part_init(session, &mach_seed(), &policy, &pota_thumbprint())
+        .expect("PartInit should succeed");
+    let chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(session, &policy, &[], &chain.der_items())
+        .expect("PartFinal should succeed");
+}
+
+fn add_evidence_item(oob_items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
+    let index = u8::try_from(oob_items.len()).expect("evidence count fits descriptor index");
+    let length = u16::try_from(der.len()).expect("evidence item length fits descriptor");
+    oob_items.push(der.to_vec());
+    CertDescriptor {
+        index,
+        length: length.into(),
+    }
+}
+
+/// Initialize a partition and create a test security domain so its
+/// masking key is available to a fuzz target.
+pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
+    use zerocopy::IntoBytes;
+
+    let info = ctx
+        .tbor(&TborPartInfoReq::new())
+        .expect("PartInfo should succeed");
+    let pid_pub: [u8; RAW_PUB_LEN] = info
+        .pid_pub_key
+        .as_slice()
+        .try_into()
+        .expect("PartInfo PID public key should have the expected length");
+    let pota = CaKey::generate();
+    let sata = CaKey::generate();
+    let mut policy =
+        <PartPolicy as TryFromBytes>::try_read_from_bytes(&known_good_part_policy(pota.raw_pub()))
+            .expect("known-good partition policy should decode");
+    policy.sata_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        sata.raw_pub(),
+    );
+    assert_eq!(
+        info.pid.len(),
+        policy.backup_part_id.len(),
+        "PartInfo PID should have the expected length",
+    );
+    policy.backup_part_id.copy_from_slice(&info.pid);
+    let mut backup_part_pub = [0u8; POLICY_MAX_KEY_LEN];
+    assert_eq!(
+        info.pid_pub_key.len(),
+        backup_part_pub.len(),
+        "PartInfo PID public key should have the expected length",
+    );
+    backup_part_pub.copy_from_slice(&info.pid_pub_key);
+    policy.backup_part_pub_key = PolicyPubKey::new(
+        PolicyKeyKind::Ecc384,
+        POLICY_MAX_KEY_LEN as u16,
+        backup_part_pub,
+    );
+    let mut policy_bytes = [0u8; PART_POLICY_LEN];
+    policy_bytes.copy_from_slice(policy.as_bytes());
+
+    let init = ctx
+        .part_init(session, &mach_seed(), &policy_bytes, &pota_thumbprint())
+        .expect("PartInit should succeed");
+    let pta_chain = make_pta_chain(&pota, &pta_pub_from_csr(&init.pta_csr));
+    ctx.part_final(session, &policy_bytes, &[], &pta_chain.der_items())
+        .expect("PartFinal should succeed");
+
+    let sealing_key = ctx
+        .tbor(&TborSdSealingKeyGenReq {
+            session_id: session.session_id,
+            scope: KEY_SCOPE_LOCAL,
+        })
+        .expect("local SD sealing-key generation should succeed");
+    let report = ctx
+        .tbor(&TborKeyReportReq {
+            session_id: session.session_id,
+            masked_key: sealing_key.masked_key.to_vec(),
+            report_data: [0u8; KEY_REPORT_DATA_LEN],
+        })
+        .expect("sealing-key report generation should succeed");
+
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(&sata, &pid_pub);
+    let mut oob_items = Vec::new();
+    let mfgr_chain = vec![
+        add_evidence_item(&mut oob_items, &mfgr.root_der),
+        add_evidence_item(&mut oob_items, &mfgr.leaf_der),
+    ];
+    let owner_chain = vec![
+        add_evidence_item(&mut oob_items, &owner.root_der),
+        add_evidence_item(&mut oob_items, &owner.leaf_der),
+    ];
+    let part_owner_chain = vec![
+        add_evidence_item(&mut oob_items, &part_owner.root_der),
+        add_evidence_item(&mut oob_items, &part_owner.leaf_der),
+    ];
+    let report_descriptor = add_evidence_item(&mut oob_items, &report.report);
+
+    let req = TborSdCreateRemoteBackupReq {
+        session_id: session.session_id,
+        masked_sealing_key: sealing_key.masked_key,
+        receiver_mfgr_cert_chain: mfgr_chain,
+        receiver_owner_cert_chain: owner_chain,
+        receiver_part_owner_cert_chain: part_owner_chain,
+        receiver_report: ReportDescriptor {
+            index: report_descriptor.index,
+            length: report_descriptor.length,
+        },
+        policy: <PartPolicy as TryFromBytes>::try_read_from_bytes(&policy_bytes)
+            .expect("security-domain policy should decode"),
+    };
+    let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    ctx.tbor_oob(&req, &oob)
+        .expect("test security-domain creation should succeed");
 }

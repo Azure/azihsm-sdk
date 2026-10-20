@@ -159,6 +159,8 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
 
         // ── Step 1: Pre-fill ISQ with buffer addresses ──────────────
+        // IDFU resume is not implemented; initialize the free list together
+        // with the queue pointers below rather than partially retaining it.
         for i in 0..DEPTH {
             let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
             let entry = unsafe { &mut *self.isq_ring.add(i) };
