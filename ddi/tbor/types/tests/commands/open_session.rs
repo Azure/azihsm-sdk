@@ -843,17 +843,10 @@ fn rejected_suite_does_not_consume_session_slot() {
 
     let _other_sessions: Vec<_> = other_ctxs
         .iter()
-        .enumerate()
-        .map(|(index, other_ctx)| {
+        .map(|other_ctx| {
             other_ctx
                 .open_session(CU, SessionType::PlainText)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "CU session {} of {} must succeed after \
-                         unsupported suite rejection: {:?}",
-                        index, CU_SESSION_LIMIT, e
-                    )
-                })
+                .expect("CU session must succeed after unsupported suite rejection")
         })
         .collect();
 }
@@ -887,17 +880,10 @@ fn rejected_pk_init_does_not_consume_session_slot() {
 
     let _other_sessions: Vec<_> = other_ctxs
         .iter()
-        .enumerate()
-        .map(|(index, other_ctx)| {
+        .map(|other_ctx| {
             other_ctx
                 .open_session(CU, SessionType::PlainText)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "CU session {} of {} must succeed after \
-                         invalid pk_init rejection: {:?}",
-                        index, CU_SESSION_LIMIT, e
-                    )
-                })
+                .expect("CU session must succeed after invalid pk_init rejection")
         })
         .collect();
 }
