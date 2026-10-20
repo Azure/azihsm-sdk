@@ -398,13 +398,12 @@ fuzz_target!(|input: FuzzInput| {
                 req.pok_local_backup[MASKED_SD_LEN - 1] ^= input.mutation_mask;
             }
             Fault::WrongKindBackup => {
-                // SdSealingKeyGen returns a genuine partition-scoped masked-key
-                // envelope with the same fixed size, but the recovery
-                // primitive requires SdPartitionOwnerSeed.
+                // Use Local scope so recovery authenticates with PartLocalMK
+                // before rejecting the key kind: it requires SdPartitionOwnerSeed.
                 req.pok_local_backup = ctx
                     .tbor(&TborSdSealingKeyGenReq {
                         session_id: session.session_id,
-                        scope: input.key_scope.to_tbor(),
+                        scope: common::KeyScope::Local.to_tbor(),
                     })
                     .expect("wrong-kind envelope fixture should be valid")
                     .masked_key;
