@@ -123,6 +123,7 @@ fn compare_key_properties(original: &HsmAesKey, unmasked: &HsmAesKey) {
     );
 }
 
+#[cfg(not(feature = "emu"))]
 fn compare_xts_key_properties(original: &HsmAesXtsKey, unmasked: &HsmAesXtsKey) {
     assert_eq!(original.class(), unmasked.class(), "Key class mismatch");
     assert_eq!(original.kind(), unmasked.kind(), "Key kind mismatch");
@@ -245,6 +246,7 @@ use crate::utils::aes_xts::build_xts_wrapped_blob;
 
 // Validate the unwrapped key is usable for AES-XTS encryption/decryption.
 
+#[cfg(not(feature = "emu"))]
 fn tweak_after_units(tweak: &[u8; 16], units: usize) -> [u8; 16] {
     u128::from_le_bytes(*tweak)
         .checked_add(units as u128)
