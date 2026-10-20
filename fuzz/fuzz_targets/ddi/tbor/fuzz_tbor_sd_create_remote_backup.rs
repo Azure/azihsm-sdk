@@ -45,16 +45,6 @@ struct FuzzInput {
     key_scope: common::KeyScope,
 }
 
-impl Default for FuzzInput {
-    /// Select a valid remote-backup request with a partition-local sealing key.
-    fn default() -> Self {
-        Self {
-            mutation: Mutation::Valid,
-            key_scope: common::KeyScope::Local,
-        }
-    }
-}
-
 struct Fixture {
     session_id: u16,
     policy: [u8; PART_POLICY_LEN],

@@ -31,21 +31,10 @@ enum Mutation {
     NotFinalized,
 }
 
-#[derive(Arbitrary, Clone, Copy, Debug)]
+#[derive(Arbitrary, Debug)]
 struct FuzzInput {
     mutation: Mutation,
     key_scope: common::KeyScope,
-}
-
-impl Default for FuzzInput {
-    /// Select an untampered restore with a partition-local sealing key when
-    /// the fuzz input cannot be decoded.
-    fn default() -> Self {
-        Self {
-            mutation: Mutation::Valid,
-            key_scope: common::KeyScope::Local,
-        }
-    }
 }
 
 struct SourceBackups {
@@ -317,10 +306,7 @@ fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
-    let mut unstructured = arbitrary::Unstructured::new(data);
-    let input = FuzzInput::arbitrary(&mut unstructured).unwrap_or_default();
-
+fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         run_case(ctx, input.mutation, input.key_scope);
     });

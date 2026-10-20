@@ -44,16 +44,6 @@ struct FuzzInput {
     key_scope: common::KeyScope,
 }
 
-impl Default for FuzzInput {
-    /// Select an untampered reseal request with partition-local sealing keys.
-    fn default() -> Self {
-        Self {
-            mutation: Mutation::Valid,
-            key_scope: common::KeyScope::Local,
-        }
-    }
-}
-
 struct ResealEvidence {
     oob_items: Vec<Vec<u8>>,
     src_mfgr: Vec<CertDescriptor>,
