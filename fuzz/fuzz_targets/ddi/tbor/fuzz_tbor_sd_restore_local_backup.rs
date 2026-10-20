@@ -8,28 +8,10 @@ mod common;
 
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::aead_envelope::HEADER_LEN as ENVELOPE_HEADER_LEN;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_types::CertDescriptor;
-use azihsm_ddi_tbor_types::MASKED_SD_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdRestoreLocalBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_test_harness::x509_fixture::*;
+use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -56,6 +38,8 @@ struct FuzzInput {
 }
 
 impl Default for FuzzInput {
+    /// Select an untampered restore with a partition-local sealing key when
+    /// the fuzz input cannot be decoded.
     fn default() -> Self {
         Self {
             mutation: Mutation::Valid,
@@ -73,6 +57,7 @@ struct SourceBackups {
     pota: CaKey,
 }
 
+/// Append a DER certificate to the OOB items and return its wire descriptor.
 fn push_oob_item(items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
     let index = u8::try_from(items.len()).expect("bounded OOB item count");
     let length = u16::try_from(der.len()).expect("bounded fixture DER length");
@@ -83,6 +68,8 @@ fn push_oob_item(items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
     }
 }
 
+/// Append the root and leaf certificates to the OOB items in chain order
+/// and return their descriptors.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: GeneratedChain) -> Vec<CertDescriptor> {
     vec![
         push_oob_item(items, &chain.root_der),
@@ -90,6 +77,8 @@ fn push_chain(items: &mut Vec<Vec<u8>>, chain: GeneratedChain) -> Vec<CertDescri
     ]
 }
 
+/// Convert a wire-LE P-384 public key into big-endian `x || y` bytes for
+/// the receiver certificate fixture.
 fn raw_pub_from_wire(pub_key: &[u8]) -> [u8; POLICY_MAX_KEY_LEN] {
     const COORD_LEN: usize = POLICY_MAX_KEY_LEN / 2;
     assert_eq!(pub_key.len(), POLICY_MAX_KEY_LEN);
@@ -110,6 +99,9 @@ fn raw_pub_from_wire(pub_key: &[u8]) -> [u8; POLICY_MAX_KEY_LEN] {
     raw
 }
 
+/// Finalize a partition with a backup policy bound to its own PID, then
+/// create the local masking-key and security-domain backups used by restore.
+/// Generate the receiver sealing key with the requested scope.
 fn build_source_backups(ctx: &TestCtx, key_scope: common::KeyScope) -> SourceBackups {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let part_info = ctx.tbor(&TborPartInfoReq::new()).expect("PartInfo");
@@ -186,6 +178,8 @@ fn build_source_backups(ctx: &TestCtx, key_scope: common::KeyScope) -> SourceBac
     }
 }
 
+/// XOR a byte in the envelope's ciphertext or tag, leaving its header, IV,
+/// and masked-key metadata intact. Return whether a nonzero mask was applied.
 fn flip_ciphertext_or_tag_byte(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
     if mask == 0 || bytes.len() <= ENVELOPE_CIPHERTEXT_OFFSET {
         return false;
@@ -197,6 +191,9 @@ fn flip_ciphertext_or_tag_byte(bytes: &mut [u8], offset: u16, mask: u8) -> bool 
     true
 }
 
+/// Reset the partition and restore `PartLocalMK` before replaying the local
+/// security-domain backups with the selected mutation. Check authentication
+/// failures or refreshed backups and rejection of a second restore.
 fn restore_after_reboot(ctx: &TestCtx, backups: &SourceBackups, mutation: Mutation) {
     ctx.session_close(backups.session_id)
         .expect("close source CO session");
@@ -271,6 +268,9 @@ fn restore_after_reboot(ctx: &TestCtx, backups: &SourceBackups, mutation: Mutati
         .expect("close restore CO session");
 }
 
+/// Exercise the selected restore scenario, including unfinalized partitions,
+/// already-initialized security domains, and replay after a partition reset.
+/// Route non-partition key scopes through the shared scope-validation helper.
 fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
     if !matches!(
         key_scope,

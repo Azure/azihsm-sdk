@@ -6,32 +6,10 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_types::CertDescriptor;
-use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::ReportDescriptor;
-use azihsm_ddi_tbor_types::TborKeyReportReq;
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdResealRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_test_harness::x509_fixture::*;
+use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -67,6 +45,7 @@ struct FuzzInput {
 }
 
 impl Default for FuzzInput {
+    /// Select an untampered reseal request with partition-local sealing keys.
     fn default() -> Self {
         Self {
             mutation: Mutation::Valid,
@@ -90,6 +69,7 @@ struct ResealEvidence {
 }
 
 impl ResealEvidence {
+    /// Borrow the source and destination OOB evidence items as request slices.
     fn oob(&self) -> Vec<&[u8]> {
         self.oob_items.iter().map(Vec::as_slice).collect()
     }
@@ -103,6 +83,7 @@ struct Fixture {
     wrong_receiver_key: Option<[u8; MASKED_SEALING_KEY_LEN]>,
 }
 
+/// Append a certificate or report to the OOB items and return its descriptor.
 fn push_item(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
     let index = u8::try_from(items.len()).expect("fixture OOB item count is bounded");
     let length = u16::try_from(bytes.len()).expect("fixture evidence length fits U16");
@@ -113,6 +94,8 @@ fn push_item(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
     }
 }
 
+/// Append the root and leaf certificates to the OOB items in chain order
+/// and return their descriptors.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: &GeneratedChain) -> Vec<CertDescriptor> {
     vec![
         push_item(items, &chain.root_der),
@@ -120,6 +103,9 @@ fn push_chain(items: &mut Vec<Vec<u8>>, chain: &GeneratedChain) -> Vec<CertDescr
     ]
 }
 
+/// Append manufacturer, owner, and SATA-rooted partition-owner chains for
+/// the PID plus a key report. Return the chain descriptors, report descriptor,
+/// and report's OOB index.
 fn push_evidence(
     items: &mut Vec<Vec<u8>>,
     pid_pub: &[u8; RAW_PUB_LEN],
@@ -149,6 +135,8 @@ fn push_evidence(
     )
 }
 
+/// Build source and destination evidence in a shared OOB item list, retaining
+/// manufacturer leaf indices for targeted certificate mutations.
 fn build_reseal_evidence(
     pid_pub: &[u8; RAW_PUB_LEN],
     sata_key: &CaKey,
@@ -181,6 +169,8 @@ fn build_reseal_evidence(
     }
 }
 
+/// Convert a wire-LE P-384 public key into big-endian `x || y` bytes for
+/// certificate generation.
 fn public_key_from_wire(pub_key: &[u8]) -> [u8; RAW_PUB_LEN] {
     const COORD_LEN: usize = RAW_PUB_LEN / 2;
     assert_eq!(pub_key.len(), RAW_PUB_LEN);
@@ -201,6 +191,8 @@ fn public_key_from_wire(pub_key: &[u8]) -> [u8; RAW_PUB_LEN] {
     raw
 }
 
+/// Generate a sealing key with the requested scope and attest it with
+/// `KeyReport`. Return its masked key, report, and big-endian public key.
 fn sealing_key_report_and_pub(
     ctx: &TestCtx,
     session_id: u16,
@@ -229,6 +221,8 @@ fn sealing_key_report_and_pub(
     (masked_key, report, pub_key)
 }
 
+/// Bind a policy to the partition's PID and supplied SATA key, then initialize
+/// and finalize the partition. Return the policy bytes and PID public key.
 fn build_policy_and_finalize(
     ctx: &TestCtx,
     session: &azihsm_ddi_tbor_test_harness::SessionHandshake,
@@ -270,6 +264,9 @@ fn build_policy_and_finalize(
     (policy_bytes, pid_pub)
 }
 
+/// Create a real source remote backup and a reseal request with source and
+/// destination evidence. Optionally generate an unrelated receiver key for
+/// the wrong-key rejection case.
 fn build_fixture(ctx: &TestCtx, wrong_receiver_key: bool, key_scope: common::KeyScope) -> Fixture {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let sata_key = CaKey::generate();
@@ -335,6 +332,9 @@ fn build_fixture(ctx: &TestCtx, wrong_receiver_key: bool, key_scope: common::Key
     }
 }
 
+/// Submit the reseal request and check that the destination backup has the
+/// schema length, is nonzero, and differs from the source. Return the backup
+/// for freshness checks across repeated calls.
 fn assert_success(ctx: &TestCtx, fixture: &Fixture) -> [u8; POK_REMOTE_BACKUP_LEN] {
     let oob = fixture.evidence.oob();
     let response = ctx
@@ -352,6 +352,8 @@ fn assert_success(ctx: &TestCtx, fixture: &Fixture) -> [u8; POK_REMOTE_BACKUP_LE
     response.dst_remote_backup
 }
 
+/// Check that the reseal request is rejected with a firmware status rather
+/// than a transport or host-side error.
 fn assert_rejected(ctx: &TestCtx, fixture: &Fixture) {
     let oob = fixture.evidence.oob();
     let result = ctx.tbor_oob(&fixture.request, &oob);
@@ -361,6 +363,8 @@ fn assert_rejected(ctx: &TestCtx, fixture: &Fixture) {
     );
 }
 
+/// XOR the final byte of a nonempty buffer and return whether a nonzero
+/// mask was applied.
 fn flip_last_byte(bytes: &mut [u8], mask: u8) -> bool {
     if mask == 0 || bytes.is_empty() {
         return false;
@@ -370,6 +374,9 @@ fn flip_last_byte(bytes: &mut [u8], mask: u8) -> bool {
     true
 }
 
+/// Exercise the selected reseal mutation, including repeated-call freshness
+/// and zero-mask no-ops. Route non-partition key scopes through the shared
+/// scope-validation helper and close the fixture's CO session afterward.
 fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
     if !matches!(
         key_scope,

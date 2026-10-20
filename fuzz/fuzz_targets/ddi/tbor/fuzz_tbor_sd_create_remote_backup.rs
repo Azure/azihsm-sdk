@@ -6,33 +6,10 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_types::CertDescriptor;
-use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::MASKED_SD_LEN;
-use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyFlags;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::ReportDescriptor;
-use azihsm_ddi_tbor_types::SD_MK_BACKUP_LEN;
-use azihsm_ddi_tbor_types::TborKeyReportReq;
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_test_harness::x509_fixture::*;
+use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -69,6 +46,7 @@ struct FuzzInput {
 }
 
 impl Default for FuzzInput {
+    /// Select a valid remote-backup request with a partition-local sealing key.
     fn default() -> Self {
         Self {
             mutation: Mutation::Valid,
@@ -86,6 +64,8 @@ struct Fixture {
     report_index: Option<usize>,
 }
 
+/// Build a remote-backup policy with optional trusted-SA enforcement and
+/// optional binding to the backing partition's PID and public key.
 fn build_policy(
     pota_pub: [u8; POLICY_MAX_KEY_LEN],
     sata_pub: [u8; POLICY_MAX_KEY_LEN],
@@ -118,6 +98,7 @@ fn build_policy(
     policy_bytes
 }
 
+/// Append a DER certificate or report to the OOB items and return its descriptor.
 fn push_oob_item(items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
     let index = u8::try_from(items.len()).expect("bounded OOB item count");
     let length = u16::try_from(der.len()).expect("bounded fixture DER length");
@@ -128,6 +109,8 @@ fn push_oob_item(items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
     }
 }
 
+/// Append the root and leaf certificates to the OOB items in chain order
+/// and return their descriptors.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: GeneratedChain) -> Vec<CertDescriptor> {
     vec![
         push_oob_item(items, &chain.root_der),
@@ -135,6 +118,8 @@ fn push_chain(items: &mut Vec<Vec<u8>>, chain: GeneratedChain) -> Vec<CertDescri
     ]
 }
 
+/// Convert a wire-LE P-384 public key into big-endian `x || y` bytes for
+/// the receiver certificate fixture.
 fn raw_pub_from_wire(pub_key: &[u8]) -> [u8; POLICY_MAX_KEY_LEN] {
     const COORD_LEN: usize = POLICY_MAX_KEY_LEN / 2;
     assert_eq!(pub_key.len(), POLICY_MAX_KEY_LEN);
@@ -155,6 +140,9 @@ fn raw_pub_from_wire(pub_key: &[u8]) -> [u8; POLICY_MAX_KEY_LEN] {
     raw
 }
 
+/// Finalize a partition and generate a receiver sealing key, certificate
+/// chains, and optional trusted-SA report. Apply certificate-key and anchor
+/// mismatches during fixture construction for the selected mutation.
 fn build_fixture(
     ctx: &TestCtx,
     trusted_sa: bool,
@@ -286,6 +274,8 @@ fn build_fixture(
     }
 }
 
+/// Submit the remote-backup request with its OOB evidence and check that
+/// all three returned backups have their schema lengths and nonzero contents.
 fn assert_success(ctx: &TestCtx, fixture: &Fixture) {
     let oob: Vec<&[u8]> = fixture.oob_items.iter().map(Vec::as_slice).collect();
     let response = ctx
@@ -300,11 +290,15 @@ fn assert_success(ctx: &TestCtx, fixture: &Fixture) {
     assert!(response.sd_mk_backup.iter().any(|byte| *byte != 0));
 }
 
+/// Check that the remote-backup request and its OOB evidence are rejected
+/// with the expected firmware status.
 fn assert_rejected(ctx: &TestCtx, fixture: &Fixture, expected: TborStatus) {
     let oob: Vec<&[u8]> = fixture.oob_items.iter().map(Vec::as_slice).collect();
     ctx.expect_fw_reject_oob(&fixture.request, &oob, expected);
 }
 
+/// XOR a byte at the offset modulo the buffer length. Return whether a
+/// nonzero mask was applied to a nonempty buffer.
 fn flip_byte(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
     if mask == 0 {
         return false;
@@ -317,6 +311,9 @@ fn flip_byte(bytes: &mut [u8], offset: u16, mask: u8) -> bool {
     true
 }
 
+/// Exercise the selected remote-backup mutation and check success or firmware
+/// rejection, treating zero-mask mutations as valid requests. Route non-partition
+/// key scopes through the shared scope-validation helper.
 fn run_case(ctx: &TestCtx, mutation: Mutation, key_scope: common::KeyScope) {
     if !matches!(
         key_scope,

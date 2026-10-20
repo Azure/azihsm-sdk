@@ -6,37 +6,10 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::ROTATED_CU_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_types::CertDescriptor;
-use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::KEY_REPORT_MAX_LEN;
-use azihsm_ddi_tbor_types::MASKED_SD_LEN;
-use azihsm_ddi_tbor_types::MASKED_SEALING_KEY_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POK_REMOTE_BACKUP_LEN;
-use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyFlags;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::ReportDescriptor;
-use azihsm_ddi_tbor_types::SD_SEALING_PUB_KEY_LEN;
-use azihsm_ddi_tbor_types::TborKeyReportReq;
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdCreatePeerBackupReq;
-use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_test_harness::x509_fixture::*;
+use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -93,11 +66,14 @@ struct Evidence {
 }
 
 impl Evidence {
+    /// Borrow the OOB evidence items as slices for a TBOR request.
     fn oob_slices(&self) -> Vec<&[u8]> {
         self.oob.iter().map(Vec::as_slice).collect()
     }
 }
 
+/// Append the root and leaf certificates to the OOB items in chain order
+/// and return their descriptors.
 fn push_chain(
     oob: &mut Vec<Vec<u8>>,
     chain: &azihsm_ddi_tbor_test_harness::x509_fixture::GeneratedChain,
@@ -108,6 +84,8 @@ fn push_chain(
     ]
 }
 
+/// Build receiver and partition certificate chains plus a key report for
+/// peer-backup evidence. Anchor the receiver and partition-owner chains at SATA.
 fn make_evidence_with_sata(
     sata: &CaKey,
     pid_pub: &[u8; RAW_PUB_LEN],
@@ -134,6 +112,8 @@ fn make_evidence_with_sata(
     }
 }
 
+/// Convert a wire-LE P-384 public key into big-endian `x || y` bytes for
+/// the receiver certificate fixture.
 fn public_key_be(wire_le: &[u8; SD_SEALING_PUB_KEY_LEN]) -> [u8; SD_SEALING_PUB_KEY_LEN] {
     let mut out = [0u8; SD_SEALING_PUB_KEY_LEN];
     for i in 0..common::EccCurve::P384.coord_len() {
@@ -143,6 +123,8 @@ fn public_key_be(wire_le: &[u8; SD_SEALING_PUB_KEY_LEN]) -> [u8; SD_SEALING_PUB_
     out
 }
 
+/// Build a policy bound to the supplied partition and SATA key, with fuzzed
+/// policy info and peer cloning enabled only when requested.
 fn build_policy(
     pota: &CaKey,
     sata: &CaKey,
@@ -169,6 +151,8 @@ fn build_policy(
     PartPolicy::try_read_from_bytes(&bytes).expect("constructed policy must decode")
 }
 
+/// Submit a peer-backup request and check the response length, nonzero
+/// contents, and uncompressed P-384 HPKE encapsulated-key prefix.
 fn checked_success(ctx: &TestCtx, req: &TborSdCreatePeerBackupReq, oob: &[&[u8]]) {
     let response = ctx
         .tbor_oob(req, oob)
@@ -188,6 +172,8 @@ fn checked_success(ctx: &TestCtx, req: &TborSdCreatePeerBackupReq, oob: &[&[u8]]
     );
 }
 
+/// Check that peer-backup creation rejects an unfinalized partition, then
+/// close the fixture's CO session.
 fn setup_unfinalized(ctx: &TestCtx) {
     let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
     let req = TborSdCreatePeerBackupReq {
