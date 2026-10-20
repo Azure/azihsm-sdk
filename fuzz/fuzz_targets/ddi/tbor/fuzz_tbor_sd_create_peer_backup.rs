@@ -43,7 +43,6 @@ use libfuzzer_sys::fuzz_target;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
 
-const P384_COORD_LEN: usize = SD_SEALING_PUB_KEY_LEN / 2;
 const SEC1_UNCOMPRESSED: u8 = 0x04;
 const POLICY_MUTATION_MASK: u8 = 1;
 const MIN_REPEAT_CALLS: usize = 2;
@@ -137,9 +136,9 @@ fn make_evidence_with_sata(
 
 fn public_key_be(wire_le: &[u8; SD_SEALING_PUB_KEY_LEN]) -> [u8; SD_SEALING_PUB_KEY_LEN] {
     let mut out = [0u8; SD_SEALING_PUB_KEY_LEN];
-    for i in 0..P384_COORD_LEN {
-        out[i] = wire_le[P384_COORD_LEN - 1 - i];
-        out[P384_COORD_LEN + i] = wire_le[SD_SEALING_PUB_KEY_LEN - 1 - i];
+    for i in 0..common::EccCurve::P384.coord_len() {
+        out[i] = wire_le[common::EccCurve::P384.coord_len() - 1 - i];
+        out[common::EccCurve::P384.coord_len() + i] = wire_le[SD_SEALING_PUB_KEY_LEN - 1 - i];
     }
     out
 }
