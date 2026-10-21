@@ -123,8 +123,7 @@ fn test_get_establish_cred_encryption_key_multi_threaded_stress() {
         }
 
         let mut first_pub_key_der_nonce: Option<(Vec<u8>, [u8; 32])> = None;
-        for thread in threads {
-            let (pub_key_der, nonce) = thread.join().unwrap();
+        for (pub_key_der, nonce) in join_all(threads) {
             if let Some((first_der, first_nonce)) = &first_pub_key_der_nonce {
                 assert_eq!(&pub_key_der, first_der);
                 assert_eq!(&nonce, first_nonce);

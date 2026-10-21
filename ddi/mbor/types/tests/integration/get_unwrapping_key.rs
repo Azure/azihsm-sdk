@@ -86,8 +86,7 @@ fn test_get_unwrapping_key_multi_threaded_stress() {
             }
 
             let mut first_pub_key_der: Option<Vec<u8>> = None;
-            for thread in threads {
-                let pub_key_der = thread.join().unwrap();
+            for pub_key_der in join_all(threads) {
                 if let Some(der) = &first_pub_key_der {
                     assert_eq!(&pub_key_der, der);
                 } else {
