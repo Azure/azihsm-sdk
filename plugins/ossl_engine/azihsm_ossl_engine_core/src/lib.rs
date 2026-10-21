@@ -14,6 +14,8 @@
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod asn1_method;
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod cipher_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod ec_method;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod engine;
