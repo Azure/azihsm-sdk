@@ -568,6 +568,11 @@ void aes_key_unmask_common(
 
     auto_key unmasked_key;
     err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
+#if SESSION_EX_TESTS
+    ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_KEY_OPERATION);
+    ASSERT_EQ(unmasked_key, 0);
+    return;
+#endif
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(unmasked_key, 0);
 
@@ -644,7 +649,11 @@ void aes_unmask_wrong_kind_fails_common(
 
     auto_key unmasked_key;
     err = azihsm_key_unmask(session, wrong_kind, &masked_key_buf, unmasked_key.get_ptr());
+#if SESSION_EX_TESTS
+    ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_KEY_OPERATION);
+#else
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+#endif
     ASSERT_EQ(unmasked_key, 0);
 
     // Clean up
@@ -715,7 +724,11 @@ void aes_unmask_corrupted_blob_fails_common(
 
     auto_key unmasked_key;
     err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
+#if SESSION_EX_TESTS
+    ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_KEY_OPERATION);
+#else
     ASSERT_NE(err, AZIHSM_STATUS_SUCCESS);
+#endif
     ASSERT_EQ(unmasked_key, 0);
 
     // Clean up
@@ -960,6 +973,11 @@ void aes_unmasked_key_independent_handle_common(
 
     auto_key unmasked_key;
     err = azihsm_key_unmask(session, key_kind, &masked_key_buf, unmasked_key.get_ptr());
+#if SESSION_EX_TESTS
+    ASSERT_EQ(err, AZIHSM_STATUS_UNSUPPORTED_KEY_OPERATION);
+    ASSERT_EQ(unmasked_key, 0);
+    return;
+#endif
     ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
     ASSERT_NE(unmasked_key, 0);
 

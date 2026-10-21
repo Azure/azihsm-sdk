@@ -13,6 +13,7 @@
 //   0x01360 - 0x013C0  HSM seed table (UDS + FMC-CDI, 2 × 48-byte seeds)
 //   0x07000            BOOT_STATUS (4 B)
 //   0x07004 - 0x07114  Admin↔HSM IPC queues (indices + 2×2 ring slots)
+//   0x07EA4 - 0x07FB4  HSM↔Admin IPC queues (indices + 2×2 ring slots)
 //   0x0E440 - 0x0EF44  IIC queues (ISQ, ICQ, IO_SQ, ICQ tail shadow)
 //   0x0F000 - 0x11824  Reserved: Admin (CP0) GDMA rings — do not place HSM data here
 //   0x11840 - 0x11E44  OIC queues (OSQ, OCQ, IO_CQ, OCQ tail shadow)
@@ -588,6 +589,26 @@ addrmap io_gsram {
     ipc_queue_index_t IPC_ADMIN_HSM_TX_CI   @ 0x07010;
     ipc_message_t     IPC_ADMIN_HSM_RX_RING[2] @ 0x07014 += 0x40;
     ipc_message_t     IPC_ADMIN_HSM_TX_RING[2] @ 0x07094 += 0x40;
+
+    // ─── HSM↔Admin IPC (depth=2, msg_len=16 DWORDs) ───
+    // The HSM-initiated channel: HSM is the requestor, Admin the
+    // responder. Mirrors the reference `hsm_to_admin_ipc_*` fields,
+    // which the Admin core reads at these exact absolute addresses.
+    //
+    // Unlike the Admin↔HSM block above, these names need no
+    // perspective flip: the reference names that channel from the
+    // requestor's side, and here the requestor is us.
+    //
+    // Field order also differs from the block above — the reference
+    // lays this channel out as CI before PI, with each ring placed
+    // directly after its own index pair. Preserved verbatim.
+    //
+    ipc_queue_index_t IPC_HSM_ADMIN_TX_CI   @ 0x07EA4;
+    ipc_queue_index_t IPC_HSM_ADMIN_TX_PI   @ 0x07EA8;
+    ipc_message_t     IPC_HSM_ADMIN_TX_RING[2] @ 0x07EAC += 0x40;
+    ipc_queue_index_t IPC_HSM_ADMIN_RX_CI   @ 0x07F2C;
+    ipc_queue_index_t IPC_HSM_ADMIN_RX_PI   @ 0x07F30;
+    ipc_message_t     IPC_HSM_ADMIN_RX_RING[2] @ 0x07F34 += 0x40;
 
     // ─── IIC (Inbound IO) — 0x20-aligned ───
     isq_entry_t      ISQ[32]            @ 0x0E440 += 0x08;

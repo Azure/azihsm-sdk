@@ -171,10 +171,20 @@ fn evp_pkey_sign(pkey: *mut ffi::EVP_PKEY, digest: &[u8], md: *const ffi::EVP_MD
 /// [`EngineData`] so the same flow runs on the mock (always) and on real
 /// hardware (the `hw_tests` smokes). Only the `open` differs between the two.
 mod round_trips {
+    use std::ffi::CString;
+    use std::ffi::c_int;
+    use std::ffi::c_void;
+    use std::ptr::null;
+    use std::ptr::null_mut;
+
+    use azihsm_api::HsmAesCbcAlgo;
+    use azihsm_api::HsmAesKey;
+    use azihsm_api::HsmAesKeyGenAlgo;
     use azihsm_api::HsmEccCurve;
     use azihsm_api::HsmEccKeyGenAlgo;
     #[cfg(feature = "mock")]
     use azihsm_api::HsmEccPrivateKey;
+    use azihsm_api::HsmEncrypter;
     use azihsm_api::HsmGenericSecretKeyUnmaskAlgo;
     use azihsm_api::HsmHmacAlgo;
     use azihsm_api::HsmHmacKeyUnmaskAlgo;
@@ -184,6 +194,11 @@ mod round_trips {
     use azihsm_api::HsmKeyManager;
     use azihsm_api::HsmKeyPropsBuilder;
     use azihsm_api::HsmSigner;
+    use azihsm_ossl_engine_core::cipher_method::AES_BLOCK;
+    use azihsm_ossl_engine_core::cipher_method::AZIHSM_CTRL_SET_KEY_URI;
+    use azihsm_ossl_engine_core::cipher_method::register_aes_cbc_ciphers;
+    use azihsm_ossl_engine_core::cipher_method::release_aes_cbc_ciphers;
+    use azihsm_ossl_engine_core::error::RetCode;
     use foreign_types::ForeignType;
     use openssl::ec::EcGroup;
     use openssl::ec::EcKey;
@@ -404,6 +419,7 @@ mod round_trips {
         azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
             crate::rsaimport::AzihsmRsaImport,
             crate::rsasign::AzihsmRsaPssSign,
+            crate::rsadecrypt::AzihsmRsaDecrypt,
         >(&engine)?;
         Ok((engine, engine_raw))
     }
@@ -553,6 +569,337 @@ mod round_trips {
         azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         let _ = std::fs::remove_file(&input_path);
         let _ = std::fs::remove_file(&blob_path);
+        Ok(())
+    }
+
+    /// Session keys through the real keygen/import paths: `azihsm.session:true`
+    /// with no `azihsm.masked_key` (a session key's blob would only unmask
+    /// within the creating HSM session). Generates EC P-384 signing and
+    /// agreement keys and imports a software RSA key; each must carry the HSM
+    /// session flag, the signing keys sign through the engine (verifying in
+    /// software) and the agreement key derives. Backend-agnostic.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_session_keys(data: EngineData, dir: &Path) -> EngineResult<()> {
+        use openssl::rsa::Rsa;
+
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+        let verify = |pub_der: &[u8], md: MessageDigest, msg: &[u8], sig: &[u8]| {
+            let pubkey = PKey::public_key_from_der(pub_der).unwrap();
+            let mut verifier = Verifier::new(md, &pubkey).unwrap();
+            verifier.update(msg).unwrap();
+            verifier.verify(sig).unwrap()
+        };
+
+        // EC: session keygen, no blob.
+        let ec_raw = try_armed_keygen(engine_raw, "P-384", None, &[("azihsm.session", "true")])
+            .map_err(|e| EngineError::Other(format!("EC session keygen failed: {e}")))?;
+        // SAFETY: ec_raw is the owning EVP_PKEY from keygen; the HSM key its
+        // EC_KEY carries is retained by the engine data while the key lives.
+        let ec_session = unsafe {
+            let hsm = crate::keyload::ec_key_hsm_key(ffi::EVP_PKEY_get0_EC_KEY(ec_raw));
+            !hsm.is_null() && (*hsm).is_session()
+        };
+        assert!(ec_session, "generated EC key must be an HSM session key");
+        let msg = b"engine session key signing";
+        // SAFETY: EVP_sha384 returns a process-lifetime constant.
+        let sig = evp_digest_sign(ec_raw, msg, unsafe { ffi::EVP_sha384() });
+        // SAFETY: ec_raw is the owning EVP_PKEY from keygen.
+        let ec_key: PKey<Public> = unsafe { PKey::from_ptr(ec_raw.cast()) };
+        let ec_pub = ec_key
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode EC session pub", e))?;
+        assert!(
+            verify(&ec_pub, MessageDigest::sha384(), msg, &sig),
+            "EC session key signature must verify"
+        );
+
+        // EC keyAgreement: a session agreement key derives against a software
+        // peer (buffer mode yields the derived secret's masked blob).
+        let agree_raw = try_armed_keygen(
+            engine_raw,
+            "P-384",
+            None,
+            &[
+                ("azihsm.session", "true"),
+                ("azihsm.key_usage", "keyAgreement"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("EC session agreement keygen failed: {e}")))?;
+        // SAFETY: agree_raw is the owning EVP_PKEY from keygen (see above).
+        let agree_session = unsafe {
+            let hsm = crate::keyload::ec_key_hsm_key(ffi::EVP_PKEY_get0_EC_KEY(agree_raw));
+            !hsm.is_null() && (*hsm).is_session()
+        };
+        assert!(
+            agree_session,
+            "generated agreement key must be an HSM session key"
+        );
+        let group = EcGroup::from_curve_name(Nid::SECP384R1).unwrap();
+        let peer = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let derived = derive_masked(engine_raw, agree_raw, peer.as_ptr().cast(), None);
+        assert!(!derived.is_empty(), "EC session agreement key must derive");
+        // SAFETY: agree_raw is the owning EVP_PKEY from keygen.
+        unsafe { ffi::EVP_PKEY_free(agree_raw) };
+
+        // RSA: session import, no blob.
+        let sw = Rsa::generate(2048).map_err(|e| EngineError::wrap("gen sw rsa", e))?;
+        let sw_pkey = PKey::from_rsa(sw).map_err(|e| EngineError::wrap("wrap sw rsa", e))?;
+        let input_der = sw_pkey
+            .private_key_to_pkcs8()
+            .map_err(|e| EngineError::wrap("encode pkcs8", e))?;
+        let rsa_pub = sw_pkey
+            .public_key_to_der()
+            .map_err(|e| EngineError::wrap("encode sw pub", e))?;
+        let input_path = dir.join(format!("rsa-session-in-{}.der", std::process::id()));
+        let _input_guard = TempFile(input_path.clone());
+        write_key_material(&input_path, &input_der)
+            .map_err(|e| EngineError::wrap("write input der", e))?;
+        let rsa_raw = try_rsa_import(
+            engine_raw,
+            &[
+                ("rsa_keygen_bits", "2048"),
+                ("azihsm.input_key", input_path.to_str().unwrap()),
+                ("azihsm.session", "true"),
+            ],
+        )
+        .map_err(|e| EngineError::Other(format!("RSA session import failed: {e}")))?;
+        let hsm = crate::rsasign::hsm_key_from_pkey(rsa_raw);
+        // SAFETY: the imported key's HSM handle is retained by the engine data
+        // while rsa_raw lives.
+        let rsa_session = !hsm.is_null() && unsafe { (*hsm).is_session() };
+        assert!(rsa_session, "imported RSA key must be an HSM session key");
+        // SAFETY: EVP_sha256 returns a process-lifetime constant.
+        let sig = evp_digest_sign(rsa_raw, msg, unsafe { ffi::EVP_sha256() });
+        assert!(
+            verify(&rsa_pub, MessageDigest::sha256(), msg, &sig),
+            "RSA session key signature must verify"
+        );
+
+        // SAFETY: rsa_raw is the owning EVP_PKEY from the import.
+        unsafe { ffi::EVP_PKEY_free(rsa_raw) };
+        drop(ec_key);
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
+        unsafe { ffi::ENGINE_free(engine_raw) };
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
+        Ok(())
+    }
+
+    /// `len` bytes of a repeating 0..=255 pattern.
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| u8::try_from(i & usize::from(u8::MAX)).unwrap_or_default())
+            .collect()
+    }
+
+    /// Run `input` through a fresh context of `engine_raw`'s AES-CBC `nid`
+    /// cipher with the key at `uri` attached (init, ctrl, then an init setting
+    /// `iv`), in `chunk`-byte updates plus the final. `None` if a step fails.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    fn aes_cbc(
+        engine_raw: *mut ffi::ENGINE,
+        nid: c_int,
+        uri: &str,
+        iv: &[u8],
+        encrypt: bool,
+        input: &[u8],
+        chunk: usize,
+    ) -> Option<Vec<u8>> {
+        let ok = RetCode::Success as c_int;
+        let uri = CString::new(uri).unwrap();
+        let enc = c_int::from(encrypt);
+        // Room for every byte plus a block of buffering and a block of padding.
+        let mut out = vec![0u8; input.len().saturating_add(AES_BLOCK.saturating_mul(2))];
+        let mut total = 0usize;
+        let mut n: c_int = 0;
+        // SAFETY: standard EVP cipher calls on a fresh context, freed below; uri
+        // is NUL-terminated and out has room for everything written.
+        let done = unsafe {
+            let cipher = ffi::ENGINE_get_cipher(engine_raw, nid);
+            assert!(!cipher.is_null(), "engine cipher {nid}");
+            let ctx = ffi::EVP_CIPHER_CTX_new();
+            assert!(!ctx.is_null());
+            let uri_ptr = uri.as_ptr().cast_mut().cast::<c_void>();
+            let mut done = ffi::EVP_CipherInit_ex(ctx, cipher, engine_raw, null(), null(), enc)
+                == ok
+                && ffi::EVP_CIPHER_CTX_ctrl(ctx, AZIHSM_CTRL_SET_KEY_URI, 0, uri_ptr) == ok
+                && ffi::EVP_CipherInit_ex(ctx, null(), null_mut(), null(), iv.as_ptr(), enc) == ok;
+            for piece in input.chunks(chunk) {
+                let len = c_int::try_from(piece.len()).unwrap();
+                done = done
+                    && ffi::EVP_CipherUpdate(
+                        ctx,
+                        out[total..].as_mut_ptr(),
+                        &mut n,
+                        piece.as_ptr(),
+                        len,
+                    ) == ok;
+                total = total.saturating_add(usize::try_from(n).unwrap());
+            }
+            done = done && ffi::EVP_CipherFinal_ex(ctx, out[total..].as_mut_ptr(), &mut n) == ok;
+            ffi::EVP_CIPHER_CTX_free(ctx);
+            ffi::ERR_clear_error();
+            done
+        };
+        out.truncate(total.saturating_add(usize::try_from(n).unwrap()));
+        done.then_some(out)
+    }
+
+    /// The SDK's own AES-CBC (PKCS#7) encryption of `msg` under `key` and
+    /// `iv`: the reference the engine's output must equal.
+    fn sdk_cbc_encrypt(key: &HsmAesKey, iv: &[u8], msg: &[u8]) -> EngineResult<Vec<u8>> {
+        let mut algo = HsmAesCbcAlgo::with_padding(iv.to_vec())
+            .map_err(|e| EngineError::wrap("AES-CBC algo", e))?;
+        HsmEncrypter::encrypt_vec(&mut algo, key, msg)
+            .map_err(|e| EngineError::wrap("SDK AES-CBC", e))
+    }
+
+    /// Generate a persistent `bits`-bit AES key on the open HSM and write its
+    /// masked blob to `path`. The key is deleted again if the blob cannot be
+    /// written.
+    fn generate_aes_blob(data: &EngineData, bits: u32, path: &Path) -> EngineResult<HsmAesKey> {
+        let key = data.with_session(|session| {
+            let props = HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Secret)
+                .key_kind(HsmKeyKind::Aes)
+                .bits(bits)
+                .can_encrypt(true)
+                .can_decrypt(true)
+                .is_session(false)
+                .build()
+                .map_err(|e| EngineError::wrap("build AES props", e))?;
+            HsmKeyManager::generate_key(session, &mut HsmAesKeyGenAlgo::default(), props)
+                .map_err(|e| EngineError::wrap("generate AES key", e))
+        })?;
+        let written = key
+            .masked_key_vec()
+            .map_err(|e| EngineError::wrap("export AES masked key", e))
+            .and_then(|masked| {
+                write_key_material(path, &masked)
+                    .map_err(|e| EngineError::wrap("write AES blob", e))
+            });
+        match written {
+            Ok(()) => Ok(key),
+            Err(e) => {
+                crate::context::delete_hsm_key(key, "AES test key");
+                Err(e)
+            }
+        }
+    }
+
+    /// AES-CBC with HSM keys through the engine's ciphers. An AES key of each
+    /// size is generated in the HSM and its masked blob attached to engine
+    /// cipher contexts: the output for messages up to several device requests
+    /// long equals the SDK's own AES-CBC with the same key and decrypts back;
+    /// a key attaches only to the cipher of its size; a non-AES URI and
+    /// missing, garbage or EC blobs are refused; a released key is deleted from
+    /// the HSM. Backend-agnostic.
+    #[allow(unsafe_code)]
+    #[allow(clippy::unwrap_used)]
+    pub(super) fn run_aes_cbc(data: EngineData, dir: &Path) -> EngineResult<()> {
+        let (mut engine, engine_raw) = keygen_engine(data)?;
+        register_aes_cbc_ciphers::<crate::aes::AzihsmAesCbc>(&engine)?;
+        let slot = crate::engine_impl::engine_data_slot()?;
+        let data = slot
+            .get(&engine)
+            .ok_or(EngineError::NullParam("engine_data"))?;
+        let pid = std::process::id();
+        let iv = [0x24u8; AES_BLOCK];
+        let ciphers = [
+            (c_int::try_from(ffi::NID_aes_128_cbc).unwrap(), 128u32),
+            (c_int::try_from(ffi::NID_aes_192_cbc).unwrap(), 192),
+            (c_int::try_from(ffi::NID_aes_256_cbc).unwrap(), 256),
+        ];
+
+        // An AES key of each size in the HSM, and its masked blob on disk.
+        let mut guards = Vec::new();
+        let mut keys = Vec::new();
+        for (_, bits) in ciphers {
+            let path = dir.join(format!("aes-cbc-{bits}-{pid}.bin"));
+            guards.push(TempFile(path.clone()));
+            let key = generate_aes_blob(data, bits, &path)?;
+            keys.push((bits, key, format!("azihsm://{};type=aes", path.display())));
+        }
+
+        for (key_bits, key, uri) in &keys {
+            for (nid, bits) in ciphers {
+                if bits != *key_bits {
+                    assert!(
+                        aes_cbc(engine_raw, nid, uri, &iv, true, b"x", AES_BLOCK).is_none(),
+                        "a {key_bits}-bit key must not attach to AES-{bits}-CBC"
+                    );
+                    continue;
+                }
+                for len in [0usize, 33, 4113] {
+                    let msg = pattern(len);
+                    let expected = sdk_cbc_encrypt(key, &iv, &msg)?;
+                    for chunk in [1, 1000] {
+                        let ct = aes_cbc(engine_raw, nid, uri, &iv, true, &msg, chunk);
+                        assert_eq!(
+                            ct.as_ref(),
+                            Some(&expected),
+                            "{bits}-bit, {len} bytes, chunk {chunk}"
+                        );
+                    }
+                    let pt = aes_cbc(engine_raw, nid, uri, &iv, false, &expected, 1000);
+                    assert_eq!(pt, Some(msg), "{bits}-bit, {len} bytes");
+                }
+            }
+        }
+
+        // Refused key URIs: another key type, a missing blob, a garbage blob,
+        // and an EC key's blob labelled aes.
+        let (nid128, _) = ciphers[0];
+        let garbage = dir.join(format!("aes-cbc-garbage-{pid}.bin"));
+        let _garbage_guard = TempFile(garbage.clone());
+        write_key_material(&garbage, &[0x5au8; 64])
+            .map_err(|e| EngineError::wrap("write garbage blob", e))?;
+        let ec_path = dir.join(format!("aes-cbc-ec-{pid}.bin"));
+        let _ec_guard = TempFile(ec_path.clone());
+        let (ec_blob, _) = generate_masked(data, HsmEccCurve::P256)?;
+        write_key_material(&ec_path, &ec_blob)
+            .map_err(|e| EngineError::wrap("write EC blob", e))?;
+        for uri in [
+            format!("azihsm://{};type=ec", guards[0].0.display()),
+            format!(
+                "azihsm://{};type=aes",
+                dir.join("no-such-aes-key.bin").display()
+            ),
+            format!("azihsm://{};type=aes", garbage.display()),
+            format!("azihsm://{};type=aes", ec_path.display()),
+        ] {
+            assert!(
+                aes_cbc(engine_raw, nid128, &uri, &iv, true, b"x", AES_BLOCK).is_none(),
+                "{uri} must be refused"
+            );
+        }
+
+        // A released key is deleted from the HSM: the engine's key wrapper
+        // deletes it on drop, which a second handle observes.
+        for (bits, key, _) in keys {
+            let observer = key.clone();
+            assert!(
+                sdk_cbc_encrypt(&observer, &iv, b"x").is_ok(),
+                "{bits}-bit key usable"
+            );
+            drop(crate::aes::CbcKey::new(key));
+            assert!(
+                sdk_cbc_encrypt(&observer, &iv, b"x").is_err(),
+                "a released {bits}-bit key must be deleted from the HSM"
+            );
+        }
+
+        let _ = slot.take(&mut engine)?;
+        // SAFETY: every cipher context above is freed; engine_raw is the
+        // ENGINE_new ref from new_test_engine.
+        unsafe {
+            release_aes_cbc_ciphers(&engine);
+            ffi::ENGINE_free(engine_raw);
+        }
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
         Ok(())
     }
 
@@ -1068,7 +1415,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             "P-384",
-            &agree_blob,
+            Some(&agree_blob),
             &[("azihsm.key_usage", "keyAgreement")],
         )
         .map_err(|e| EngineError::Other(format!("keyAgreement keygen failed: {e}")))?;
@@ -1398,7 +1745,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             curve,
-            &blob_path,
+            Some(&blob_path),
             &[
                 ("azihsm.session", "false"),
                 ("azihsm.key_usage", "keyAgreement"),
@@ -1528,17 +1875,17 @@ mod round_trips {
     pub(super) fn try_armed_keygen(
         engine_raw: *mut ffi::ENGINE,
         curve: &str,
-        blob: &Path,
+        blob: Option<&Path>,
         extra: &[(&str, &str)],
     ) -> Result<*mut ffi::EVP_PKEY, String> {
         use std::ffi::CString;
         use std::ffi::c_int;
 
         let cstr = |s: &str| CString::new(s).unwrap();
-        let mut opts = vec![
-            (cstr("ec_paramgen_curve"), cstr(curve)),
-            (cstr("azihsm.masked_key"), cstr(blob.to_str().unwrap())),
-        ];
+        let mut opts = vec![(cstr("ec_paramgen_curve"), cstr(curve))];
+        if let Some(blob) = blob {
+            opts.push((cstr("azihsm.masked_key"), cstr(blob.to_str().unwrap())));
+        }
         opts.extend(extra.iter().map(|(k, v)| (cstr(k), cstr(v))));
 
         // SAFETY: standard EVP_PKEY keygen sequence against our engine; every
@@ -1600,7 +1947,7 @@ mod round_trips {
         let raw = try_armed_keygen(
             engine_raw,
             curve,
-            &blob_path,
+            Some(&blob_path),
             &[
                 ("azihsm.session", "false"),
                 ("azihsm.key_usage", "digitalSignature"),
@@ -1983,6 +2330,21 @@ mod mock {
         }
     }
 
+    // AES-CBC with HSM keys through the engine's ciphers, cross-checked
+    // against the SDK on the same device (see round_trips::run_aes_cbc).
+    #[test]
+    #[serial]
+    fn aes_cbc_via_engine_ciphers() {
+        let scratch = Scratch::new("aes-cbc");
+        let data = EngineData::new();
+        data.open_hsm_with(
+            caller_settings(&scratch),
+            HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
+        )
+        .unwrap();
+        round_trips::run_aes_cbc(data, &scratch.0).unwrap();
+    }
+
     // A signature produced through a loaded/imported RSA key (HSM PKCS#1 v1.5
     // via our RSA_METHOD sign slot, reached through EVP_DigestSign like the ABI
     // and CLI do) must verify against the key's public half in software (see
@@ -2162,41 +2524,19 @@ mod mock {
         unsafe { ffi::ENGINE_free(engine_raw) };
     }
 
-    // The provider-parity options accept only their implemented values:
-    // session keys and keyAgreement usage must fail keygen with a clear
-    // "not yet supported" error (never mint an unusable key silently).
+    // `azihsm.session:true` generates EC keys and imports an RSA key as HSM
+    // session keys without a masked blob (see round_trips::run_session_keys).
     #[test]
     #[serial]
-    #[allow(unsafe_code)]
-    fn keygen_rejects_unsupported_option_values() {
-        let scratch = Scratch::new("keygen-opts");
+    fn session_keys_via_pkey_methods() {
+        let scratch = Scratch::new("session-keys");
         let data = EngineData::new();
         data.open_hsm_with(
             caller_settings(&scratch),
             HsmCredentials::new(&DEFAULT_CRED_ID, &DEFAULT_CRED_PIN),
         )
         .unwrap();
-        let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
-
-        let blob = scratch.0.join("opts.bin");
-        let err = round_trips::try_armed_keygen(
-            engine_raw,
-            "P-384",
-            &blob,
-            &[("azihsm.session", "true")],
-        )
-        .expect_err("azihsm.session:true must fail keygen");
-        assert!(
-            err.contains("not yet supported") && err.contains("session keys"),
-            "missing clear error for azihsm.session:true: {err}"
-        );
-        assert!(!blob.exists(), "no blob may be written on failure");
-
-        let slot = crate::engine_impl::engine_data_slot().unwrap();
-        let _ = slot.take(&mut engine).unwrap();
-        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(&engine);
-        // SAFETY: engine_raw is the ENGINE_new ref from new_test_engine.
-        unsafe { ffi::ENGINE_free(engine_raw) };
+        round_trips::run_session_keys(data, &scratch.0).unwrap();
     }
 
     // A curve the HSM does not implement must fail keygen cleanly (the armed
@@ -2215,7 +2555,7 @@ mod mock {
         let (mut engine, engine_raw) = round_trips::keygen_engine(data).unwrap();
 
         let blob = scratch.0.join("bad_curve.bin");
-        let err = round_trips::try_armed_keygen(engine_raw, "secp256k1", &blob, &[])
+        let err = round_trips::try_armed_keygen(engine_raw, "secp256k1", Some(&blob), &[])
             .expect_err("keygen with an unsupported curve must fail");
         assert!(
             err.contains("unsupported curve"),
@@ -2474,5 +2814,33 @@ mod hw_tests {
         let data = EngineData::new();
         data.open_hsm_from_env()?;
         round_trips::run_hkdf(data, &std::env::temp_dir())
+    }
+
+    /// Hardware session keys, same flow as the mock test (see
+    /// [`super::round_trips::run_session_keys`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine session_keys_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn session_keys_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_session_keys(data, &std::env::temp_dir())
+    }
+
+    /// Hardware AES-CBC through the engine's ciphers, same flow as the mock
+    /// test (see [`super::round_trips::run_aes_cbc`]); env setup as above:
+    ///
+    /// ```text
+    /// cargo test -p azihsm_ossl_engine --features engine aes_cbc_from_env_smoke -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a provisioned HSM host; configure AZIHSM_* env first"]
+    fn aes_cbc_from_env_smoke() -> EngineResult<()> {
+        let data = EngineData::new();
+        data.open_hsm_from_env()?;
+        round_trips::run_aes_cbc(data, &std::env::temp_dir())
     }
 }
