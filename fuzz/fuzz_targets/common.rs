@@ -54,6 +54,8 @@ use zerocopy::TryFromBytes;
 
 pub type DdiTest = AzihsmDdi;
 
+pub const COORD_LEN: usize = RAW_PUB_LEN / 2;
+
 const MACH_SEED_PATTERN_BASE: u8 = 0x40;
 const POTA_THUMBPRINT_PATTERN_BASE: u8 = 0x80;
 const PUBKEY_PATTERN_HIGH_BIT: u8 = 0x80;
@@ -67,6 +69,11 @@ pub const KEY_SCOPE_EPHEMERAL: u8 = 0b010;
 pub const KEY_SCOPE_LOCAL: u8 = 0b011;
 pub const KEY_SCOPE_SECURITY_DOMAIN: u8 = 0b100;
 pub const KEY_SCOPE_INTERNAL: u8 = 0b101;
+
+/// Map an arbitrary byte to a known TBOR `KeyScope` wire discriminant.
+pub fn derive_valid_key_scope(key_scope: u8) -> u8 {
+    key_scope % (KEY_SCOPE_INTERNAL + 1)
+}
 
 /// TBOR key scopes (wire `KeyScope` discriminants) used by fuzz targets.
 #[derive(Arbitrary, Debug, Clone, Copy, PartialEq, Eq)]
@@ -568,7 +575,7 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
     let receiver = make_chain(&sata, &receiver_pub);
     let mfgr = make_chain(&CaKey::generate(), &pid_pub);
     let owner = make_chain(&CaKey::generate(), &pid_pub);
-    let part_owner = make_chain(&sata, &pid_pub);
+    let partition_owner = make_chain(&sata, &pid_pub);
     let mut oob_items = Vec::new();
     let receiver_chain = vec![
         add_evidence_item(&mut oob_items, &receiver.root_der),
@@ -582,11 +589,12 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         add_evidence_item(&mut oob_items, &owner.root_der),
         add_evidence_item(&mut oob_items, &owner.leaf_der),
     ];
-    let part_owner_chain = vec![
-        add_evidence_item(&mut oob_items, &part_owner.root_der),
-        add_evidence_item(&mut oob_items, &part_owner.leaf_der),
+    let partition_owner_chain = vec![
+        add_evidence_item(&mut oob_items, &partition_owner.root_der),
+        add_evidence_item(&mut oob_items, &partition_owner.leaf_der),
     ];
     let report_descriptor = add_evidence_item(&mut oob_items, &report.report);
+    let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
     let req = TborSdCreateRemoteBackupReq {
         session_id: session.session_id,
@@ -594,15 +602,13 @@ pub fn create_test_security_domain(ctx: &TestCtx, session: &SessionHandshake) {
         receiver_cert_chain: receiver_chain,
         receiver_mfgr_cert_chain: mfgr_chain,
         receiver_owner_cert_chain: owner_chain,
-        receiver_part_owner_cert_chain: part_owner_chain,
+        receiver_part_owner_cert_chain: partition_owner_chain,
         receiver_report: ReportDescriptor {
             index: report_descriptor.index,
             length: report_descriptor.length,
         },
-        policy: <PartPolicy as TryFromBytes>::try_read_from_bytes(&policy_bytes)
-            .expect("security-domain policy should decode"),
+        policy,
     };
-    let oob = oob_items.iter().map(Vec::as_slice).collect::<Vec<_>>();
     ctx.tbor_oob(&req, &oob)
         .expect("test security-domain creation should succeed");
 }
