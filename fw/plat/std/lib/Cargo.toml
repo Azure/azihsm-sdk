@@ -19,6 +19,7 @@ embassy-executor = { features = [
   "trace",
 ], workspace = true }
 embassy-sync.workspace = true
+parking_lot.workspace = true
 static_cell.workspace = true
 tokio = { features = ["rt-multi-thread", "time"], workspace = true }
 
