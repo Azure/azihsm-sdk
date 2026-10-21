@@ -217,16 +217,17 @@ fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<
         }
         Err(err) => panic!("bootstrap SD sealing-key generation failed: {err}"),
     };
+    const COORD_LEN: usize = RAW_PUB_LEN / 2;
     let mut sealing_pub = [0u8; RAW_PUB_LEN];
-    for (dst, src) in sealing_pub[..48]
+    for (dst, src) in sealing_pub[..COORD_LEN]
         .iter_mut()
-        .zip(sealing_key.pub_key[..48].iter().rev())
+        .zip(sealing_key.pub_key[..COORD_LEN].iter().rev())
     {
         *dst = *src;
     }
-    for (dst, src) in sealing_pub[48..]
+    for (dst, src) in sealing_pub[COORD_LEN..]
         .iter_mut()
-        .zip(sealing_key.pub_key[48..].iter().rev())
+        .zip(sealing_key.pub_key[COORD_LEN..].iter().rev())
     {
         *dst = *src;
     }
@@ -271,15 +272,15 @@ fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<
             .expect("SecurityDomain-scope KeyReport should succeed")
             .report;
         let mut public_key = [0u8; RAW_PUB_LEN];
-        for (dst, src) in public_key[..48]
+        for (dst, src) in public_key[..COORD_LEN]
             .iter_mut()
-            .zip(sealing_key.pub_key[..48].iter().rev())
+            .zip(sealing_key.pub_key[..COORD_LEN].iter().rev())
         {
             *dst = *src;
         }
-        for (dst, src) in public_key[48..]
+        for (dst, src) in public_key[COORD_LEN..]
             .iter_mut()
-            .zip(sealing_key.pub_key[48..].iter().rev())
+            .zip(sealing_key.pub_key[COORD_LEN..].iter().rev())
         {
             *dst = *src;
         }
