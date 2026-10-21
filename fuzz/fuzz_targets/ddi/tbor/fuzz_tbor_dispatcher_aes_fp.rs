@@ -135,9 +135,6 @@ fn legacy_masked_key(input: &FuzzInput) -> Vec<u8> {
             key.push(input.xts_request.short_app_id);
         }
     }
-    if (MASKED_AES_KEY_MIN_LEN..=MASKED_AES_KEY_MAX_LEN).contains(&key.len()) {
-        key.resize(MASKED_AES_KEY_MAX_LEN + 1, 0);
-    }
     key
 }
 
