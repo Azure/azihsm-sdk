@@ -469,30 +469,37 @@ fuzz_target!(|input: FuzzInput| {
         let oob = evidence.oob();
         let result = ctx.tbor_oob(&req, &oob);
 
-        if changed || input.key_scope != common::KeyScope::Local {
-            match result {
-                Err(DdiError::TborStatus(_)) => {}
-                Err(DdiError::TborEncodeError)
-                    if req.src_mfgr_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS
-                        || req.src_owner_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS
-                        || req.src_part_owner_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS => {}
-                Err(err) => {
-                    panic!("SdRestorePeerBackup unexpected error: {err:?}");
-                }
-                Ok(_) => panic!("the selected mutation should make SdRestorePeerBackup fail"),
+        // Arbitrary evidence byte changes need not invalidate the parsed or
+        // authenticated data. Descriptor corruptions must fail.
+        let arbitrary_oob = matches!(input.target, MutationTarget::OobEvidence);
+        let must_fail = input.key_scope != common::KeyScope::Local || (changed && !arbitrary_oob);
+        let must_succeed = input.key_scope == common::KeyScope::Local && !changed;
+
+        match result {
+            Err(DdiError::TborStatus(_)) if !must_succeed => {}
+            Err(DdiError::TborEncodeError)
+                if req.src_mfgr_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS
+                    || req.src_owner_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS
+                    || req.src_part_owner_cert_chain.len() > EVIDENCE_CHAIN_MAX_CERTS => {}
+            Err(err) => panic!("SdRestorePeerBackup unexpected error: {err:?}"),
+            Ok(response) => {
+                assert!(
+                    !must_fail,
+                    "the selected mutation should make SdRestorePeerBackup fail: \
+                     target={:?}",
+                    input.target
+                );
+                assert_eq!(response.pok_local_backup.len(), MASKED_SD_LEN);
+                assert_eq!(response.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+                assert!(
+                    response.pok_local_backup.iter().any(|&byte| byte != 0),
+                    "successful restore must return a nonzero local backup"
+                );
+                assert!(
+                    response.sd_mk_backup.iter().any(|&byte| byte != 0),
+                    "successful restore must return a nonzero SDMK backup"
+                );
             }
-        } else {
-            let response = result.expect("the unmodified valid peer restore should succeed");
-            assert_eq!(response.pok_local_backup.len(), MASKED_SD_LEN);
-            assert_eq!(response.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
-            assert!(
-                response.pok_local_backup.iter().any(|&byte| byte != 0),
-                "successful restore must return a nonzero local backup"
-            );
-            assert!(
-                response.sd_mk_backup.iter().any(|&byte| byte != 0),
-                "successful restore must return a nonzero SDMK backup"
-            );
         }
 
         ctx.session_close(backup.session_id)
