@@ -10,6 +10,7 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::*;
 use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::*;
+use common::COORD_LEN;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -162,7 +163,6 @@ fn build_reseal_evidence(
 /// Convert a wire-LE P-384 public key into big-endian `x || y` bytes for
 /// certificate generation.
 fn public_key_from_wire(pub_key: &[u8]) -> [u8; RAW_PUB_LEN] {
-    const COORD_LEN: usize = RAW_PUB_LEN / 2;
     assert_eq!(pub_key.len(), RAW_PUB_LEN);
 
     let mut raw = [0u8; RAW_PUB_LEN];

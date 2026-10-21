@@ -11,6 +11,7 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::*;
 use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::*;
+use common::COORD_LEN;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -206,7 +207,6 @@ fn create_restore_fixture(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<
         }
         Err(err) => panic!("bootstrap SD sealing-key generation failed: {err}"),
     };
-    const COORD_LEN: usize = RAW_PUB_LEN / 2;
     let mut sealing_pub = [0u8; RAW_PUB_LEN];
     for (dst, src) in sealing_pub[..COORD_LEN]
         .iter_mut()

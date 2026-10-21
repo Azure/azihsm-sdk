@@ -54,6 +54,8 @@ use zerocopy::TryFromBytes;
 
 pub type DdiTest = AzihsmDdi;
 
+pub const COORD_LEN: usize = RAW_PUB_LEN / 2;
+
 const MACH_SEED_PATTERN_BASE: u8 = 0x40;
 const POTA_THUMBPRINT_PATTERN_BASE: u8 = 0x80;
 const PUBKEY_PATTERN_HIGH_BIT: u8 = 0x80;

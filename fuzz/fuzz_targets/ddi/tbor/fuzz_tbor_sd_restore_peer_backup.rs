@@ -11,6 +11,7 @@ use azihsm_ddi_tbor_test_harness::x509_fixture::*;
 use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::*;
+use common::COORD_LEN;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -276,7 +277,6 @@ fn create_peer_backup(ctx: &TestCtx, key_scope: common::KeyScope) -> Option<Peer
         }
         Err(err) => panic!("bootstrap SD sealing-key generation failed: {err}"),
     };
-    const COORD_LEN: usize = RAW_PUB_LEN / 2;
     let mut sealing_pub = [0u8; RAW_PUB_LEN];
     for (dst, src) in sealing_pub[..COORD_LEN]
         .iter_mut()
@@ -452,14 +452,7 @@ fuzz_target!(|input: FuzzInput| {
             return;
         };
 
-        let mut evidence = Evidence {
-            items: backup.evidence.items.clone(),
-            receiver: backup.evidence.receiver.clone(),
-            manufacturer: backup.evidence.manufacturer.clone(),
-            owner: backup.evidence.owner.clone(),
-            partition_owner: backup.evidence.partition_owner.clone(),
-            report: backup.evidence.report,
-        };
+        let mut evidence = backup.clone();
         let mut req = TborSdRestorePeerBackupReq {
             session_id: backup.session_id,
             masked_sealing_key: backup.masked_sealing_key,
