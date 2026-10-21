@@ -456,6 +456,17 @@ fn mutate_request(
     }
 }
 
+/// Check the restore result against the mutation and key-scope expectations.
+///
+/// An unchanged Local-scope request must succeed. Changed arbitrary OOB evidence
+/// may succeed or receive a firmware-status error; all other changed requests
+/// and all non-Local scopes require firmware rejection. Every successful response
+/// must contain correctly sized, nonzero backups.
+///
+/// # Panics
+///
+/// Panics on an unexpected result, a non-firmware error, or an invalid successful
+/// response.
 fn validate_response(
     input: &FuzzInput,
     changed: bool,
