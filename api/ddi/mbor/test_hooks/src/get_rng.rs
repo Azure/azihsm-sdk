@@ -3,6 +3,12 @@
 
 //! Execution helper for the `GetRng` validation command.
 
+use azihsm_ddi::AzihsmDdi;
+use azihsm_ddi::Ddi;
+use azihsm_ddi::DdiDev;
+use azihsm_ddi::DdiError;
+use azihsm_ddi::DdiResult;
+
 use crate::common::*;
 
 /// Request random bytes from validation firmware within a live session.
@@ -10,13 +16,10 @@ use crate::common::*;
 /// Firmware accepts lengths 0 through 64. Larger lengths are transmitted
 /// unchanged so validation callers can check firmware rejection.
 pub fn helper_get_rng(
-    dev: &<azihsm_ddi::AzihsmDdi as azihsm_ddi::Ddi>::Dev,
+    dev: &<AzihsmDdi as Ddi>::Dev,
     session_id: Option<u16>,
     rng_len: u8,
-) -> azihsm_ddi::DdiResult<DdiGetRngCmdResp> {
-    use azihsm_ddi::DdiDev;
-    use azihsm_ddi::DdiError;
-
+) -> DdiResult<DdiGetRngCmdResp> {
     let data = DdiTestActionReq::encode(DdiTestAction::GetRng, &DdiGetRngReq { rng_len })
         .map_err(|_| DdiError::InvalidParameter)?;
     let req = DdiGetRngCmdReq {
