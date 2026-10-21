@@ -374,8 +374,8 @@ mod tests {
         let dir = scratch.0.join("store");
         let s = caller_caller_settings(dir.clone());
         assert!(s.into_resiliency_config().is_ok());
-        let mode = fs::symlink_metadata(&dir).unwrap().mode() & 0o777;
-        assert_eq!(mode, 0o700, "created storage dir must be 0700");
+        let mode = fs::symlink_metadata(&dir).unwrap().mode() & PERMISSION_BITS_MASK;
+        assert_eq!(mode, STORAGE_DIR_MODE, "created storage dir must be 0700");
     }
 
     #[test]

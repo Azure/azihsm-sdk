@@ -33,11 +33,13 @@ use parking_lot::Mutex;
 use zeroize::Zeroizing;
 
 use crate::engine::Engine;
+use crate::error::CTRL_NOT_IMPLEMENTED;
 use crate::error::EngineError;
 use crate::error::EngineResult;
 use crate::error::RetCode;
 use crate::error::catch_panic;
 use crate::error::ossl_check;
+use crate::error::ossl_ok;
 use crate::error::result_to_int;
 
 /// `EVP_CIPHER_CTX_ctrl` type that attaches an HSM AES key to an AES-CBC
@@ -53,10 +55,6 @@ pub const AES_BLOCK: usize = 16;
 /// limit, so a retried request restarts from its own IV. Also bounds the input
 /// copy.
 pub const HSM_CBC_REQUEST: usize = 1024;
-
-/// `ctrl` return for a control type the cipher does not implement
-/// (`EVP_CIPHER_CTX_ctrl` reports it as a failure).
-const CTRL_NOT_IMPLEMENTED: c_int = -1;
 
 /// An HSM AES key attached to a cipher context (and its copies). Dropping the
 /// last reference releases the key.
@@ -167,7 +165,7 @@ unsafe extern "C" fn c_init(
     catch_panic(
         // SAFETY: forwarding the arguments OpenSSL passed us.
         || result_to_int(unsafe { init_inner(ctx, key, iv, enc) }),
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -194,7 +192,7 @@ unsafe fn init_inner(
     // SAFETY: delegating the arguments OpenSSL passed us to the built-in, whose
     // cipher data layout our copy shares.
     let rc = unsafe { init(ctx, key, iv, enc) };
-    ossl_check(rc, EngineError::Other("AES key setup failed".into()))?;
+    ossl_check(rc, "AES key setup failed")?;
     // A replaced HSM key is released outside the lock.
     let replaced = ctx_keys().lock().insert(ctx as usize, CtxKey::Software);
     drop(replaced);
@@ -218,7 +216,7 @@ unsafe extern "C" fn c_do_cipher(
     catch_panic(
         // SAFETY: forwarding the arguments OpenSSL passed us.
         || result_to_int(unsafe { do_cipher_inner(ctx, out, input, inl) }),
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -244,7 +242,7 @@ unsafe fn do_cipher_inner(
                 .ok_or(EngineError::Other("built-in AES-CBC cipher missing".into()))?;
             // SAFETY: delegating the arguments OpenSSL passed us.
             let rc = unsafe { do_cipher(ctx, out, input, inl) };
-            ossl_check(rc, EngineError::Other("AES-CBC failed".into()))
+            ossl_check(rc, "AES-CBC failed")
         }
         // SAFETY: as this function's contract.
         Some(CtxKey::Hsm(key)) => unsafe { hsm_cbc(ctx, key.as_ref(), out, input, inl) },
@@ -331,7 +329,7 @@ unsafe extern "C" fn c_ctrl<L: AesCbcKeyLoader>(
             Ok(rc) => rc,
             Err(e) => result_to_int::<()>(Err(e)),
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -363,7 +361,7 @@ unsafe fn ctrl_inner<L: AesCbcKeyLoader>(
     };
     // Only a successful copy shares the key: a failed one leaves the copy
     // without a cipher, so its cleanup would never drop an entry.
-    if copy && rc == RetCode::Success as c_int {
+    if copy && ossl_ok(rc) {
         copy_key(ctx, ptr.cast())?;
     }
     Ok(rc)
@@ -508,12 +506,9 @@ fn new_cipher<L: AesCbcKeyLoader>(
             ffi::EVP_CIPHER_meth_set_cleanup(cipher, Some(c_cleanup)),
         ]
     };
-    let set = rcs.into_iter().try_for_each(|rc| {
-        ossl_check(
-            rc,
-            EngineError::Other("EVP_CIPHER_meth_set_* failed".into()),
-        )
-    });
+    let set = rcs
+        .into_iter()
+        .try_for_each(|rc| ossl_check(rc, "EVP_CIPHER_meth_set_* failed"));
     if let Err(e) = set {
         // SAFETY: cipher is our unpublished copy.
         unsafe { ffi::EVP_CIPHER_meth_free(cipher) };
@@ -555,7 +550,7 @@ unsafe extern "C" fn c_ciphers(
                 RetCode::Fail.into()
             }
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -585,7 +580,7 @@ pub fn register_aes_cbc_ciphers<L: AesCbcKeyLoader>(engine: &Engine) -> EngineRe
     // SAFETY: engine's ptr is valid (from NonNull); c_ciphers is a 'static fn
     // item with the ENGINE_CIPHERS_PTR signature.
     let rc = unsafe { ffi::ENGINE_set_ciphers(engine.as_ptr(), Some(c_ciphers)) };
-    ossl_check(rc, EngineError::Other("ENGINE_set_ciphers failed".into()))
+    ossl_check(rc, "ENGINE_set_ciphers failed")
 }
 
 /// Free `engine`'s cipher copies; the framework never frees engine ciphers.

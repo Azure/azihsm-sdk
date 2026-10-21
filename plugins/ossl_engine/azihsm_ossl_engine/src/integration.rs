@@ -15,6 +15,8 @@ use azihsm_api::HsmKeyManager;
 use azihsm_api::HsmKeyPropsBuilder;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
+/// Mode for key-material files, as the engine writes them.
+pub use azihsm_ossl_engine_resiliency::SECRET_FILE_MODE;
 
 use crate::context::EngineData;
 

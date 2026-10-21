@@ -38,6 +38,7 @@ use azihsm_api::HsmKeyPropsBuilder;
 use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
+use azihsm_ossl_engine_core::error::ossl_check;
 use azihsm_ossl_engine_core::ffi;
 use azihsm_ossl_engine_core::pkey_method::EcKeyUsage;
 use azihsm_ossl_engine_core::pkey_method::EcKeygenHandler;
@@ -212,9 +213,10 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // engine-bound EC_KEY, freed after set1 takes its own reference (the
         // OOM failure path also rolls back the HSM-key retain).
         unsafe {
-            if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
+            let rc = ffi::EVP_PKEY_set1_EC_KEY(pkey, ec);
+            if let Err(e) = ossl_check(rc, "EVP_PKEY_set1_EC_KEY failed") {
                 crate::keyload::free_bound_ec_key(data, ec);
-                return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
+                return Err(e);
             }
             ffi::EC_KEY_free(ec);
         }

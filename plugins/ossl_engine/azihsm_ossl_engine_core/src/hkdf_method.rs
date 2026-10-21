@@ -39,9 +39,14 @@ use parking_lot::Mutex;
 use zeroize::Zeroizing;
 
 use crate::engine::Engine;
+use crate::error::CTRL_UNSUPPORTED;
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::RetCode;
 use crate::error::catch_panic;
+use crate::error::ctrl_ok;
+use crate::error::ossl_check;
+use crate::error::ossl_ok;
 use crate::error::result_to_int;
 use crate::pkey_method::ENGINE_METHODS;
 
@@ -93,7 +98,7 @@ pub trait HkdfHandler {
 
 /// Default derived-key size (bits) when `derived_key_bits` is unset, matching
 /// the 3.x provider's default.
-const DEFAULT_DERIVED_KEY_BITS: u32 = 256;
+pub const DEFAULT_DERIVED_KEY_BITS: u32 = 256;
 
 /// Default HKDF digest when `md` is unset, matching the 3.x provider's default
 /// (the provider seeds `md` to SHA-256 at context creation).
@@ -107,6 +112,7 @@ struct HkdfState {
     salt: Option<Vec<u8>>,
     info: Option<Vec<u8>>,
     key: Option<Zeroizing<Vec<u8>>>,
+    /// `EVP_PKEY_HKDEF_MODE_*`; the default 0 is extract-and-expand.
     mode: c_int,
     ikm_file: Option<PathBuf>,
     output_file: Option<PathBuf>,
@@ -156,11 +162,13 @@ fn defaults() -> EngineResult<Defaults> {
 unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
+            let Ok(d) = defaults() else {
+                return RetCode::Fail.into();
+            };
             if let Some(init) = d.init {
                 // SAFETY: delegating the ctx OpenSSL passed us.
-                if unsafe { init(ctx) } != 1 {
-                    return 0;
+                if !ossl_ok(unsafe { init(ctx) }) {
+                    return RetCode::Fail.into();
                 }
             }
             let engine = crate::method_table::take_pending_engine();
@@ -171,9 +179,9 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
                     ..HkdfState::default()
                 },
             );
-            1
+            RetCode::Success.into()
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -183,20 +191,22 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
 unsafe extern "C" fn c_copy(dst: *mut ffi::EVP_PKEY_CTX, src: *mut ffi::EVP_PKEY_CTX) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
+            let Ok(d) = defaults() else {
+                return RetCode::Fail.into();
+            };
             if let Some(copy) = d.copy {
                 // SAFETY: delegating the ctx pair OpenSSL passed us.
-                if unsafe { copy(dst, src) } != 1 {
-                    return 0;
+                if !ossl_ok(unsafe { copy(dst, src) }) {
+                    return RetCode::Fail.into();
                 }
             }
             let mut table = ctx_state().lock();
             if let Some(dup) = table.get(&(src as usize)).cloned() {
                 table.insert(dst as usize, dup);
             }
-            1
+            RetCode::Success.into()
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -213,9 +223,8 @@ unsafe extern "C" fn c_cleanup(ctx: *mut ffi::EVP_PKEY_CTX) {
                 // SAFETY: delegating the ctx OpenSSL passed us, exactly once.
                 unsafe { cleanup(ctx) };
             }
-            0
         },
-        0,
+        (),
     );
 }
 
@@ -234,14 +243,18 @@ unsafe extern "C" fn c_ctrl(
 ) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return -2 };
-            let Some(ctrl) = d.ctrl else { return -2 };
+            let Ok(d) = defaults() else {
+                return CTRL_UNSUPPORTED;
+            };
+            let Some(ctrl) = d.ctrl else {
+                return CTRL_UNSUPPORTED;
+            };
             // SAFETY: delegating the arguments OpenSSL passed us.
             let rc = unsafe { ctrl(ctx, cmd, p1, p2) };
             record_after(ctx, cmd, p1, p2, rc);
             rc
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -256,16 +269,16 @@ fn record_after(ctx: *mut ffi::EVP_PKEY_CTX, cmd: c_int, p1: c_int, p2: *mut c_v
     let Some(state) = table.get_mut(&(ctx as usize)) else {
         return;
     };
-    let set = rc == 1 && !p2.is_null() && p1 > 0;
+    let set = ctrl_ok(rc) && !p2.is_null() && p1 > 0;
     // SAFETY: when `set`, p2 points to p1 bytes per the HKDF ctrl contract
     // (the built-in just copied them); for MD, p2 is the EVP_MD.
     unsafe {
         if cmd == ffi::EVP_PKEY_CTRL_HKDF_MD_CONST {
-            if rc == 1 && !p2.is_null() {
+            if ctrl_ok(rc) && !p2.is_null() {
                 state.md_nid = Some(ffi::EVP_MD_type(p2.cast_const().cast()));
             }
         } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_MODE_CONST {
-            if rc == 1 {
+            if ctrl_ok(rc) {
                 state.mode = p1;
             }
         } else if cmd == ffi::EVP_PKEY_CTRL_HKDF_SALT_CONST {
@@ -296,7 +309,10 @@ unsafe extern "C" fn c_ctrl_str(
     key: *const c_char,
     value: *const c_char,
 ) -> c_int {
-    catch_panic(|| result_to_int(ctrl_str_inner(ctx, key, value)), 0)
+    catch_panic(
+        || result_to_int(ctrl_str_inner(ctx, key, value)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -360,9 +376,10 @@ fn ctrl_str_inner(
                 let bits: u32 = value_str.parse().map_err(|_| {
                     EngineError::Other(format!("invalid derived_key_bits: {value_str}"))
                 })?;
-                if bits == 0 || !bits.is_multiple_of(8) {
+                if bits == 0 || !bits.is_multiple_of(u8::BITS) {
                     return Err(EngineError::Other(format!(
-                        "derived_key_bits must be positive and divisible by 8, got: {bits}"
+                        "derived_key_bits must be positive and divisible by {}, got: {bits}",
+                        u8::BITS
                     )));
                 }
                 state.derived_key_bits = Some(bits);
@@ -419,11 +436,11 @@ fn ctrl_str_inner(
             builtin_ctrl(&d, ctx, cmd, len, bytes.as_ptr().cast_mut().cast(), key_str)
         }
         "mode" => {
-            // 0 = EXTRACT_AND_EXPAND (kdf.h); only that mode works armed.
-            let mode: c_int = match value_c.to_str().unwrap_or("") {
-                "EXTRACT_AND_EXPAND" => 0,
-                "EXTRACT_ONLY" => 1,
-                "EXPAND_ONLY" => 2,
+            // Only EXTRACT_AND_EXPAND works armed.
+            let mode = match value_c.to_str().unwrap_or("") {
+                "EXTRACT_AND_EXPAND" => ffi::EVP_PKEY_HKDEF_MODE_EXTRACT_AND_EXPAND as c_int,
+                "EXTRACT_ONLY" => ffi::EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY as c_int,
+                "EXPAND_ONLY" => ffi::EVP_PKEY_HKDEF_MODE_EXPAND_ONLY as c_int,
                 _ => {
                     return Err(EngineError::Other(format!(
                         "unknown HKDF mode: {}",
@@ -446,7 +463,7 @@ fn ctrl_str_inner(
                 .ctrl_str
                 .ok_or(EngineError::Other("built-in ctrl_str missing".into()))?;
             // SAFETY: delegating the arguments OpenSSL passed us.
-            if unsafe { ctrl_str(ctx, key, value) } <= 0 {
+            if !ctrl_ok(unsafe { ctrl_str(ctx, key, value) }) {
                 return Err(EngineError::Other(format!(
                     "HKDF option rejected: {key_str}"
                 )));
@@ -473,7 +490,7 @@ fn builtin_ctrl(
     // SAFETY: forwarding a well-formed HKDF ctrl to the built-in.
     let rc = unsafe { ctrl(ctx, cmd, p1, p2) };
     record_after(ctx, cmd, p1, p2, rc);
-    if rc <= 0 {
+    if !ctrl_ok(rc) {
         return Err(EngineError::Other(format!("HKDF option rejected: {what}")));
     }
     Ok(())
@@ -496,7 +513,7 @@ fn hex_decode(value: &CStr) -> EngineResult<Zeroizing<Vec<u8>>> {
         let out = Zeroizing::new(std::slice::from_raw_parts(buf.cast::<u8>(), n).to_vec());
         // The value may be the masked IKM; wipe the OpenSSL buffer before free.
         ffi::OPENSSL_cleanse(buf.cast(), n);
-        ffi::CRYPTO_free(buf.cast(), c"".as_ptr(), 0);
+        crate::mem::openssl_free(buf.cast());
         Ok(out)
     }
 }
@@ -512,7 +529,10 @@ unsafe extern "C" fn c_derive<H: HkdfHandler>(
     key: *mut c_uchar,
     keylen: *mut usize,
 ) -> c_int {
-    catch_panic(|| result_to_int(derive_inner::<H>(ctx, key, keylen)), 0)
+    catch_panic(
+        || result_to_int(derive_inner::<H>(ctx, key, keylen)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -537,10 +557,8 @@ fn derive_inner<H: HkdfHandler>(
             .derive
             .ok_or(EngineError::Other("built-in derive missing".into()))?;
         // SAFETY: delegating the arguments OpenSSL passed us.
-        if unsafe { derive(ctx, key, keylen) } != 1 {
-            return Err(EngineError::Other("software HKDF derive failed".into()));
-        }
-        return Ok(());
+        let rc = unsafe { derive(ctx, key, keylen) };
+        return ossl_check(rc, "software HKDF derive failed");
     }
 
     if key.is_null() {
@@ -548,7 +566,7 @@ fn derive_inner<H: HkdfHandler>(
         // SAFETY: keylen is non-null (checked).
         unsafe {
             *keylen = if state.output_file.is_some() {
-                1
+                crate::method_table::FILE_OUTPUT_SIZE_HINT
             } else {
                 crate::method_table::MASKED_KEY_MAX_BUFFER
             };
@@ -556,7 +574,7 @@ fn derive_inner<H: HkdfHandler>(
         return Ok(());
     }
 
-    if state.mode != 0 {
+    if state.mode != ffi::EVP_PKEY_HKDEF_MODE_EXTRACT_AND_EXPAND as c_int {
         return Err(EngineError::Other(
             "azihsm HKDF supports only the extract-and-expand mode".into(),
         ));
