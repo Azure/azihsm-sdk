@@ -200,6 +200,7 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
         crate::rsaimport::AzihsmRsaImport,
         crate::rsasign::AzihsmRsaPssSign,
+        crate::rsadecrypt::AzihsmRsaDecrypt,
     >(engine)?;
     // Provider-parity serialization for HSM-backed keys (-text info block,
     // clean export refusal); software EC keys keep the built-in behavior via

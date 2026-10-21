@@ -4,9 +4,10 @@
 
 //! Register definitions for psram.
 //!
-//! 'CP0/CP1↔backend shared SRAM.  Only the HSM-visible IPC rings and their producer/consumer indices are modelled here; Admin-side regions are intentionally omitted.'
+//! 'Persistent SRAM (32 KB at 0xA3E0_0000). Survives warm reset; shared SP/CP/backend region. uno models the reset-reason word and the HSM-visible IPC rings with their producer/consumer indices; Admin-side regions are intentionally omitted.'
 
 pub const PSRAM_BASE: u32 = 0xA3E00000;
+pub const RESET_TYPE_OFFSET: u32 = 0x3AFC;
 pub const HSM_TO_FP_IPC_TX_PI_OFFSET: u32 = 0x3BD4;
 pub const HSM_TO_FP_IPC_TX_CI_OFFSET: u32 = 0x3BD8;
 pub const HSM_TO_FP_IPC_RX_PI_OFFSET: u32 = 0x3BDC;
@@ -19,6 +20,10 @@ pub const HSM_TO_FP_IPC_RX_RING_COUNT: u32 = 16;
 pub const HSM_TO_FP_IPC_RX_RING_STRIDE: u32 = 0x40;
 
 tock_registers::register_bitfields! [u32,
+    /// 'SoC reset reason published by the boot processor (SP) before releasing the CP cores. 0 = POR, 1 = warm reset, 2 = fw-update warm reset. Read-only from the CP; the HSM reads it at boot to gate destructive partition-store init (recovery boot).'
+    pub RESET_TYPE [
+        RESET_TYPE OFFSET(0) NUMBITS(32) [],
+    ],
     /// 'Producer or consumer index for a PSRAM IPC ring.'
     pub HSM_TO_FP_IPC_TX_PI [
         VAL OFFSET(0) NUMBITS(32) [],
@@ -66,6 +71,8 @@ pub mod regs {
             (0x980 => pub hsm_to_fp_ipc_tx_ring: [super::PsramIpcMessage; 16]),
             (0xd80 => pub hsm_to_fp_ipc_rx_ring: [super::PsramIpcMessage; 16]),
             (0x1180 => _reserved1),
+            (0x3afc => pub reset_type: crate::RO<u32, super::RESET_TYPE::Register>),
+            (0x3b00 => _reserved2),
             (0x3bd4 => pub hsm_to_fp_ipc_tx_pi: crate::RW<u32, super::HSM_TO_FP_IPC_TX_PI::Register>),
             (0x3bd8 => pub hsm_to_fp_ipc_tx_ci: crate::RW<u32, super::HSM_TO_FP_IPC_TX_CI::Register>),
             (0x3bdc => pub hsm_to_fp_ipc_rx_pi: crate::RW<u32, super::HSM_TO_FP_IPC_RX_PI::Register>),

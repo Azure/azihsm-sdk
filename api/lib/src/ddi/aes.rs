@@ -131,6 +131,9 @@ pub(crate) fn aes_cbc_encrypt(
     plaintext: &[&[u8]],
     ciphertext: &mut [u8],
 ) -> HsmResult<usize> {
+    // Chain on a copy: a retried attempt must restart from the caller's IV,
+    // not from one already advanced past the requests sent before the error.
+    let mut chain = iv.to_vec();
     let mut len = 0;
     let iter = plaintext.iter().flat_map(|s| s.iter());
     for chunk in &iter.chunks(DdiAesEncryptDecryptReq::MAX_MSG_SIZE) {
@@ -138,12 +141,13 @@ pub(crate) fn aes_cbc_encrypt(
         let written = aes_cbc_encrypt_decrypt(
             key,
             DdiAesOp::Encrypt,
-            iv,
+            &mut chain,
             plaintext_chunk,
             &mut ciphertext[len..],
         )?;
         len += written;
     }
+    iv.copy_from_slice(&chain);
     Ok(len)
 }
 
@@ -181,18 +185,21 @@ pub(crate) fn aes_cbc_decrypt(
     ciphertext: &[u8],
     plaintext: &mut [u8],
 ) -> HsmResult<usize> {
+    // Chain on a copy (see aes_cbc_encrypt).
+    let mut chain = iv.to_vec();
     let mut len = 0;
     let chunks = ciphertext.chunks(DdiAesEncryptDecryptReq::MAX_MSG_SIZE);
     for chunk in chunks {
         let written = aes_cbc_encrypt_decrypt(
             key,
             DdiAesOp::Decrypt,
-            iv,
+            &mut chain,
             chunk.to_vec(),
             &mut plaintext[len..],
         )?;
         len += written;
     }
+    iv.copy_from_slice(&chain);
     Ok(len)
 }
 

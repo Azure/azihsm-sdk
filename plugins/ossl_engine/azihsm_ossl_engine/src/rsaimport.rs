@@ -53,12 +53,6 @@ impl RsaImportHandler for AzihsmRsaImport {
         params: &RsaImportParams,
         pkey: *mut ffi::EVP_PKEY,
     ) -> EngineResult<()> {
-        if params.session {
-            return Err(EngineError::Other(
-                "azihsm.session:true (session keys) is not yet supported by the engine".into(),
-            ));
-        }
-
         let slot = engine_data_slot()?;
         let data = slot
             .get(engine)
@@ -68,35 +62,57 @@ impl RsaImportHandler for AzihsmRsaImport {
 
         match params.key_usage {
             RsaKeyUsage::KeyWrapping => export_unwrapping_key(data, params, pkey),
-            RsaKeyUsage::DigitalSignature => import_private(engine, data, params, pkey),
+            RsaKeyUsage::DigitalSignature | RsaKeyUsage::KeyEncipherment => {
+                import_private(engine, data, params, pkey)
+            }
         }
     }
 }
 
-/// Build the imported key's private/public properties: exclusive
-/// digitalSignature usage (sign on the private half, verify on the public).
+/// Build the imported key's private/public properties from the requested usage:
+/// `digitalSignature` → sign on the private half, verify on the public;
+/// `keyEncipherment` → decrypt on the private half, encrypt on the public.
 /// RSA-CRT (unless plain RSA was requested) applies to the private half only;
-/// the public half is always kind `Rsa`.
+/// the public half is always kind `Rsa`. `azihsm.session` marks both halves as
+/// session keys.
 fn import_props(params: &RsaImportParams) -> EngineResult<(HsmKeyProps, HsmKeyProps)> {
     let priv_kind = if params.crt {
         HsmKeyKind::RsaCrt
     } else {
         HsmKeyKind::Rsa
     };
-    let priv_props = HsmKeyPropsBuilder::default()
+    // Key usage maps to the HSM capability bits: digitalSignature → sign/verify,
+    // keyEncipherment → decrypt/encrypt. (keyWrapping takes the export path and
+    // never reaches an import.)
+    let mut priv_builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(priv_kind)
         .bits(params.bits)
-        .is_session(false)
-        .can_sign(true)
-        .build()
-        .map_err(|e| EngineError::wrap("build imported private props", e))?;
-    let pub_props = HsmKeyPropsBuilder::default()
+        .is_session(params.session);
+    let mut pub_builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
         .bits(params.bits)
-        .is_session(false)
-        .can_verify(true)
+        .is_session(params.session);
+    match params.key_usage {
+        RsaKeyUsage::DigitalSignature => {
+            priv_builder = priv_builder.can_sign(true);
+            pub_builder = pub_builder.can_verify(true);
+        }
+        RsaKeyUsage::KeyEncipherment => {
+            priv_builder = priv_builder.can_decrypt(true);
+            pub_builder = pub_builder.can_encrypt(true);
+        }
+        RsaKeyUsage::KeyWrapping => {
+            return Err(EngineError::Other(
+                "keyWrapping does not import a key (it exports the unwrapping key)".into(),
+            ));
+        }
+    }
+    let priv_props = priv_builder
+        .build()
+        .map_err(|e| EngineError::wrap("build imported private props", e))?;
+    let pub_props = pub_builder
         .build()
         .map_err(|e| EngineError::wrap("build imported public props", e))?;
     Ok((priv_props, pub_props))
@@ -236,4 +252,33 @@ enum ImportSource {
     PlaintextDer(Zeroizing<Vec<u8>>),
     /// A pre-wrapped blob (`azihsm.wrapped_key`); unwrapped directly.
     WrappedBlob(Zeroizing<Vec<u8>>),
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    // `azihsm.session` must reach both halves' HSM properties (and stay off
+    // for the persistent default), for each importing usage.
+    #[test]
+    fn import_props_carry_session_flag() {
+        for key_usage in [RsaKeyUsage::DigitalSignature, RsaKeyUsage::KeyEncipherment] {
+            for session in [false, true] {
+                let params = RsaImportParams {
+                    bits: 2048,
+                    crt: true,
+                    key_usage,
+                    session,
+                    input_key: None,
+                    wrapped_key: None,
+                    masked_key_path: None,
+                };
+                let (priv_props, pub_props) = import_props(&params).unwrap();
+                assert_eq!(priv_props.is_session(), session, "{key_usage:?}");
+                assert_eq!(pub_props.is_session(), session, "{key_usage:?}");
+            }
+        }
+    }
 }

@@ -94,9 +94,9 @@ pub(crate) async fn hkdf_derive<'p, P: HsmPal>(
         return Err(e);
     }
 
-    // Commit the derived key: AES-GCM bulk keys are handed to the
+    // Commit the derived key: AES bulk keys (GCM / XTS) are handed to the
     // bulk-crypto backend (the vault records only the returned
-    // `bulk_key_id` handle, carried in the response for later bulk GCM
+    // `bulk_key_id` handle, carried in the response for later bulk
     // ops); every other kind is stored directly in the vault.  Scrub the
     // derived material if the commit fails, before propagating the error.
     let (key_handle, bulk_key_id) =
