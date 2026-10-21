@@ -10,8 +10,8 @@ use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::aead_envelope::HEADER_LEN as ENVELOPE_HEADER_LEN;
 use azihsm_ddi_tbor_test_harness::x509_fixture::*;
 use azihsm_ddi_tbor_test_harness::*;
-use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::*;
+use common::COORD_LEN;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -46,30 +46,18 @@ struct SourceBackups {
     pota: CaKey,
 }
 
-/// Append a DER certificate to the OOB items and return its wire descriptor.
-fn push_oob_item(items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
-    let index = u8::try_from(items.len()).expect("bounded OOB item count");
-    let length = u16::try_from(der.len()).expect("bounded fixture DER length");
-    items.push(der.to_vec());
-    CertDescriptor {
-        index,
-        length: U16::new(length),
-    }
-}
-
 /// Append the root and leaf certificates to the OOB items in chain order
 /// and return their descriptors.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: GeneratedChain) -> Vec<CertDescriptor> {
     vec![
-        push_oob_item(items, &chain.root_der),
-        push_oob_item(items, &chain.leaf_der),
+        common::add_evidence_item(items, &chain.root_der),
+        common::add_evidence_item(items, &chain.leaf_der),
     ]
 }
 
 /// Convert a wire-LE P-384 public key into big-endian `x || y` bytes for
 /// the receiver certificate fixture.
 fn raw_pub_from_wire(pub_key: &[u8]) -> [u8; POLICY_MAX_KEY_LEN] {
-    const COORD_LEN: usize = POLICY_MAX_KEY_LEN / 2;
     assert_eq!(pub_key.len(), POLICY_MAX_KEY_LEN);
 
     let mut raw = [0u8; POLICY_MAX_KEY_LEN];
