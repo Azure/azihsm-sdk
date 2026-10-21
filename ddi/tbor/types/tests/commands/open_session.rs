@@ -46,7 +46,7 @@ fn open_session_co_authenticated_happy() {
     let rx = h.derive_mac_rx_key().expect("derive mac rx key");
     assert_eq!(tx.len(), 48);
     assert_eq!(rx.len(), 48);
-    assert_ne!(tx, rx, "mac tx and rx keys must differ");
+    assert!(tx != rx, "mac tx and rx keys must differ");
 }
 
 #[test]
@@ -523,15 +523,14 @@ fn co_authenticated_derives_unique_keys_per_session() {
     // Close before asserting so a failing assertion never leaks.
     b.close().expect("close second session must succeed");
 
-    assert_ne!(
-        a_exported, b_exported,
-        "two handshakes must derive distinct HPKE exported material",
+    assert!(
+        a_exported != b_exported,
+        "two handshakes must derive distinct HPKE exported material"
     );
-    assert_ne!(a_tx, b_tx, "per-session mac tx keys must differ");
-    assert_ne!(a_rx, b_rx, "per-session mac rx keys must differ");
-    // Sanity: within a single session, tx and rx are distinct.
-    assert_ne!(a_tx, a_rx);
-    assert_ne!(b_tx, b_rx);
+    assert!(a_tx != b_tx, "per-session mac tx keys must differ");
+    assert!(a_rx != b_rx, "per-session mac rx keys must differ");
+    assert!(a_tx != a_rx, "session A TX and RX keys must differ");
+    assert!(b_tx != b_rx, "session B TX and RX keys must differ");
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,9 +1065,9 @@ fn authenticated_session_mac_key_derivation_is_stable() {
     let rx_first = h.derive_mac_rx_key().expect("derive first RX key");
     let rx_second = h.derive_mac_rx_key().expect("derive second RX key");
 
-    assert_eq!(tx_first, tx_second, "TX derivation must be stable");
-    assert_eq!(rx_first, rx_second, "RX derivation must be stable");
-    assert_ne!(tx_first, rx_first, "TX and RX keys must remain distinct");
+    assert!(tx_first == tx_second, "TX derivation must be stable");
+    assert!(rx_first == rx_second, "RX derivation must be stable");
+    assert!(tx_first != rx_first, "TX and RX keys must remain distinct");
 }
 
 /// Failed Phase-2 authentication does not make the original fd reusable.
