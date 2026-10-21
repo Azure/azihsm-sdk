@@ -28,9 +28,14 @@ use azihsm_ossl_engine_core::hkdf_method::DerivedKeyType;
 use azihsm_ossl_engine_core::hkdf_method::HkdfHandler;
 use azihsm_ossl_engine_core::hkdf_method::HkdfParams;
 use azihsm_ossl_engine_core::hkdf_method::IkmSource;
+use openssl::hash::MessageDigest;
+use openssl::nid::Nid;
 use zeroize::Zeroizing;
 
 use crate::engine_impl::engine_data_slot;
+
+/// AES key sizes an HKDF derive may produce, in bits.
+const AES_KEY_BITS: [u32; 3] = [128, 192, 256];
 
 /// Marker type carrying the engine's HKDF logic (see [`HkdfHandler`]).
 pub(crate) struct AzihsmHkdf;
@@ -49,23 +54,32 @@ fn hash_from_nid(nid: c_int) -> EngineResult<HsmHashAlgo> {
     }
 }
 
-/// Derived-key props per the provider's rules: AES (encrypt/decrypt) for a
-/// 128-, 192-, or 256-bit size; for HMAC the key kind follows the HKDF digest
-/// (as the provider derives it from `md`) and the bits must match the digest
-/// size.
+/// Output size of the digest `nid`, in bits.
+fn digest_bits(nid: c_int) -> EngineResult<u32> {
+    MessageDigest::from_nid(Nid::from_raw(nid))
+        .and_then(|md| u32::try_from(md.size()).ok())
+        .and_then(|bytes| bytes.checked_mul(u8::BITS))
+        .ok_or_else(|| EngineError::Other(format!("unknown digest (NID {nid})")))
+}
+
+/// Derived-key props per the provider's rules: AES (encrypt/decrypt) for an
+/// [`AES_KEY_BITS`] size; for HMAC the key kind follows the HKDF digest `hash`
+/// (NID `md_nid`, as the provider derives it from `md`) and the bits must match
+/// the digest size.
 fn derived_props(
     key_type: DerivedKeyType,
     bits: u32,
     hash: HsmHashAlgo,
+    md_nid: c_int,
 ) -> EngineResult<azihsm_api::HsmKeyProps> {
     let builder = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
         .bits(bits);
     let builder = match key_type {
         DerivedKeyType::Aes => {
-            if !matches!(bits, 128 | 192 | 256) {
+            if !AES_KEY_BITS.contains(&bits) {
                 return Err(EngineError::Other(format!(
-                    "derived_key_bits for aes must be 128, 192, or 256, got: {bits}"
+                    "derived_key_bits for aes must be one of {AES_KEY_BITS:?}, got: {bits}"
                 )));
             }
             builder
@@ -74,16 +88,17 @@ fn derived_props(
                 .can_decrypt(true)
         }
         DerivedKeyType::Hmac => {
-            let (kind, expected_bits) = match hash {
-                HsmHashAlgo::Sha256 => (HsmKeyKind::HmacSha256, 256),
-                HsmHashAlgo::Sha384 => (HsmKeyKind::HmacSha384, 384),
-                HsmHashAlgo::Sha512 => (HsmKeyKind::HmacSha512, 512),
+            let kind = match hash {
+                HsmHashAlgo::Sha256 => HsmKeyKind::HmacSha256,
+                HsmHashAlgo::Sha384 => HsmKeyKind::HmacSha384,
+                HsmHashAlgo::Sha512 => HsmKeyKind::HmacSha512,
                 _ => {
                     return Err(EngineError::Other(
                         "unsupported HKDF digest for an hmac derived key".into(),
                     ));
                 }
             };
+            let expected_bits = digest_bits(md_nid)?;
             if bits != expected_bits {
                 return Err(EngineError::Other(format!(
                     "derived_key_bits for hmac must match the HKDF digest size \
@@ -105,7 +120,12 @@ impl HkdfHandler for AzihsmHkdf {
         output_file: Option<&Path>,
     ) -> EngineResult<Option<Zeroizing<Vec<u8>>>> {
         let hash = hash_from_nid(params.md_nid)?;
-        let props = derived_props(params.derived_key_type, params.derived_key_bits, hash)?;
+        let props = derived_props(
+            params.derived_key_type,
+            params.derived_key_bits,
+            hash,
+            params.md_nid,
+        )?;
 
         let ikm_blob: Zeroizing<Vec<u8>> = match &params.ikm {
             IkmSource::Bytes(bytes) => Zeroizing::new(bytes.to_vec()),

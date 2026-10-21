@@ -32,7 +32,6 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::ptr::null_mut;
 use std::sync::OnceLock;
 
 use azihsm_api::HsmEccKeyUnmaskAlgo;
@@ -42,6 +41,9 @@ use azihsm_api::HsmKeyManager;
 use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
+use azihsm_ossl_engine_core::error::ossl_check;
+use azihsm_ossl_engine_core::error::ossl_ok;
+use azihsm_ossl_engine_core::exdata::new_ex_index;
 use azihsm_ossl_engine_core::ffi;
 use foreign_types::ForeignTypeRef;
 use openssl::pkey::PKey;
@@ -96,11 +98,10 @@ fn open_and_read(data: &EngineData, path: &Path) -> EngineResult<Zeroizing<Vec<u
     read_masked_key(path)
 }
 
-/// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
-/// bounds allocation against a caller-supplied path pointing at a very large or
-/// unbounded file. Mirrors `MAX_STORAGE_FILE_SIZE` in
-/// azihsm_ossl_engine_resiliency.
-const MAX_MASKED_KEY_SIZE: u64 = 64 * 1024;
+/// Upper bound on a masked-key blob, the resiliency layer's file cap. A masked
+/// EC/RSA key is far smaller; this bounds allocation against a caller-supplied
+/// path pointing at a very large or unbounded file.
+const MAX_MASKED_KEY_SIZE: u64 = azihsm_ossl_engine_resiliency::MAX_STORAGE_FILE_SIZE;
 
 /// Read a masked-key blob with the same hardening the rest of the engine
 /// applies to key-material files: `O_NOFOLLOW` refuses a symlink at `path`,
@@ -229,7 +230,7 @@ fn bound_public_ec_key(engine: &Engine, der: &[u8]) -> EngineResult<*mut ffi::EC
     // SAFETY: ec is a fresh EC_KEY; set_group/set_public_key dup the borrowed
     // group/point out of `parsed`.
     let set_ok = unsafe {
-        ffi::EC_KEY_set_group(ec, group) == 1 && ffi::EC_KEY_set_public_key(ec, point) == 1
+        ossl_ok(ffi::EC_KEY_set_group(ec, group)) && ossl_ok(ffi::EC_KEY_set_public_key(ec, point))
     };
     // `group`/`point` borrow into `parsed`; keep it alive until here (they are
     // raw pointers, so the borrow checker won't do it for us) — they were dup'd
@@ -286,10 +287,13 @@ fn build_ec_pkey(
             free_bound_ec_key(data, ec);
             return Err(EngineError::Other("EVP_PKEY_new failed".into()));
         }
-        if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
+        if let Err(e) = ossl_check(
+            ffi::EVP_PKEY_set1_EC_KEY(pkey, ec),
+            "EVP_PKEY_set1_EC_KEY failed",
+        ) {
             ffi::EVP_PKEY_free(pkey);
             free_bound_ec_key(data, ec);
-            return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
+            return Err(e);
         }
         ffi::EC_KEY_free(ec);
         Ok(pkey)
@@ -314,11 +318,11 @@ fn attach_ec(data: &EngineData, ec: *mut ffi::EC_KEY, key: HsmEccPrivateKey) -> 
     // the engine's lifetime; the slot has no free callback, so no ownership is
     // transferred.
     let rc = unsafe { ffi::EC_KEY_set_ex_data(ec, idx, key_ptr.cast_mut().cast::<c_void>()) };
-    if rc != 1 {
+    if let Err(e) = ossl_check(rc, "EC_KEY_set_ex_data failed") {
         // Roll back the retain so the failed load doesn't leave the key in the
         // HSM until engine teardown.
         data.release_loaded_key(key_ptr);
-        return Err(EngineError::Other("EC_KEY_set_ex_data failed".into()));
+        return Err(e);
     }
 
     // Signing on this key already routes through the HSM: the EC_KEY adopted
@@ -345,7 +349,6 @@ pub(crate) fn ec_key_hsm_key(ec_key: *mut ffi::EC_KEY) -> *const HsmEccPrivateKe
 /// callback: the stored pointer is non-owning (the key is owned by
 /// [`EngineData`]), and a libcrypto-held free callback into this `.so` would be
 /// unsafe across `.so` unload (see [`azihsm_ossl_engine_core::exdata`]).
-#[allow(unsafe_code)]
 fn ec_key_ex_index() -> EngineResult<c_int> {
     static IDX: OnceLock<c_int> = OnceLock::new();
     static INIT: Mutex<()> = Mutex::new(());
@@ -357,22 +360,8 @@ fn ec_key_ex_index() -> EngineResult<c_int> {
     if let Some(i) = IDX.get() {
         return Ok(*i);
     }
-    // EC_KEY_get_ex_new_index is a macro in 1.1.x, so call the underlying
-    // CRYPTO_get_ex_new_index with the EC_KEY class directly.
-    // SAFETY: standard ex_data index registration with no new/dup/free callbacks.
-    let idx = unsafe {
-        ffi::CRYPTO_get_ex_new_index(
-            ffi::CRYPTO_EX_INDEX_EC_KEY as c_int,
-            0,
-            null_mut(),
-            None,
-            None,
-            None,
-        )
-    };
-    if idx < 0 {
-        return Err(EngineError::ExDataRegisterFailed);
-    }
+    // EC_KEY_get_ex_new_index is a macro in 1.1.x, so register by class.
+    let idx = new_ex_index(ffi::CRYPTO_EX_INDEX_EC_KEY as c_int)?;
     let _ = IDX.set(idx);
     Ok(idx)
 }

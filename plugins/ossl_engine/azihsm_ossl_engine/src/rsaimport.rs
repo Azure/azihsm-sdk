@@ -34,14 +34,15 @@ use openssl::pkey::PKey;
 use zeroize::Zeroizing;
 
 use crate::context::EngineData;
+use crate::context::RSA_UNWRAPPING_KEY_BITS;
 use crate::context::delete_hsm_key;
 use crate::engine_impl::engine_data_slot;
 
 /// RSA-AES wrap parameters, matching the 3.x provider so a `wrapped_key` blob
 /// produced against the exported unwrapping key interoperates: SHA-256
 /// OAEP/MGF1 and a 256-bit (32-byte) AES KEK.
-const WRAP_HASH: HsmHashAlgo = HsmHashAlgo::Sha256;
-const WRAP_KEK_BYTES: usize = 32;
+pub(crate) const WRAP_HASH: HsmHashAlgo = HsmHashAlgo::Sha256;
+pub(crate) const WRAP_KEK_BYTES: usize = 32;
 
 /// Marker type carrying the engine's RSA import logic (see
 /// [`RsaImportHandler`]).
@@ -216,10 +217,10 @@ fn export_unwrapping_key(
     params: &RsaImportParams,
     pkey: *mut ffi::EVP_PKEY,
 ) -> EngineResult<()> {
-    if params.bits != 2048 {
+    if params.bits != RSA_UNWRAPPING_KEY_BITS {
         return Err(EngineError::Other(format!(
-            "azihsm.key_usage:keyWrapping requires rsa_keygen_bits=2048 \
-             (the HSM unwrapping key is fixed at 2048 bits), got: {}",
+            "azihsm.key_usage:keyWrapping requires rsa_keygen_bits={RSA_UNWRAPPING_KEY_BITS} \
+             (the HSM unwrapping key is fixed at {RSA_UNWRAPPING_KEY_BITS} bits), got: {}",
             params.bits
         )));
     }

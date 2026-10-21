@@ -33,6 +33,7 @@ use azihsm_api::ResiliencyLock;
 use azihsm_api::ResiliencyStorage;
 pub use callbacks::FileMobkCallback;
 pub use callbacks::FilePotaCallback;
+pub use callbacks::OBK_LEN;
 pub use config::ConfigError;
 pub use config::ResiliencySettings;
 use fs2::FileExt;
@@ -44,7 +45,7 @@ const MAX_KEY_NAME_LEN: usize = 256;
 /// Cap on a single resiliency file, mirroring the provider's
 /// `MAX_STORAGE_FILE_SIZE`. Bounds reads/writes against disk-fill and runaway
 /// allocation on subsequent reads.
-const MAX_STORAGE_FILE_SIZE: u64 = 64 * 1024;
+pub const MAX_STORAGE_FILE_SIZE: u64 = 64 * 1024;
 
 /// Reserved storage-dir filename for the [`FileLock`] lock file. Rejected as a
 /// storage key so storage operations can't clobber the lock.
@@ -52,7 +53,7 @@ pub(crate) const LOCK_FILE_NAME: &str = ".lock";
 
 /// Mode for files the resiliency layer creates (state + lock): owner
 /// read/write only, since they can hold or guard key material.
-const SECRET_FILE_MODE: u32 = 0o600;
+pub const SECRET_FILE_MODE: u32 = 0o600;
 
 /// Reject empty, over-long, or path-traversal keys, keys with a separator or
 /// interior NUL, and the reserved lock-file name, so `dir.join(key)` can never
