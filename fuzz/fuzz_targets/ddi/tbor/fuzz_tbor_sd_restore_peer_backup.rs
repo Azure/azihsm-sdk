@@ -124,6 +124,7 @@ struct FuzzInput {
     key_scope: common::KeyScope,
 }
 
+#[derive(Clone)]
 struct Evidence {
     items: Vec<Vec<u8>>,
     receiver: Vec<CertDescriptor>,
@@ -452,7 +453,7 @@ fuzz_target!(|input: FuzzInput| {
             return;
         };
 
-        let mut evidence = backup.clone();
+        let mut evidence = backup.evidence.clone();
         let mut req = TborSdRestorePeerBackupReq {
             session_id: backup.session_id,
             masked_sealing_key: backup.masked_sealing_key,
