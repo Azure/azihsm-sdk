@@ -36,6 +36,10 @@ enum MutationTarget {
     SenderOwnerCertOob,
     SenderPartOwnerCertOob,
     SenderReportOob,
+    SenderCertInvalidDer,
+    SenderMfgrCertInvalidDer,
+    SenderOwnerCertInvalidDer,
+    SenderPartOwnerCertInvalidDer,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -348,12 +352,14 @@ fn invalidate_report(report: &mut ReportDescriptor, input: &FuzzInput) {
     }
 }
 
-/// Flip a byte in an OOB item selected through the supplied descriptors,
-/// returning whether a referenced, nonempty item was changed.
+/// Flip the byte at `byte_offset` in an OOB item selected through the supplied
+/// descriptors, returning whether a referenced, nonempty item was changed.
+/// Use offset zero to invalidate a certificate's required DER SEQUENCE tag.
 fn mutate_oob_item(
     evidence: &mut SenderEvidence,
     descriptors: &[CertDescriptor],
     input: &FuzzInput,
+    byte_offset: u16,
 ) -> bool {
     if descriptors.is_empty() {
         return false;
@@ -362,7 +368,7 @@ fn mutate_oob_item(
     let Some(item) = evidence.items.get_mut(usize::from(descriptor.index)) else {
         return false;
     };
-    flip(item, input.offset, input.mask)
+    flip(item, byte_offset, input.mask)
 }
 
 /// Apply the selected mutation to the remote-restore request or its sender
@@ -403,25 +409,91 @@ fn mutate_request(
         MutationTarget::PrevSdMkBackup => {
             flip(&mut req.prev_sd_mk_backup, input.offset, input.mask)
         }
-        MutationTarget::SenderCertOob => {
-            mutate_oob_item(evidence, &fixture.evidence.sender_cert_chain, input)
-        }
-        MutationTarget::SenderMfgrCertOob => {
-            mutate_oob_item(evidence, &fixture.evidence.mfgr_cert_chain, input)
-        }
-        MutationTarget::SenderOwnerCertOob => {
-            mutate_oob_item(evidence, &fixture.evidence.owner_cert_chain, input)
-        }
-        MutationTarget::SenderPartOwnerCertOob => {
-            mutate_oob_item(evidence, &fixture.evidence.part_owner_cert_chain, input)
-        }
+        MutationTarget::SenderCertOob => mutate_oob_item(
+            evidence,
+            &fixture.evidence.sender_cert_chain,
+            input,
+            input.offset,
+        ),
+        MutationTarget::SenderMfgrCertOob => mutate_oob_item(
+            evidence,
+            &fixture.evidence.mfgr_cert_chain,
+            input,
+            input.offset,
+        ),
+        MutationTarget::SenderOwnerCertOob => mutate_oob_item(
+            evidence,
+            &fixture.evidence.owner_cert_chain,
+            input,
+            input.offset,
+        ),
+        MutationTarget::SenderPartOwnerCertOob => mutate_oob_item(
+            evidence,
+            &fixture.evidence.part_owner_cert_chain,
+            input,
+            input.offset,
+        ),
         MutationTarget::SenderReportOob => {
             let report = [fixture.evidence.report.index];
             let descriptors = [CertDescriptor {
                 index: report[0],
                 length: fixture.evidence.report.length,
             }];
-            mutate_oob_item(evidence, &descriptors, input)
+            mutate_oob_item(evidence, &descriptors, input, input.offset)
+        }
+        MutationTarget::SenderCertInvalidDer => {
+            mutate_oob_item(evidence, &fixture.evidence.sender_cert_chain, input, 0)
+        }
+        MutationTarget::SenderMfgrCertInvalidDer => {
+            mutate_oob_item(evidence, &fixture.evidence.mfgr_cert_chain, input, 0)
+        }
+        MutationTarget::SenderOwnerCertInvalidDer => {
+            mutate_oob_item(evidence, &fixture.evidence.owner_cert_chain, input, 0)
+        }
+        MutationTarget::SenderPartOwnerCertInvalidDer => {
+            mutate_oob_item(evidence, &fixture.evidence.part_owner_cert_chain, input, 0)
+        }
+    }
+}
+
+fn validate_response(
+    input: &FuzzInput,
+    changed: bool,
+    result: Result<TborSdRestoreRemoteBackupResp, DdiError>,
+) {
+    // Arbitrary evidence byte changes need not invalidate the parsed or
+    // authenticated data. Descriptor and DER-tag corruptions must fail.
+    let arbitrary_oob = matches!(
+        input.target,
+        MutationTarget::SenderCertOob
+            | MutationTarget::SenderMfgrCertOob
+            | MutationTarget::SenderOwnerCertOob
+            | MutationTarget::SenderPartOwnerCertOob
+            | MutationTarget::SenderReportOob
+    );
+    let must_fail = input.key_scope != common::KeyScope::Local || (changed && !arbitrary_oob);
+    let must_succeed = input.key_scope == common::KeyScope::Local && !changed;
+
+    match result {
+        Err(DdiError::TborStatus(_)) if !must_succeed => {}
+        Err(err) => panic!("SdRestoreRemoteBackup unexpected error: {err:?}"),
+        Ok(response) => {
+            assert!(
+                !must_fail,
+                "the selected mutation should make SdRestoreRemoteBackup fail: \
+                 target={:?}",
+                input.target
+            );
+            assert_eq!(response.pok_local_backup.len(), MASKED_SD_LEN);
+            assert_eq!(response.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
+            assert!(
+                response.pok_local_backup.iter().any(|&byte| byte != 0),
+                "successful restore must return a nonzero local backup"
+            );
+            assert!(
+                response.sd_mk_backup.iter().any(|&byte| byte != 0),
+                "successful restore must return a nonzero SDMK backup"
+            );
         }
     }
 }
@@ -449,31 +521,7 @@ fuzz_target!(|input: FuzzInput| {
         let oob = evidence.oob();
         let result = ctx.tbor_oob(&req, &oob);
 
-        if changed || input.key_scope != common::KeyScope::Local {
-            match result {
-                Err(DdiError::TborStatus(_)) => {}
-                Err(err) => {
-                    panic!("SdRestoreRemoteBackup unexpected error: {err:?}");
-                }
-                Ok(_response) => panic!(
-                    "the selected mutation should make SdRestoreRemoteBackup fail: \
-                     target={:?}",
-                    input.target
-                ),
-            }
-        } else {
-            let response = result.expect("the unmodified valid remote restore should succeed");
-            assert_eq!(response.pok_local_backup.len(), MASKED_SD_LEN);
-            assert_eq!(response.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
-            assert!(
-                response.pok_local_backup.iter().any(|&byte| byte != 0),
-                "successful restore must return a nonzero local backup"
-            );
-            assert!(
-                response.sd_mk_backup.iter().any(|&byte| byte != 0),
-                "successful restore must return a nonzero SDMK backup"
-            );
-        }
+        validate_response(&input, changed, result);
 
         ctx.session_close(fixture.session_id)
             .expect("restore session close should succeed");
