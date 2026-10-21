@@ -71,23 +71,12 @@ struct RestoreFixture {
     prev_sd_mk_backup: [u8; SD_MK_BACKUP_LEN],
 }
 
-/// Append certificate or report bytes to the OOB items and return their
-/// index and length as a certificate descriptor.
-fn push_oob_item(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
-    let descriptor = CertDescriptor {
-        index: items.len() as u8,
-        length: U16::new(bytes.len() as u16),
-    };
-    items.push(bytes.to_vec());
-    descriptor
-}
-
 /// Append a two-certificate DER chain to the OOB items and return its
 /// descriptors in chain order.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: [&[u8]; 2]) -> Vec<CertDescriptor> {
     chain
         .into_iter()
-        .map(|cert| push_oob_item(items, cert))
+        .map(|cert| common::add_evidence_item(items, cert))
         .collect()
 }
 
@@ -111,7 +100,7 @@ fn build_sender_evidence(
     let mfgr_cert_chain = push_chain(&mut items, mfgr.der_items());
     let owner_cert_chain = push_chain(&mut items, owner.der_items());
     let part_owner_cert_chain = push_chain(&mut items, part_owner.der_items());
-    let report = push_oob_item(&mut items, report_bytes);
+    let report = common::add_evidence_item(&mut items, report_bytes);
 
     SenderEvidence {
         items,

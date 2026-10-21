@@ -8,7 +8,6 @@ mod common;
 
 use azihsm_ddi_tbor_test_harness::x509_fixture::*;
 use azihsm_ddi_tbor_test_harness::*;
-use azihsm_ddi_tbor_types::tbor_int::U16;
 use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
@@ -88,23 +87,12 @@ fn build_policy(
     policy_bytes
 }
 
-/// Append a DER certificate or report to the OOB items and return its descriptor.
-fn push_oob_item(items: &mut Vec<Vec<u8>>, der: &[u8]) -> CertDescriptor {
-    let index = u8::try_from(items.len()).expect("bounded OOB item count");
-    let length = u16::try_from(der.len()).expect("bounded fixture DER length");
-    items.push(der.to_vec());
-    CertDescriptor {
-        index,
-        length: U16::new(length),
-    }
-}
-
 /// Append the root and leaf certificates to the OOB items in chain order
 /// and return their descriptors.
 fn push_chain(items: &mut Vec<Vec<u8>>, chain: GeneratedChain) -> Vec<CertDescriptor> {
     vec![
-        push_oob_item(items, &chain.root_der),
-        push_oob_item(items, &chain.leaf_der),
+        common::add_evidence_item(items, &chain.root_der),
+        common::add_evidence_item(items, &chain.leaf_der),
     ]
 }
 
@@ -227,7 +215,7 @@ fn build_fixture(
         owner_desc = push_chain(&mut oob_items, owner);
         part_owner_desc = push_chain(&mut oob_items, part_owner);
 
-        let report_item = push_oob_item(
+        let report_item = common::add_evidence_item(
             &mut oob_items,
             report.as_deref().expect("trusted fixture has report"),
         );

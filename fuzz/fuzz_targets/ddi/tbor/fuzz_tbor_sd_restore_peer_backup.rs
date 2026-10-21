@@ -151,17 +151,6 @@ impl Evidence {
     }
 }
 
-/// Append certificate or report bytes to the OOB items and return their
-/// index and length as a certificate descriptor.
-fn push_cert(items: &mut Vec<Vec<u8>>, bytes: &[u8]) -> CertDescriptor {
-    let descriptor = CertDescriptor {
-        index: items.len() as u8,
-        length: U16::new(bytes.len() as u16),
-    };
-    items.push(bytes.to_vec());
-    descriptor
-}
-
 /// Build receiver and partition certificate chains plus report descriptors
 /// for remote-backup creation and the subsequent peer-backup operations.
 fn build_evidence(
@@ -179,24 +168,24 @@ fn build_evidence(
     let receiver_descriptors = receiver
         .der_items()
         .iter()
-        .map(|cert| push_cert(&mut items, cert))
+        .map(|cert| common::add_evidence_item(&mut items, cert))
         .collect();
     let manufacturer_descriptors = manufacturer
         .der_items()
         .iter()
-        .map(|cert| push_cert(&mut items, cert))
+        .map(|cert| common::add_evidence_item(&mut items, cert))
         .collect();
     let owner_descriptors = owner
         .der_items()
         .iter()
-        .map(|cert| push_cert(&mut items, cert))
+        .map(|cert| common::add_evidence_item(&mut items, cert))
         .collect();
     let partition_owner_descriptors = partition_owner
         .der_items()
         .iter()
-        .map(|cert| push_cert(&mut items, cert))
+        .map(|cert| common::add_evidence_item(&mut items, cert))
         .collect();
-    let report_descriptor = push_cert(&mut items, report_bytes);
+    let report_descriptor = common::add_evidence_item(&mut items, report_bytes);
 
     Evidence {
         items,
