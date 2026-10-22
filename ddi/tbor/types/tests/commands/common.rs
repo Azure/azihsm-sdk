@@ -3,13 +3,15 @@
 
 //! Common constants and helpers for TBOR command tests.
 
-#![allow(unused_imports)]
-#![allow(dead_code)]
-
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_test_harness::TestCtx;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 
 /// `KeyScope::Session` discriminant.
@@ -43,6 +45,7 @@ pub(crate) const ENVELOPE_IV_LEN: usize = 12;
 pub(crate) const ENVELOPE_AAD_LEN: usize = 192;
 
 /// Length in bytes of the masked-key envelope authentication tag.
+#[cfg(feature = "emu")]
 pub(crate) const ENVELOPE_TAG_LEN: usize = 16;
 
 #[cfg(feature = "emu")]
