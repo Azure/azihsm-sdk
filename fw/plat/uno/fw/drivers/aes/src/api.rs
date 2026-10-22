@@ -112,8 +112,9 @@ pub struct AesRequest<'a> {
     pub iv: Option<&'a mut DmaBuf>,
     /// When true (CBC only), the hardware writes the updated IV back.
     pub update_iv: bool,
-    /// Plaintext or ciphertext input. ECB/CBC lengths must be a non-zero
-    /// multiple of 16; CTR lengths may be any non-zero byte count.
+    /// Plaintext or ciphertext input. In every mode, the length must be a
+    /// non-zero multiple of 16; the engine fails CTR commands of any other
+    /// length.
     pub message: &'a DmaBuf,
     /// Output buffer. Must be at least as large as `message`.
     pub result: &'a mut DmaBuf,
@@ -510,7 +511,7 @@ fn validate(req: &AesRequest<'_>) -> HsmResult<()> {
     if req.message.is_empty() {
         return Err(AesError::INVALID_MSG_LEN);
     }
-    if req.mode != AesMode::Ctr && !req.message.len().is_multiple_of(AES_BLOCK_SIZE) {
+    if !req.message.len().is_multiple_of(AES_BLOCK_SIZE) {
         return Err(AesError::INVALID_MSG_LEN);
     }
     if req.result.len() < req.message.len() {
