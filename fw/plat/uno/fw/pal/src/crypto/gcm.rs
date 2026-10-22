@@ -265,17 +265,17 @@ fn write_j0(dst: &mut DmaBuf, iv: &DmaBuf) -> HsmResult<()> {
     Ok(())
 }
 
-/// Increment the 32-bit big-endian counter in the last 4 bytes of a
-/// 16-byte block, wrapping at 2³².  This advances J₀ → J₀ + 1, which
-/// is the first counter value used by AES-CTR.
-fn increment_counter(block: &mut DmaBuf) {
+/// Add `n` to the 32-bit big-endian counter in the last 4 bytes of a
+/// 16-byte block, wrapping at 2³² (GCM's `inc32` applied `n` times).
+/// Adding 1 to J₀ gives the first counter value used by AES-CTR.
+fn add_to_counter(block: &mut DmaBuf, n: u32) {
     let ctr = u32::from_be_bytes([
         block[CTR_LOW_OFFSET],
         block[CTR_LOW_OFFSET + 1],
         block[CTR_LOW_OFFSET + 2],
         block[CTR_LOW_OFFSET + 3],
     ]);
-    block[CTR_LOW_OFFSET..CTR_LOW_OFFSET + 4].copy_from_slice(&ctr.wrapping_add(1).to_be_bytes());
+    block[CTR_LOW_OFFSET..CTR_LOW_OFFSET + 4].copy_from_slice(&ctr.wrapping_add(n).to_be_bytes());
 }
 
 // =============================================================================
@@ -383,11 +383,15 @@ impl UnoHsmPal {
         .await
     }
 
-    /// AES-CTR encrypt/decrypt from `input` into `output`.
+    /// AES-CTR encrypt/decrypt from `input` into `output`, starting at
+    /// counter J₀ + 1.
     ///
-    /// Constructs the initial counter J₀ + 1 from `iv`, then submits a
-    /// single AES-CTR command covering the full input.  Empty input is
-    /// a no-op.
+    /// The AES engine rejects CTR commands whose length isn't a multiple
+    /// of [`AES_BLOCK_SIZE`], so one CTR command covers the whole-block
+    /// prefix, and a partial last block is XORed with the keystream
+    /// block `AES_K(J₀ + 1 + prefix blocks)` from one ECB command. The
+    /// ECB command runs first, so if it fails, `output` is unchanged.
+    /// Empty input is a no-op.
     async fn ctr_crypt(
         &self,
         io: &impl HsmIo,
@@ -403,18 +407,38 @@ impl UnoHsmPal {
             return Err(HsmError::AesGcmInvalidBufferSize);
         }
         self.alloc_scoped_async(io, async |scope| {
+            let prefix_len = input.len() - input.len() % AES_BLOCK_SIZE;
             let ctr = scope.dma_alloc(AES_BLOCK_SIZE)?;
-            write_j0(ctr, iv)?;
-            increment_counter(ctr);
-            self.aes_run(
-                AesMode::Ctr,
-                AesOp::Encrypt,
-                key,
-                Some(ctr),
-                input,
-                &mut output[..input.len()],
-            )
-            .await
+            let keystream = scope.dma_alloc(AES_BLOCK_SIZE)?;
+            if prefix_len < input.len() {
+                let prefix_blocks = u32::try_from(prefix_len / AES_BLOCK_SIZE)
+                    .map_err(|_| HsmError::AesGcmInvalidBufferSize)?;
+                write_j0(ctr, iv)?;
+                add_to_counter(ctr, prefix_blocks.wrapping_add(1));
+                self.aes_run(AesMode::Ecb, AesOp::Encrypt, key, None, ctr, keystream)
+                    .await?;
+            }
+            if prefix_len > 0 {
+                write_j0(ctr, iv)?;
+                add_to_counter(ctr, 1);
+                self.aes_run(
+                    AesMode::Ctr,
+                    AesOp::Encrypt,
+                    key,
+                    Some(ctr),
+                    &input[..prefix_len],
+                    &mut output[..prefix_len],
+                )
+                .await?;
+            }
+            for ((out, inp), ks) in output[prefix_len..input.len()]
+                .iter_mut()
+                .zip(input[prefix_len..].iter())
+                .zip(keystream.iter())
+            {
+                *out = inp ^ ks;
+            }
+            Ok(())
         })
         .await
     }
