@@ -346,17 +346,6 @@ fn masking_key_id_for_scope<P: HsmPal>(
 /// every other scope resolves via [`masking_key_id_for_scope`] and reads
 /// the vault key.  All scopes yield a 32-byte key suitable for the
 /// `key_masking::aead` (AES-GCM-256) masked-key system.
-///
-/// # Platform note
-///
-/// `Session`-scope masking is currently available only on the std/emu PAL.
-/// The Uno (hardware) PAL does not yet provision the per-session masking
-/// key and returns [`HsmError::UnsupportedCmd`] from
-/// `session_masking_key`, so `scope = Session` on masked-key commands
-/// (`UnwrapKey`, `Ecc*`, KDF, …) fails on Uno until session-key masking is
-/// implemented.  Callers targeting hardware should use a persisted scope
-/// (`Local` / `SecurityDomain`) provisioned by `PartFinal` / the SD
-/// lifecycle.
 fn resolve_masking_key<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
@@ -365,7 +354,7 @@ fn resolve_masking_key<'p, P: HsmPal>(
 ) -> HsmResult<&'p DmaBuf> {
     match scope {
         HsmKeyScope::Session => {
-            // The std PAL's `session_masking_key` may return an 80-byte
+            // The PAL's `session_masking_key` may return an 80-byte
             // legacy MBOR `Session` blob key or the 32-byte TBOR `SessionEx`
             // key.  The TBOR masked-key system is AES-256-GCM and requires
             // exactly `SESSION_MASKING_KEY_LEN` (32) bytes, so reject a

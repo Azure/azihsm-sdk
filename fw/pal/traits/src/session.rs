@@ -433,9 +433,9 @@ pub trait HsmSessionManager {
     ///   [`azihsm_fw_core_crypto_aead_envelope`] for per-parameter
     ///   authenticated encryption (and to unseal the `seed_envelope`
     ///   in `OpenSessionFinish`).
-    /// - `masking_key` — 80-byte AES-CBC-256 + HMAC-SHA-384 blob;
-    ///   required for both CO and CU sessions.  Consumed by the
-    ///   `key_masking::cbc` masked-key system, not by the per-session AEAD.
+    /// - `masking_key` — [`SESSION_MASKING_KEY_LEN`] (32 B) AES-256-GCM
+    ///   key; required for both CO and CU sessions.  Consumed by the
+    ///   `key_masking::aead` masked-key system, not by the per-session AEAD.
     /// - `mac_tx_key` — `Some(48 B)` for Authenticated sessions
     ///   (VM→HSM message-MAC key); `None` for PlainText.
     /// - `mac_rx_key` — `Some(48 B)` for Authenticated sessions
