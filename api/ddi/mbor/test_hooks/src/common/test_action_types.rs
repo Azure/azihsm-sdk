@@ -82,6 +82,25 @@ pub enum DdiTestAction {
     GetPrivKey = 25,
     /// Import raw key material.
     RawKeyImport = 26,
+    /// Run one AES-GCM operation on caller-supplied inputs.
+    AesGcm = 27,
+}
+
+/// PAL AES-GCM method run by [`DdiTestAction::AesGcm`].
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[open_enum]
+#[derive(Debug, Ddi, Copy, Clone, PartialEq, Eq)]
+#[repr(u32)]
+#[ddi(enumeration)]
+pub enum DdiAesGcmOp {
+    /// Encrypt with separate source and destination buffers.
+    Encrypt = 1,
+    /// Encrypt in place.
+    EncryptInPlace = 2,
+    /// Decrypt with separate source and destination buffers.
+    Decrypt = 3,
+    /// Decrypt in place.
+    DecryptInPlace = 4,
 }
 
 /// Crash type used by [`DdiTestAction::TriggerCrash`].

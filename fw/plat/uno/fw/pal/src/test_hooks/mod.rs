@@ -26,6 +26,8 @@
 //!   the opcode, and hands the request data to the matching handler.
 //! - [`test_action`] — the `TestAction` (`DdiOp` 2004) handler.
 //! - [`get_priv_key`] / [`raw_key_import`] — FIPS-validation action handlers.
+//! - [`aes_gcm`] — runs one AES-GCM operation on caller-supplied inputs, for
+//!   host known-answer tests.
 //!
 //! # `TestAction` is an in-session command
 //!
@@ -55,6 +57,8 @@
 //! and 2008, so the refactor host package and firmware must be updated
 //! together.
 
+#[cfg(feature = "azihsm_test_hooks")]
+mod aes_gcm;
 #[cfg(feature = "azihsm_test_hooks")]
 mod clear_user_credentials;
 mod common;
