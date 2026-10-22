@@ -18,8 +18,6 @@
 //! digest; ECDSA truncation retains its most significant curve-width bits
 //! when the digest is longer than the curve's order.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::EccAlgo;
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccPrivateKey;
@@ -48,20 +46,16 @@ use crate::commands::common::with_generated_ecc_key;
 use crate::commands::common::CO;
 use crate::commands::common::SCOPE_LOCAL;
 use crate::commands::common::SCOPE_SESSION;
-#[cfg(feature = "emu")]
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
-#[cfg(feature = "emu")]
 use crate::commands::unwrap_key::unwrap;
 
 /// All supported ECC curves used by command tests.
 pub(crate) const ECC_CURVES: [u8; 3] = [ECC_CURVE_P256, ECC_CURVE_P384, ECC_CURVE_P521];
 
 /// `KeyScope::Unspecified` discriminant.
-#[cfg(feature = "emu")]
 const SCOPE_UNSPECIFIED: u8 = 0b000;
 
 /// `KeyScope::Internal` discriminant.
-#[cfg(feature = "emu")]
 const SCOPE_INTERNAL: u8 = 0b101;
 
 /// Generate an ECC key on-device for `curve` under `scope`.
@@ -258,9 +252,8 @@ fn ecc_sign_p521_signature_padding_is_zero() {
 }
 
 /// Signs and verifies with a key masked under the partition-local scope.
-#[cfg(feature = "emu")]
 #[test]
-fn ecc_sign_local_scoped_key_emu() {
+fn ecc_sign_local_scoped_key() {
     for curve in ECC_CURVES {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
@@ -286,9 +279,8 @@ fn ecc_sign_allowed_on_crypto_user_session() {
 }
 
 /// Signs and verifies with an ECC private key imported through `UnwrapKey`.
-#[cfg(feature = "emu")]
 #[test]
-fn ecc_sign_with_unwrapped_key_emu() {
+fn ecc_sign_with_unwrapped_key() {
     for (curve, host_curve) in [
         (ECC_CURVE_P256, EccCurve::P256),
         (ECC_CURVE_P384, EccCurve::P384),
@@ -425,9 +417,8 @@ fn ecc_sign_tampered_masked_key_rejected() {
 }
 
 /// Rejects a valid masked key whose key class is AES rather than ECC private.
-#[cfg(feature = "emu")]
 #[test]
-fn ecc_sign_wrong_key_class_rejected_emu() {
+fn ecc_sign_wrong_key_class_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let aes = unwrap(&ctx, session.session_id, KEY_CLASS_AES, &[0x54; 32]);
@@ -466,9 +457,8 @@ fn ecc_sign_mismatched_session_id_rejected() {
 }
 
 /// Rejects `KeyScope::Unspecified` for a caller-generated ECC key.
-#[cfg(feature = "emu")]
 #[test]
-fn ecc_generate_key_unspecified_scope_rejected_emu() {
+fn ecc_generate_key_unspecified_scope_rejected() {
     for curve in ECC_CURVES {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);
@@ -487,9 +477,8 @@ fn ecc_generate_key_unspecified_scope_rejected_emu() {
 }
 
 /// Rejects the firmware-internal scope for a caller-generated ECC key.
-#[cfg(feature = "emu")]
 #[test]
-fn ecc_generate_key_internal_scope_rejected_emu() {
+fn ecc_generate_key_internal_scope_rejected() {
     for curve in ECC_CURVES {
         let ctx = TestCtx::new();
         let session = finalized_co_session(&ctx);

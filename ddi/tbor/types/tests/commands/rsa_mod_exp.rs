@@ -16,8 +16,6 @@
 //! `y` input and `x` output; `azihsm_crypto` (OpenSSL) is big-endian
 //! native, so the tests reverse each operand at the boundary.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::Encrypter;
 use azihsm_crypto::ExportableKey;
 use azihsm_crypto::Key;

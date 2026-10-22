@@ -13,8 +13,6 @@
 //! [`ecc_sign`](super::ecc_sign) and [`ecdh_derive`](super::ecdh_derive)
 //! tests, which build on this command.
 
-#![cfg(feature = "emu")]
-
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
 use azihsm_ddi_tbor_test_harness::TestCtx;

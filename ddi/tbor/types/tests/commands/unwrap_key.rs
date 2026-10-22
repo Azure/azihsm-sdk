@@ -20,8 +20,6 @@
 //!   tightest on the per-IO DMA budget; exercises the transient-vault
 //!   unwrap path that keeps it within 8 KB.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::*;
