@@ -443,7 +443,7 @@ fn key_report_rejected_on_cu_session() {
     // before the state/scope gates) rejects a CU session.
     let req = TborKeyReportReq {
         session_id: session.session_id,
-        masked_key: vec![0u8; 180],
+        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::InvalidPermissions);
@@ -462,7 +462,7 @@ fn key_report_rejected_on_default_psk() {
 
     let req = TborKeyReportReq {
         session_id: session.session_id(),
-        masked_key: vec![0u8; 180],
+        masked_key: vec![0u8; MASKED_SEALING_KEY_LEN],
         report_data: sample_report_data(),
     };
     ctx.expect_fw_reject(&req, TborStatus::DefaultPskMustRotate);
