@@ -35,6 +35,11 @@ use openssl::sign::Verifier;
 use openssl::symm::Cipher;
 use serial_test::serial;
 
+/// The engine's answers to an armed derive size query (core `method_table.rs`):
+/// the masked-blob buffer size, and the hint in `output_file` mode.
+const MASKED_KEY_MAX_BUFFER: usize = 8192;
+const FILE_OUTPUT_SIZE_HINT: usize = 1;
+
 /// Write owner-only (0600) key material.
 fn write_secret(path: &std::path::Path, data: &[u8]) {
     use std::io::Write;
@@ -497,7 +502,10 @@ fn capi_derive_roundtrip(e: *mut ffi::ENGINE, dir: &std::path::Path, curve: &str
             1,
             "derive size query"
         );
-        assert_eq!(len, 8192, "size query must report the blob max for {curve}");
+        assert_eq!(
+            len, MASKED_KEY_MAX_BUFFER,
+            "size query must report the blob max for {curve}"
+        );
         let mut buf = vec![0u8; len];
         assert_eq!(ffi::EVP_PKEY_derive(dctx, buf.as_mut_ptr(), &mut len), 1);
         assert!(len > 0, "empty masked secret for {curve}");
@@ -515,9 +523,12 @@ fn capi_derive_roundtrip(e: *mut ffi::ENGINE, dir: &std::path::Path, curve: &str
         );
         let mut n = 0usize;
         assert_eq!(ffi::EVP_PKEY_derive(fctx, std::ptr::null_mut(), &mut n), 1);
-        assert_eq!(n, 1, "file-mode size query must report 1");
-        let mut one = [0u8; 1];
-        assert_eq!(ffi::EVP_PKEY_derive(fctx, one.as_mut_ptr(), &mut n), 1);
+        assert_eq!(
+            n, FILE_OUTPUT_SIZE_HINT,
+            "file-mode size query must report the hint"
+        );
+        let mut hint_buf = [0u8; FILE_OUTPUT_SIZE_HINT];
+        assert_eq!(ffi::EVP_PKEY_derive(fctx, hint_buf.as_mut_ptr(), &mut n), 1);
         assert_eq!(n, 0, "file mode must return no bytes");
         assert!(
             out.is_file() && std::fs::metadata(&out).unwrap().len() > 0,
@@ -605,7 +616,7 @@ fn hkdf_via_engine_capi() {
     unsafe {
         // HKDF on the blob, buffer mode, across digests (the HMAC kind follows
         // the digest). The armed size query reports the shared masked-blob
-        // buffer size (MASKED_KEY_MAX_BUFFER = 8192), which the buffer must fit.
+        // buffer size (MASKED_KEY_MAX_BUFFER), which the buffer must fit.
         for (md, bits) in [("SHA256", "256"), ("SHA384", "384"), ("SHA512", "512")] {
             let kctx = ffi::EVP_PKEY_CTX_new_id(ffi::NID_hkdf as std::ffi::c_int, e);
             assert!(!kctx.is_null(), "EVP_PKEY_CTX_new_id(NID_hkdf, engine)");
@@ -630,7 +641,10 @@ fn hkdf_via_engine_capi() {
                 1,
                 "HKDF size query ({md})"
             );
-            assert_eq!(klen, 8192, "size query must report the blob max ({md})");
+            assert_eq!(
+                klen, MASKED_KEY_MAX_BUFFER,
+                "size query must report the blob max ({md})"
+            );
             let mut kbuf = vec![0u8; klen];
             assert_eq!(
                 ffi::EVP_PKEY_derive(kctx, kbuf.as_mut_ptr(), &mut klen),
@@ -661,9 +675,12 @@ fn hkdf_via_engine_capi() {
         }
         let mut n = 0usize;
         assert_eq!(ffi::EVP_PKEY_derive(fctx, std::ptr::null_mut(), &mut n), 1);
-        assert_eq!(n, 1, "file-mode size query must report 1");
-        let mut one = [0u8; 1];
-        assert_eq!(ffi::EVP_PKEY_derive(fctx, one.as_mut_ptr(), &mut n), 1);
+        assert_eq!(
+            n, FILE_OUTPUT_SIZE_HINT,
+            "file-mode size query must report the hint"
+        );
+        let mut hint_buf = [0u8; FILE_OUTPUT_SIZE_HINT];
+        assert_eq!(ffi::EVP_PKEY_derive(fctx, hint_buf.as_mut_ptr(), &mut n), 1);
         assert_eq!(n, 0, "file mode must return no bytes");
         assert!(
             out.is_file() && std::fs::metadata(&out).unwrap().len() > 0,
@@ -1293,9 +1310,9 @@ fn capi_derive_aes_blob(e: *mut ffi::ENGINE, dir: &std::path::Path, bits: u32) -
         }
         let mut n = 0usize;
         assert_eq!(ffi::EVP_PKEY_derive(kctx, std::ptr::null_mut(), &mut n), 1);
-        let mut one = [0u8; 1];
+        let mut hint_buf = [0u8; FILE_OUTPUT_SIZE_HINT];
         assert_eq!(
-            ffi::EVP_PKEY_derive(kctx, one.as_mut_ptr(), &mut n),
+            ffi::EVP_PKEY_derive(kctx, hint_buf.as_mut_ptr(), &mut n),
             1,
             "HKDF"
         );

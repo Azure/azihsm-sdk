@@ -96,13 +96,16 @@ impl DestroyHandler for AzihsmDestroy {
     }
 }
 
+/// `v_check` result for an incompatible dynamic-engine version.
+const DYNAMIC_VERSION_INCOMPATIBLE: c_ulong = 0;
+
 #[unsafe(no_mangle)]
 #[allow(unsafe_code)]
 pub extern "C" fn v_check(v: c_ulong) -> c_ulong {
     if v >= ffi::OSSL_DYNAMIC_OLDEST_CONST {
         ffi::OSSL_DYNAMIC_VERSION_CONST
     } else {
-        0
+        DYNAMIC_VERSION_INCOMPATIBLE
     }
 }
 
