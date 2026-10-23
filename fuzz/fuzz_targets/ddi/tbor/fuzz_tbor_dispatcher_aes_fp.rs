@@ -67,6 +67,8 @@ struct FuzzInput {
 
 const MAX_FUZZ_MSG_LEN: usize = AES_MSG_MAX_LEN + 1;
 
+/// Concatenate source buffers, retaining at most one byte beyond the TBOR
+/// message limit so oversized inputs exercise length validation.
 fn message_from_sources(source_buffers: &[Vec<u8>]) -> Vec<u8> {
     let mut msg = Vec::new();
     for source in source_buffers {
@@ -79,7 +81,10 @@ fn message_from_sources(source_buffers: &[Vec<u8>]) -> Vec<u8> {
     msg
 }
 
+/// Derive an AES-CBC IV from the selected legacy GCM or XTS request fields
+/// so those fields continue to influence the TBOR request.
 fn iv_from_input(input: &FuzzInput) -> [u8; AES_IV_LEN] {
+    /// XOR input bytes into the IV, wrapping at the AES block boundary.
     fn fold(iv: &mut [u8; AES_IV_LEN], bytes: &[u8]) {
         for (index, byte) in bytes.iter().enumerate() {
             iv[index % AES_IV_LEN] ^= byte;
@@ -113,6 +118,8 @@ fn iv_from_input(input: &FuzzInput) -> [u8; AES_IV_LEN] {
     }
 }
 
+/// Append the selected legacy GCM or XTS request fields to the fuzzed
+/// masked-key bytes for requests that do not generate a valid key.
 fn legacy_masked_key(input: &FuzzInput) -> Vec<u8> {
     let mut key = input.masked_key.clone();
     match input.aes_type {
@@ -138,6 +145,8 @@ fn legacy_masked_key(input: &FuzzInput) -> Vec<u8> {
     key
 }
 
+/// Scatter the response across destination buffers, extending the last buffer
+/// if needed, and assert that concatenating them preserves every response byte.
 fn verify_response_buffers(response: &[u8], destination_buffers: &mut Vec<Vec<u8>>) {
     if destination_buffers.is_empty() {
         destination_buffers.push(Vec::new());

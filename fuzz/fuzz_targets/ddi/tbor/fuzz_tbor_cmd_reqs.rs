@@ -33,6 +33,8 @@ enum Command {
     HmacGenerateKey,
 }
 
+/// Advance the SplitMix64 state and return a deterministic pseudorandom value
+/// for selecting TBOR commands and key scopes.
 fn next_random(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E3779B97F4A7C15);
     let mut value = *state;
