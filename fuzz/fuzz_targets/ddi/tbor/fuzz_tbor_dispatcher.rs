@@ -9,9 +9,6 @@ mod common;
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-use azihsm_ddi_tbor_types::ECC_CURVE_P521;
 use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
 use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
@@ -119,12 +116,7 @@ fuzz_target!(|input: FuzzInput| {
             && key_label_is_valid;
         if expect_success {
             let resp = result.expect("valid EccGenerateKey request should succeed");
-            let wire_coord_len = match req.curve {
-                ECC_CURVE_P256 => 32,
-                ECC_CURVE_P384 => 48,
-                ECC_CURVE_P521 => 68,
-                _ => unreachable!("valid request uses a supported curve"),
-            };
+            let wire_coord_len = input.curve.wire_coord_len();
             assert_eq!(resp.pub_key.len(), wire_coord_len * 2);
             assert_eq!(resp.masked_key.len(), 228 + wire_coord_len);
             assert!(resp.pub_key.iter().any(|byte| *byte != 0));

@@ -166,6 +166,11 @@ impl EccCurve {
         coord_sizes(self.wire_pub_key_len()).1
     }
 
+    /// Wire coordinate length in bytes, including padding (P-521: 66 -> 68 bytes).
+    pub fn wire_coord_len(self) -> usize {
+        coord_sizes(self.wire_pub_key_len()).0
+    }
+
     /// Largest digest the firmware zero-extends into the ECDSA field.
     pub fn max_digest_len(self) -> usize {
         match self {
