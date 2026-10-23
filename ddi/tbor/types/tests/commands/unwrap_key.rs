@@ -20,15 +20,16 @@
 //!   tightest on the per-IO DMA budget; exercises the transient-vault
 //!   unwrap path that keeps it within 8 KB.
 
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
+
 use azihsm_crypto::*;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::*;
 
-use crate::commands::sd_sealing_key_gen::finalized_co_session;
-
 use crate::commands::common::SCOPE_LOCAL;
-use std::thread;
-use std::time::{Duration, Instant};
+use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// `HsmVaultKeyKind::VarLenHmacSha256` discriminant.
 const KIND_HMAC_SHA256: u8 = 32;
