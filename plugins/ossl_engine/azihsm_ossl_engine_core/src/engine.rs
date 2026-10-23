@@ -6,8 +6,11 @@
 use std::ffi::CStr;
 use std::ffi::c_char;
 use std::ffi::c_int;
+use std::ffi::c_long;
+use std::ffi::c_uint;
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::ptr::null;
 use std::ptr::null_mut;
 
 use azihsm_ossl_engine_sys as ffi;
@@ -135,6 +138,29 @@ impl Engine {
             unsafe { ffi::ENGINE_set_load_privkey_function(self.ptr, Some(c_load_privkey::<H>)) },
             EngineError::SetLoadPrivKeyFailed,
         )
+    }
+
+    /// Register `H`'s control commands, which `ENGINE_ctrl_cmd_string` and
+    /// `openssl engine -t -post CMD:ARG` run by name.
+    #[allow(unsafe_code)]
+    pub fn set_ctrl<H: CtrlHandler>(&self) -> EngineResult<()> {
+        // OpenSSL reads the table up to the first entry without a name.
+        if !H::COMMANDS.last().is_some_and(|c| c.cmd_name.is_null()) {
+            return Err("ctrl command table must end with CMD_DEFN_END".into());
+        }
+        // SAFETY: self.ptr is valid (from NonNull); COMMANDS is 'static and
+        // terminated (checked above); c_ctrl::<H> has the ENGINE_CTRL_FUNC_PTR
+        // signature and is a 'static fn item.
+        unsafe {
+            ossl_check(
+                ffi::ENGINE_set_cmd_defns(self.ptr, H::COMMANDS.as_ptr()),
+                "ENGINE_set_cmd_defns failed",
+            )?;
+            ossl_check(
+                ffi::ENGINE_set_ctrl_function(self.ptr, Some(c_ctrl::<H>)),
+                "ENGINE_set_ctrl_function failed",
+            )
+        }
     }
 
     /// Set the engine's `EC_KEY_METHOD`. Required before
@@ -319,6 +345,99 @@ unsafe fn load_privkey_inner<H: LoadPrivKeyHandler>(
     H::load(&engine, key_id)
 }
 
+/// A control command taking a string argument (`ENGINE_CMD_FLAG_STRING`), for
+/// [`CtrlHandler::COMMANDS`].
+pub const fn string_cmd(
+    num: c_uint,
+    name: &'static CStr,
+    desc: &'static CStr,
+) -> ffi::ENGINE_CMD_DEFN {
+    ffi::ENGINE_CMD_DEFN {
+        cmd_num: num,
+        cmd_name: name.as_ptr(),
+        cmd_desc: desc.as_ptr(),
+        cmd_flags: ffi::ENGINE_CMD_FLAG_STRING_CONST,
+    }
+}
+
+/// The entry that ends a [`CtrlHandler::COMMANDS`] table.
+pub const CMD_DEFN_END: ffi::ENGINE_CMD_DEFN = ffi::ENGINE_CMD_DEFN {
+    cmd_num: 0,
+    cmd_name: null(),
+    cmd_desc: null(),
+    cmd_flags: 0,
+};
+
+/// Engine control commands, all taking a string argument. Implement on a
+/// marker type and pass it as the type parameter to [`Engine::set_ctrl`].
+pub trait CtrlHandler {
+    /// The commands ([`string_cmd`] entries numbered from
+    /// `ffi::ENGINE_CMD_BASE`), ended by [`CMD_DEFN_END`].
+    const COMMANDS: &'static [ffi::ENGINE_CMD_DEFN];
+
+    /// Run command `cmd`, one of [`COMMANDS`](Self::COMMANDS), with `arg`.
+    fn ctrl(engine: &Engine, cmd: c_uint, arg: &CStr) -> EngineResult<()>;
+}
+
+/// C trampoline for `ENGINE_set_ctrl_function`. Catches panics and
+/// dispatches to `H::ctrl`.
+///
+/// # Safety
+/// Called only by OpenSSL's `ENGINE_ctrl`, per the `ENGINE_CTRL_FUNC_PTR`
+/// contract.
+#[allow(unsafe_code)]
+unsafe extern "C" fn c_ctrl<H: CtrlHandler>(
+    e: *mut ffi::ENGINE,
+    cmd: c_int,
+    i: c_long,
+    p: *mut c_void,
+    f: Option<unsafe extern "C" fn()>,
+) -> c_int {
+    catch_panic(
+        // SAFETY: the arguments are the ones OpenSSL passes to the engine's
+        // ctrl function.
+        || result_to_int(unsafe { ctrl_inner::<H>(e, cmd, i, p, f) }),
+        RetCode::Fail.into(),
+    )
+}
+
+/// Inner body of [`c_ctrl`]: accept only `H`'s commands, called the way
+/// `ENGINE_ctrl_cmd_string` calls a string command (`i` 0, no callback, `p`
+/// the argument).
+///
+/// # Safety
+/// `e` must be the `ENGINE` the ctrl runs on and `p` a valid C string (or
+/// NULL).
+#[allow(unsafe_code)]
+unsafe fn ctrl_inner<H: CtrlHandler>(
+    e: *mut ffi::ENGINE,
+    cmd: c_int,
+    i: c_long,
+    p: *mut c_void,
+    f: Option<unsafe extern "C" fn()>,
+) -> EngineResult<()> {
+    let nn = NonNull::new(e).ok_or(EngineError::NullParam("engine"))?;
+    let cmd = c_uint::try_from(cmd)
+        .ok()
+        .filter(|&num| {
+            H::COMMANDS
+                .iter()
+                .any(|c| !c.cmd_name.is_null() && c.cmd_num == num)
+        })
+        .ok_or_else(|| EngineError::Other(format!("unsupported engine ctrl command {cmd}")))?;
+    if i != 0 || f.is_some() {
+        return Err("a string ctrl command takes no number or callback".into());
+    }
+    if p.is_null() {
+        return Err(EngineError::NullParam("ctrl argument"));
+    }
+    // SAFETY: `e` is non-null (checked) and the ENGINE the ctrl runs on.
+    let engine = unsafe { Engine::from_ptr(nn) };
+    // SAFETY: `p` is non-null (checked) and a valid C string per contract.
+    let arg = unsafe { CStr::from_ptr(p.cast()) };
+    H::ctrl(&engine, cmd, arg)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -384,5 +503,70 @@ mod tests {
 
         // SAFETY: same as above.
         unsafe { ffi::ENGINE_free(e.as_ptr()) };
+    }
+
+    /// Number of [`OkCtrl`]'s command.
+    const TEST_CMD: c_uint = ffi::ENGINE_CMD_BASE;
+
+    /// One command, accepting only the argument `ok`.
+    struct OkCtrl;
+    impl CtrlHandler for OkCtrl {
+        const COMMANDS: &'static [ffi::ENGINE_CMD_DEFN] = &[
+            string_cmd(TEST_CMD, c"TEST_CMD", c"test command"),
+            CMD_DEFN_END,
+        ];
+
+        fn ctrl(_: &Engine, cmd: c_uint, arg: &CStr) -> EngineResult<()> {
+            if cmd == TEST_CMD && arg == c"ok" {
+                Ok(())
+            } else {
+                Err("unexpected ctrl call".into())
+            }
+        }
+    }
+
+    /// A command table missing [`CMD_DEFN_END`].
+    struct UnterminatedCtrl;
+    impl CtrlHandler for UnterminatedCtrl {
+        const COMMANDS: &'static [ffi::ENGINE_CMD_DEFN] =
+            &[string_cmd(TEST_CMD, c"TEST_CMD", c"test command")];
+
+        fn ctrl(_: &Engine, _: c_uint, _: &CStr) -> EngineResult<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn set_ctrl_runs_string_commands() {
+        // SAFETY: ENGINE_new / ENGINE_free are standard OpenSSL entry points.
+        let raw = unsafe { ffi::ENGINE_new() };
+        let nn = NonNull::new(raw).expect("ENGINE_new returned NULL");
+        // SAFETY: nn is non-null and owned until ENGINE_free below.
+        let e = unsafe { Engine::from_ptr(nn) };
+        assert!(e.set_ctrl::<UnterminatedCtrl>().is_err());
+        e.set_ctrl::<OkCtrl>().unwrap();
+
+        let ok = RetCode::Success as c_int;
+        let num = c_int::try_from(TEST_CMD).unwrap();
+        let arg = c"ok".as_ptr().cast_mut().cast::<c_void>();
+        // SAFETY: raw is a valid ENGINE; names and arguments are NUL-terminated.
+        unsafe {
+            // By name, as ENGINE_ctrl_cmd_string and `openssl engine -post` run it.
+            let by_name = |name: &CStr, arg: &CStr| {
+                ffi::ENGINE_ctrl_cmd_string(raw, name.as_ptr(), arg.as_ptr(), 0)
+            };
+            assert_eq!(by_name(c"TEST_CMD", c"ok"), ok);
+            assert_ne!(by_name(c"TEST_CMD", c"bad"), ok, "handler error");
+            assert_ne!(by_name(c"NO_SUCH_CMD", c"ok"), ok, "unknown name");
+            // By number: only the command's own, with nothing but a string.
+            assert_eq!(ffi::ENGINE_ctrl(raw, num, 0, arg, None), ok);
+            let other = num.checked_add(1).unwrap();
+            assert_ne!(ffi::ENGINE_ctrl(raw, other, 0, arg, None), ok, "unknown");
+            assert_ne!(ffi::ENGINE_ctrl(raw, num, 1, arg, None), ok, "a number");
+            assert_ne!(ffi::ENGINE_ctrl(raw, num, 0, null_mut(), None), ok, "NULL");
+            ffi::ERR_clear_error();
+            ffi::ENGINE_free(raw);
+        }
     }
 }

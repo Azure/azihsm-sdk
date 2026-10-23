@@ -1,18 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Parser for `azihsm://` key URIs, used by `ENGINE_load_private_key` and the
-//! AES ciphers' key control.
+//! Parser for `azihsm://` key URIs, used by `ENGINE_load_private_key`, the
+//! AES ciphers' key control and the `GENERATE_KEY` command.
 //!
 //! Grammar (mirrors the OpenSSL 3.x provider's STORE):
 //!
 //! ```text
-//! azihsm://<masked-key-file-path>;type=<ec|rsa|rsa-pss|aes>
+//! azihsm://<masked-key-file-path>;type=<ec|rsa|rsa-pss|aes|aes-gcm|aes-xts>[;bits=<n>]
 //! ```
 //!
 //! The identifier is a filesystem path to a masked-key blob; `type=` is
-//! mandatory. `aes` keys are not private keys: they are attached to a cipher
+//! mandatory. AES keys are not private keys: they are attached to a cipher
 //! context (see [`crate::aes`]), and `ENGINE_load_private_key` rejects them.
+//! `bits=`, the key size, applies to AES keys only.
 //!
 //! Note: unlike the provider's STORE — which ignores unrecognized attributes —
 //! this parser is stricter and rejects unknown or malformed attributes, so a
@@ -32,7 +33,18 @@ pub enum KeyType {
     Ec,
     Rsa,
     RsaPss,
-    Aes,
+    Aes(AesKind),
+}
+
+/// The HSM's AES key kinds; a key serves only its own kind's cipher mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AesKind {
+    /// `type=aes`: the HSM's plain AES key, used by AES-CBC.
+    Cbc,
+    /// `type=aes-gcm`.
+    Gcm,
+    /// `type=aes-xts`: an AES-XTS key pair.
+    Xts,
 }
 
 impl FromStr for KeyType {
@@ -45,7 +57,9 @@ impl FromStr for KeyType {
             "ec" => Ok(KeyType::Ec),
             "rsa" => Ok(KeyType::Rsa),
             "rsa-pss" => Ok(KeyType::RsaPss),
-            "aes" => Ok(KeyType::Aes),
+            "aes" => Ok(KeyType::Aes(AesKind::Cbc)),
+            "aes-gcm" => Ok(KeyType::Aes(AesKind::Gcm)),
+            "aes-xts" => Ok(KeyType::Aes(AesKind::Xts)),
             _ => Err(EngineError::Other(format!(
                 "unknown azihsm key type: {value}"
             ))),
@@ -60,6 +74,8 @@ pub struct KeyUri {
     pub masked_key_path: PathBuf,
     /// Declared key type.
     pub key_type: KeyType,
+    /// Declared key size in bits (`bits=`, AES keys only).
+    pub bits: Option<u32>,
 }
 
 /// Parse an `azihsm://` key URI.
@@ -74,6 +90,7 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
     }
 
     let mut key_type = None;
+    let mut bits = None;
     for attr in attrs.split(';').filter(|a| !a.is_empty()) {
         let (key, value) = attr
             .split_once('=')
@@ -82,6 +99,11 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
         // (which compares with `strcasecmp`).
         match key.to_ascii_lowercase().as_str() {
             "type" => key_type = Some(value.parse::<KeyType>()?),
+            "bits" => {
+                bits = Some(value.parse::<u32>().map_err(|_| {
+                    EngineError::Other(format!("azihsm URI bits= is not a number: {value}"))
+                })?);
+            }
             _ => {
                 return Err(EngineError::Other(format!(
                     "unknown azihsm URI attribute: {key}"
@@ -92,10 +114,14 @@ pub fn parse(uri: &str) -> EngineResult<KeyUri> {
 
     let key_type = key_type
         .ok_or_else(|| EngineError::Other("azihsm URI missing required type= attribute".into()))?;
+    if bits.is_some() && !matches!(key_type, KeyType::Aes(_)) {
+        return Err("azihsm URI bits= applies to AES keys only".into());
+    }
 
     Ok(KeyUri {
         masked_key_path: PathBuf::from(path),
         key_type,
+        bits,
     })
 }
 
@@ -165,7 +191,35 @@ mod tests {
 
     #[test]
     fn parses_aes() {
-        assert_eq!(parse("azihsm://k;type=AES").unwrap().key_type, KeyType::Aes);
+        let u = parse("azihsm://k;type=AES").unwrap();
+        assert_eq!(u.key_type, KeyType::Aes(AesKind::Cbc));
+        assert_eq!(u.bits, None);
+    }
+
+    #[test]
+    fn parses_aes_kinds_and_bits() {
+        for (uri, kind, bits) in [
+            ("azihsm://k;type=aes;bits=128", AesKind::Cbc, 128),
+            ("azihsm://k;BITS=256;type=Aes-GCM", AesKind::Gcm, 256),
+            ("azihsm://k;type=AES-XTS;bits=512", AesKind::Xts, 512),
+        ] {
+            let u = parse(uri).unwrap();
+            assert_eq!(u.key_type, KeyType::Aes(kind), "{uri}");
+            assert_eq!(u.bits, Some(bits), "{uri}");
+        }
+    }
+
+    #[test]
+    fn rejects_bad_bits() {
+        for uri in [
+            "azihsm://k;type=aes;bits=",
+            "azihsm://k;type=aes;bits=abc",
+            "azihsm://k;type=aes;bits=-128",
+            "azihsm://k;type=ec;bits=256",
+            "azihsm://k;type=rsa;bits=2048",
+        ] {
+            assert!(parse(uri).is_err(), "{uri}");
+        }
     }
 
     #[test]

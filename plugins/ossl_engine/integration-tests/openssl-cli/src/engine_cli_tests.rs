@@ -114,3 +114,9 @@ fn derive_ec_key_via_engine() {
 fn hkdf_via_engine() {
     run_cli_suite("hkdf", "testfiles/hkdf");
 }
+
+#[test]
+#[serial]
+fn generate_aes_key_via_engine() {
+    run_cli_suite("generate_key", "testfiles/generate_key");
+}
