@@ -26,9 +26,10 @@ use azihsm_ddi_tbor_types::*;
 
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
-/// `KeyScope::Local` discriminant — masks the recovered key under the
-/// partition-local masking key.
-const SCOPE_LOCAL: u8 = 0b011;
+use crate::commands::common::SCOPE_LOCAL;
+use std::thread;
+use std::time::{Duration, Instant};
+
 /// `HsmVaultKeyKind::VarLenHmacSha256` discriminant.
 const KIND_HMAC_SHA256: u8 = 32;
 
@@ -96,10 +97,7 @@ pub(crate) fn unwrap_with_usage(
     usage: u64,
     key: &[u8],
 ) -> TborUnwrapKeyResp {
-    let hsm_pub = ctx
-        .tbor(&TborGetUnwrappingKeyReq { session_id })
-        .expect("GetUnwrappingKey")
-        .pub_key;
+    let hsm_pub = get_unwrapping_key(ctx, session_id);
     let wrapped = rsa_aes_wrap(&hsm_pub, key, HashAlgo::sha256());
     ctx.tbor(&TborUnwrapKeyReq {
         session_id,
@@ -143,6 +141,29 @@ fn rsa_4k_unwrap_roundtrip(crt: bool) {
     );
 }
 
+/// Retrieves the unwrapping public key, retrying while generation is pending.
+fn get_unwrapping_key(ctx: &TestCtx, session_id: u16) -> Vec<u8> {
+    use azihsm_ddi_interface::DdiError;
+
+    let timeout = Duration::from_secs(30);
+    let retry_delay = Duration::from_millis(100);
+    let start = Instant::now();
+
+    loop {
+        match ctx.tbor(&TborGetUnwrappingKeyReq { session_id }) {
+            Ok(resp) => return resp.pub_key.to_vec(),
+            Err(DdiError::TborStatus(status))
+                if status == TborStatus::PendingKeyGeneration && start.elapsed() < timeout =>
+            {
+                thread::sleep(retry_delay);
+            }
+            Err(err) => {
+                panic!("GetUnwrappingKey failed: {err:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn unwrap_key_rsa_4k() {
     rsa_4k_unwrap_roundtrip(false);
@@ -173,12 +194,7 @@ fn unwrap_key_aes() {
 fn unwrap_key_all_oaep_hashes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let hsm_pub = ctx
-        .tbor(&TborGetUnwrappingKeyReq {
-            session_id: session.session_id,
-        })
-        .expect("GetUnwrappingKey")
-        .pub_key;
+    let hsm_pub = get_unwrapping_key(&ctx, session.session_id);
     let ecc_key = EccPrivateKey::from_curve(EccCurve::P256).expect("generate ECC key");
     let ecc_der = ecc_key.to_vec().expect("export ECC key");
     let (x_be, y_be) = ecc_key.coord_vec().expect("export ECC public coordinates");
@@ -233,12 +249,7 @@ fn unwrap_key_all_oaep_hashes() {
 fn unwrap_key_unknown_oaep_hash_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
-    let hsm_pub = ctx
-        .tbor(&TborGetUnwrappingKeyReq {
-            session_id: session.session_id,
-        })
-        .expect("GetUnwrappingKey")
-        .pub_key;
+    let hsm_pub = get_unwrapping_key(&ctx, session.session_id);
     let wrapped_blob = rsa_aes_wrap(&hsm_pub, &[0x42u8; 32], HashAlgo::sha256());
     ctx.expect_fw_reject(
         &TborUnwrapKeyReq {
@@ -308,12 +319,7 @@ fn unwrap_key_rejects_invalid_usage_for_class() {
     // Request `sign`+`verify` for an AES key — AES only permits
     // `encrypt`+`decrypt`, so the device must reject the import.
     let aes_key = [0x42u8; 32];
-    let hsm_pub = ctx
-        .tbor(&TborGetUnwrappingKeyReq {
-            session_id: session.session_id,
-        })
-        .expect("GetUnwrappingKey")
-        .pub_key;
+    let hsm_pub = get_unwrapping_key(&ctx, session.session_id);
     let wrapped = rsa_aes_wrap(&hsm_pub, &aes_key, HashAlgo::sha256());
     let req = TborUnwrapKeyReq {
         session_id: session.session_id,
