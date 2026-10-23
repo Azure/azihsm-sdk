@@ -159,6 +159,7 @@ fn main() {
         .allowlist_var("CRYPTO_EX_INDEX_EC_KEY")
         .allowlist_var("OPENSSL_INIT_NO_ATEXIT")
         .allowlist_var("ENGINE_CMD_FLAG_.*")
+        .allowlist_var("ENGINE_CMD_BASE")
         .layout_tests(false)
         .generate()
         .expect("bindgen failed");
