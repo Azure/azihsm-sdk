@@ -32,10 +32,8 @@ use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use zeroize::Zeroizing;
 
+use crate::aes::AES_KEY_BITS;
 use crate::engine_impl::engine_data_slot;
-
-/// AES key sizes an HKDF derive may produce, in bits.
-const AES_KEY_BITS: [u32; 3] = [128, 192, 256];
 
 /// Marker type carrying the engine's HKDF logic (see [`HkdfHandler`]).
 pub(crate) struct AzihsmHkdf;

@@ -1452,6 +1452,87 @@ fn aes_cbc_via_engine_capi() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `AZIHSM_CMD_GENERATE_KEY`, read from the engine's public C header as a C
+/// application would get it.
+fn cmd_generate_key() -> CString {
+    let header = include_str!("../../../inc/azihsm_ossl_engine.h");
+    let name = header
+        .lines()
+        .find_map(|l| l.strip_prefix("#define AZIHSM_CMD_GENERATE_KEY "))
+        .expect("AZIHSM_CMD_GENERATE_KEY define");
+    CString::new(name.trim().trim_matches('"')).unwrap()
+}
+
+/// Run the `GENERATE_KEY` ctrl command on engine `e` with `uri`; `true` on
+/// success (errors are cleared).
+#[allow(unsafe_code)]
+fn capi_generate_key(e: *mut ffi::ENGINE, uri: &str) -> bool {
+    let uri = CString::new(uri).unwrap();
+    // SAFETY: e is a live ENGINE; name and argument are NUL-terminated.
+    unsafe {
+        let rc = ffi::ENGINE_ctrl_cmd_string(e, cmd_generate_key().as_ptr(), uri.as_ptr(), 0);
+        ffi::ERR_clear_error();
+        rc == 1
+    }
+}
+
+/// AES key generation over the real C ABI (`ENGINE_ctrl_cmd_string` with the
+/// header's command name): generated AES-128/192/256 keys round-trip through
+/// the AES-CBC cipher of their size, GCM and XTS keys are written but do not
+/// attach to AES-CBC, and bad sizes and types fail without writing a file.
+#[test]
+#[serial]
+#[allow(unsafe_code)]
+fn generate_key_via_engine_capi() {
+    let engine_so = std::env::var("ENGINE_SO").expect("ENGINE_SO must point to the engine .so");
+    let dir = setup_keymat();
+    let e = open_dynamic_engine(&engine_so);
+    let iv = vec![0x42u8; Cipher::aes_128_cbc().iv_len().unwrap()];
+    let msg = pattern(4113);
+
+    for (nid, bits) in [
+        (ffi::NID_aes_128_cbc, 128u32),
+        (ffi::NID_aes_192_cbc, 192),
+        (ffi::NID_aes_256_cbc, 256),
+    ] {
+        let blob = dir.join(format!("generated_aes_{bits}.bin"));
+        let uri = format!("azihsm://{};type=aes;bits={bits}", blob.display());
+        assert!(capi_generate_key(e, &uri), "{uri}");
+        let ct = capi_aes_cbc(e, nid, &blob, true, &iv, &msg, 1000).expect("HSM AES-CBC encrypt");
+        let pt = capi_aes_cbc(e, nid, &blob, false, &iv, &ct, 1000).expect("HSM AES-CBC decrypt");
+        assert_eq!(pt, msg, "{bits}-bit generated key round trip");
+    }
+    for ty in ["aes-gcm", "aes-xts"] {
+        let blob = dir.join(format!("generated_{ty}.bin"));
+        let uri = format!("azihsm://{};type={ty}", blob.display());
+        assert!(capi_generate_key(e, &uri), "{uri}");
+        assert!(std::fs::metadata(&blob).unwrap().len() > 0, "{uri}");
+        assert!(
+            capi_aes_cbc(e, ffi::NID_aes_256_cbc, &blob, true, &iv, b"x", 1000).is_none(),
+            "a {ty} key must not attach to AES-256-CBC"
+        );
+    }
+
+    let bad = dir.join("generated_bad.bin");
+    for attrs in [
+        "type=aes;bits=100",
+        "type=aes-gcm;bits=128",
+        "type=aes-xts;bits=256",
+        "type=ec",
+    ] {
+        let uri = format!("azihsm://{};{attrs}", bad.display());
+        assert!(!capi_generate_key(e, &uri), "{uri}");
+        assert!(!bad.exists(), "{uri} must not write a file");
+    }
+
+    // SAFETY: e is the initialized ENGINE from open_dynamic_engine.
+    unsafe {
+        ffi::ENGINE_finish(e);
+        ffi::ENGINE_free(e);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The engine as the process default for AES-CBC (`ENGINE_set_default_ciphers`),
 /// as `-engine azihsm` makes it: a context initialized with OpenSSL's own
 /// `EVP_aes_256_cbc()` and no ENGINE runs on the engine's cipher yet matches

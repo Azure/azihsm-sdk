@@ -21,6 +21,7 @@
 /* Re-export them as typed C constants so bindgen emits them.              */
 static const unsigned long OSSL_DYNAMIC_VERSION_CONST = OSSL_DYNAMIC_VERSION;
 static const unsigned long OSSL_DYNAMIC_OLDEST_CONST  = OSSL_DYNAMIC_OLDEST;
+static const unsigned int ENGINE_CMD_FLAG_STRING_CONST = ENGINE_CMD_FLAG_STRING;
 static const int EVP_PKEY_CTRL_EC_PARAMGEN_CURVE_NID_CONST =
     EVP_PKEY_CTRL_EC_PARAMGEN_CURVE_NID;
 static const int EVP_PKEY_CTRL_HKDF_MD_CONST   = EVP_PKEY_CTRL_HKDF_MD;

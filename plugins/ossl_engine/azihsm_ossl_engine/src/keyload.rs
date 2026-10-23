@@ -83,7 +83,7 @@ pub fn load_key(
         }
         // A symmetric key is attached to a cipher context instead; refused
         // without opening the HSM.
-        KeyType::Aes => Err(EngineError::Other(
+        KeyType::Aes(_) => Err(EngineError::Other(
             "aes keys are not private keys: attach them to an AES cipher context \
              with AZIHSM_CTRL_SET_KEY_URI"
                 .into(),
