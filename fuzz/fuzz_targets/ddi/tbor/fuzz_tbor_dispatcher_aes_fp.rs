@@ -7,9 +7,7 @@
 mod common;
 
 use azihsm_ddi_interface::DdiError;
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
+use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;

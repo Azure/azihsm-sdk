@@ -6,13 +6,8 @@
 #[path = "../../common.rs"]
 mod common;
 
-use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
-use azihsm_ddi_tbor_types::KEY_USAGE_DERIVE;
-use azihsm_ddi_tbor_types::KEY_USAGE_SIGN;
-use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
-use azihsm_ddi_tbor_types::TborEccGenerateKeyReq;
+use azihsm_ddi_tbor_test_harness::*;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
