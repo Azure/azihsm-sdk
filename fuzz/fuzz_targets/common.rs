@@ -14,40 +14,9 @@ use azihsm_ddi_tbor_codec::header::Header;
 use azihsm_ddi_tbor_codec::*;
 use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
 use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
-use azihsm_ddi_tbor_test_harness::SessionHandshake;
-use azihsm_ddi_tbor_test_harness::TestCtx;
-use azihsm_ddi_tbor_test_harness::coord_sizes;
-use azihsm_ddi_tbor_test_harness::x509_fixture::CaKey;
-use azihsm_ddi_tbor_test_harness::x509_fixture::RAW_PUB_LEN;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::make_pta_chain;
-use azihsm_ddi_tbor_test_harness::x509_fixture::pta_pub_from_csr;
-use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
-use azihsm_ddi_tbor_types::AES_KEY_SIZE_192;
-use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
-use azihsm_ddi_tbor_types::CertDescriptor;
-use azihsm_ddi_tbor_types::ECC_CURVE_P256;
-use azihsm_ddi_tbor_types::ECC_CURVE_P384;
-use azihsm_ddi_tbor_types::ECC_CURVE_P521;
-use azihsm_ddi_tbor_types::KEY_REPORT_DATA_LEN;
-use azihsm_ddi_tbor_types::MACH_SEED_ENVELOPE_MAX_LEN;
-use azihsm_ddi_tbor_types::MACH_SEED_LEN;
-use azihsm_ddi_tbor_types::PART_POLICY_LEN;
-use azihsm_ddi_tbor_types::POLICY_INFO_LEN;
-use azihsm_ddi_tbor_types::POLICY_MAX_KEY_LEN;
-use azihsm_ddi_tbor_types::POLICY_VERSION_MAJOR;
-use azihsm_ddi_tbor_types::POTA_THUMBPRINT_LEN;
-use azihsm_ddi_tbor_types::PartPolicy;
-use azihsm_ddi_tbor_types::PolicyKeyKind;
-use azihsm_ddi_tbor_types::PolicyPubKey;
-use azihsm_ddi_tbor_types::PolicyVer;
-use azihsm_ddi_tbor_types::ReportDescriptor;
-use azihsm_ddi_tbor_types::SessionType;
-use azihsm_ddi_tbor_types::TborKeyReportReq;
-use azihsm_ddi_tbor_types::TborPartInfoReq;
-use azihsm_ddi_tbor_types::TborSdCreateRemoteBackupReq;
-use azihsm_ddi_tbor_types::TborSdSealingKeyGenReq;
-use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_test_harness::x509_fixture::*;
+use azihsm_ddi_tbor_test_harness::*;
+use azihsm_ddi_tbor_types::*;
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use zerocopy::TryFromBytes;
@@ -164,6 +133,11 @@ impl EccCurve {
     /// ECDH shared secret (the X coordinate).
     pub fn coord_len(self) -> usize {
         coord_sizes(self.wire_pub_key_len()).1
+    }
+
+    /// Wire coordinate length in bytes, including padding (P-521: 66 -> 68 bytes).
+    pub fn wire_coord_len(self) -> usize {
+        coord_sizes(self.wire_pub_key_len()).0
     }
 
     /// Largest digest the firmware zero-extends into the ECDSA field.
