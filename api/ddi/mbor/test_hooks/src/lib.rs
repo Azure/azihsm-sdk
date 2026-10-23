@@ -8,8 +8,8 @@
 //! feature selection is owned independently by the Uno firmware.
 //!
 //! The refactored host package and Uno firmware use `TestAction` opcode 2004
-//! for every hook. `GetPrivKey` and `RawKeyImport` are actions 25 and 26;
-//! legacy standalone opcodes 2005 and 2008 are not supported by this package.
+//! for every hook. `GetPrivKey`, `RawKeyImport`, and `GetRng` are actions 25,
+//! 26, and 27; legacy standalone opcodes 2005, 2008, and 2007 are not supported.
 //!
 //! Shared TestAction definitions are under `common`: `test_action_types` owns
 //! action selectors and action-specific payload schemas, while `test_ops`
@@ -18,10 +18,12 @@
 
 mod common;
 mod get_priv_key;
+mod get_rng;
 mod raw_key_import;
 mod test_action;
 
 pub use common::*;
 pub use get_priv_key::*;
+pub use get_rng::*;
 pub use raw_key_import::*;
 pub use test_action::*;

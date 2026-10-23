@@ -31,6 +31,8 @@ use super::common::success_hdr;
 #[cfg(feature = "fips_validation_hooks")]
 use super::get_priv_key;
 #[cfg(feature = "fips_validation_hooks")]
+use super::get_rng;
+#[cfg(feature = "fips_validation_hooks")]
 use super::raw_key_import;
 #[cfg(feature = "azihsm_test_hooks")]
 use super::trigger_crash;
@@ -71,6 +73,9 @@ enum SupportedTestAction {
     /// Import raw key material.
     #[cfg(feature = "fips_validation_hooks")]
     RawKeyImport = 26,
+    /// Generate random bytes for validation.
+    #[cfg(feature = "fips_validation_hooks")]
+    GetRng = 27,
 }
 
 /// Decoded action and field count from the outer TestAction request map.
@@ -101,6 +106,10 @@ impl TryFrom<u32> for SupportedTestAction {
         #[cfg(feature = "fips_validation_hooks")]
         if value == Self::RawKeyImport as u32 {
             return Ok(Self::RawKeyImport);
+        }
+        #[cfg(feature = "fips_validation_hooks")]
+        if value == Self::GetRng as u32 {
+            return Ok(Self::GetRng);
         }
         Err(HsmError::UnsupportedCmd)
     }
@@ -148,6 +157,13 @@ pub(super) async fn dispatch<'p>(
             let payload_len = payload.len();
             let mut payload_decoder = MborDecoder::new(payload);
             raw_key_import::dispatch(pal, io, hdr, &mut payload_decoder, payload_len).await
+        }
+        #[cfg(feature = "fips_validation_hooks")]
+        SupportedTestAction::GetRng => {
+            let payload = decode_payload_bytes(decoder, selector.request_field_count, request_len)?;
+            let payload_len = payload.len();
+            let mut payload_decoder = MborDecoder::new(payload);
+            get_rng::dispatch(pal, io, hdr, &mut payload_decoder, payload_len)
         }
     }
 }
