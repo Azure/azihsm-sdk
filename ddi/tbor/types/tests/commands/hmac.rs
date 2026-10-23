@@ -28,8 +28,6 @@
 //! * Oversized messages and out-of-range masked-key lengths are rejected.
 //! * IV and ciphertext tampering fail authentication without damaging the key.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::HashAlgo;
 use azihsm_crypto::HmacAlgo;
 use azihsm_crypto::HmacKey;

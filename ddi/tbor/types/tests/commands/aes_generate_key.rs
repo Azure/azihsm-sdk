@@ -19,16 +19,8 @@
 //! * `Ephemeral` scope before `PartFinal` → `InvalidArg`.
 //! * Unknown key size → `InvalidArg`.
 
-#![cfg(any(feature = "emu", feature = "mock", feature = "sock"))]
-// The shared masked-key helpers/constants below stay available under any
-// backend (so the module isn't emu-limited), but only the emu-gated tests
-// exercise them today; suppress dead-code noise in non-emu builds.
-#![cfg_attr(not(feature = "emu"), allow(dead_code))]
-
-#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_co;
 use azihsm_ddi_tbor_test_harness::TestCtx;
-#[cfg(feature = "emu")]
 use azihsm_ddi_tbor_test_harness::ROTATED_CO_PSK;
 use azihsm_ddi_tbor_types::TborAesGenerateKeyReq;
 use azihsm_ddi_tbor_types::AES_KEY_SIZE_128;
@@ -37,11 +29,10 @@ use azihsm_ddi_tbor_types::AES_KEY_SIZE_256;
 use azihsm_ddi_tbor_types::KEY_USAGE_DECRYPT;
 use azihsm_ddi_tbor_types::KEY_USAGE_ENCRYPT;
 
-/// `KeyScope` discriminants matching the firmware `HsmKeyScope`.
-pub(crate) const SCOPE_SESSION: u8 = 0b001;
-pub(crate) const SCOPE_EPHEMERAL: u8 = 0b010;
-pub(crate) const SCOPE_LOCAL: u8 = 0b011;
-pub(crate) const SCOPE_SECURITY_DOMAIN: u8 = 0b100;
+use crate::commands::common::SCOPE_EPHEMERAL;
+use crate::commands::common::SCOPE_LOCAL;
+use crate::commands::common::SCOPE_SECURITY_DOMAIN;
+use crate::commands::common::SCOPE_SESSION;
 
 /// Masked-key envelope length for a given AES key length: `header(8) ‖
 /// iv(12) ‖ aad(192) ‖ pt(key) ‖ tag(16)`.
@@ -98,8 +89,7 @@ fn generate_key_req(session_id: u16, scope: u8, key_size: u8) -> TborAesGenerate
     }
 }
 
-#[cfg(feature = "emu")]
-mod emu_tests {
+mod tests {
     use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
     use azihsm_ddi_tbor_types::TborStatus;
     use azihsm_ddi_tbor_types::AES_OP_DECRYPT;

@@ -8,8 +8,6 @@
 //! result byte-for-byte against the digest computed on the host with
 //! `azihsm_crypto` (natural big-endian output), for every algorithm.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::HashAlgo as CryptoHashAlgo;
 use azihsm_crypto::Hasher;
 use azihsm_ddi_tbor_test_harness::bootstrap_rotated_cu;

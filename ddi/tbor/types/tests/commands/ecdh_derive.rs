@@ -16,8 +16,6 @@
 //! primitive's correctness is covered by the MBOR `EcdhKeyExchange` tests and
 //! the std-PAL ECC driver tests, which share the same `pal.ecdh_derive`.
 
-#![cfg(feature = "emu")]
-
 use azihsm_crypto::EccCurve;
 use azihsm_crypto::EccPrivateKey;
 use azihsm_crypto::ExportableKey;
