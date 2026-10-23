@@ -89,7 +89,7 @@ fuzz_target!(|input: FuzzInput| {
             };
             let scope = key_scope.to_tbor();
 
-            let succeeded = match command {
+            let (result, expected_masked_key_len, expected_pub_key_len) = match command {
                 Command::AesGenerateKey => {
                     let req = TborAesGenerateKeyReq {
                         session_id,
@@ -98,20 +98,11 @@ fuzz_target!(|input: FuzzInput| {
                         key_usage: KEY_USAGE_ENCRYPT | KEY_USAGE_DECRYPT,
                         key_label: Vec::new(),
                     };
-                    match ctx.tbor(&req) {
-                        Ok(resp) => {
-                            assert!(
-                                (MASKED_AES_KEY_MIN_LEN..=MASKED_AES_KEY_MAX_LEN)
-                                    .contains(&resp.masked_key.len()),
-                                "AES key generation returned an invalid masked-key length"
-                            );
-                            true
-                        }
-                        Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
-                            panic!("Crash Detected: {err}")
-                        }
-                        Err(_) => false,
-                    }
+                    (
+                        ctx.tbor(&req).map(|resp| (resp.masked_key.len(), None)),
+                        MASKED_AES_KEY_MIN_LEN..=MASKED_AES_KEY_MAX_LEN,
+                        None,
+                    )
                 }
                 Command::EccGenerateKey => {
                     let req = TborEccGenerateKeyReq {
@@ -121,21 +112,12 @@ fuzz_target!(|input: FuzzInput| {
                         key_usage: KEY_USAGE_SIGN,
                         key_label: Vec::new(),
                     };
-                    match ctx.tbor(&req) {
-                        Ok(resp) => {
-                            assert_eq!(resp.pub_key.len(), 64);
-                            assert!(
-                                (MASKED_ECC_KEY_MIN_LEN..=MASKED_ECC_KEY_MAX_LEN)
-                                    .contains(&resp.masked_key.len()),
-                                "ECC key generation returned an invalid masked-key length"
-                            );
-                            true
-                        }
-                        Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
-                            panic!("Crash Detected: {err}")
-                        }
-                        Err(_) => false,
-                    }
+                    (
+                        ctx.tbor(&req)
+                            .map(|resp| (resp.masked_key.len(), Some(resp.pub_key.len()))),
+                        MASKED_ECC_KEY_MIN_LEN..=MASKED_ECC_KEY_MAX_LEN,
+                        Some(64),
+                    )
                 }
                 Command::HmacGenerateKey => {
                     let req = TborHmacGenerateKeyReq {
@@ -145,17 +127,30 @@ fuzz_target!(|input: FuzzInput| {
                         key_length: 32,
                         key_label: Vec::new(),
                     };
-                    match ctx.tbor(&req) {
-                        Ok(resp) => {
-                            assert_eq!(resp.masked_key.len(), MASKED_HMAC_KEY_MIN_LEN);
-                            true
-                        }
-                        Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
-                            panic!("Crash Detected: {err}")
-                        }
-                        Err(_) => false,
-                    }
+                    (
+                        ctx.tbor(&req).map(|resp| (resp.masked_key.len(), None)),
+                        MASKED_HMAC_KEY_MIN_LEN..=MASKED_HMAC_KEY_MIN_LEN,
+                        None,
+                    )
                 }
+            };
+
+            let succeeded = match result {
+                Ok((masked_key_len, pub_key_len)) => {
+                    assert!(
+                        expected_masked_key_len.contains(&masked_key_len),
+                        "key generation returned an invalid masked-key length"
+                    );
+                    assert_eq!(
+                        pub_key_len, expected_pub_key_len,
+                        "key generation returned an invalid public-key length"
+                    );
+                    true
+                }
+                Err(err @ azihsm_ddi_interface::DdiError::DriverError(_)) => {
+                    panic!("Crash Detected: {err}")
+                }
+                Err(_) => false,
             };
 
             if input.use_valid_header {
