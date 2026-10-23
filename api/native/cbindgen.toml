@@ -64,6 +64,7 @@ include = [
   "HsmError",
   "HsmKeyClass",
   "HsmKeyKind",
+  "HsmPartState",
   "HsmPartType",
 ]
 
@@ -139,6 +140,7 @@ item_types = [
 "HsmKeyClass" = "azihsm_key_class"
 "HsmKeyKind" = "azihsm_key_kind"
 "HsmOwnerBackupKeySource" = "azihsm_owner_backup_key_source"
+"HsmPartState" = "azihsm_part_state"
 "HsmPartType" = "azihsm_part_type"
 "HsmPotaEndorsementSource" = "azihsm_pota_endorsement_source"
 "HsmSessionExType" = "azihsm_session_ex_type"

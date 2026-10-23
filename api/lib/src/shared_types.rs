@@ -199,6 +199,36 @@ pub enum HsmPartType {
     Physical = 2,
 }
 
+/// Firmware lifecycle state of a partition.
+///
+/// This API-level type preserves unrecognized firmware values without exposing
+/// the DDI wire type. Not every state permits a partition query to complete.
+#[repr(u32)]
+#[open_enum]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoBytes, Immutable)]
+pub enum HsmPartState {
+    /// The partition slot is free.
+    Unallocated = 0,
+
+    /// Resources and identity are allocated, but DDI traffic is not enabled.
+    Allocated = 1,
+
+    /// The partition accepts DDI traffic; TBOR finalization has not run.
+    Enabled = 2,
+
+    /// The partition is disabled and does not accept DDI traffic.
+    Disabled = 3,
+
+    /// TBOR partition initialization has completed; finalization is pending.
+    Initializing = 4,
+
+    /// TBOR partition finalization has provisioned partition-local masking keys.
+    Initialized = 5,
+
+    /// The partition is quarantined after an unrecoverable rollback failure.
+    Faulted = 6,
+}
+
 /// Owner backup key source.
 ///
 /// Specifies the source of the owner backup key (OBK) during partition initialization.

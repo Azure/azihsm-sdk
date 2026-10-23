@@ -264,13 +264,15 @@ pub(crate) fn part_final_ex(
     Ok(HsmPartFinalExResult::from(resp))
 }
 
-/// Partition identity returned by a `PartInfo` query: the stable PID plus
-/// the raw ECC-P384 identity public key.
+/// Partition lifecycle state and identity returned by a `PartInfo` query.
 ///
 /// DDI-internal carrier only. Public callers reach these fields through
-/// the [`HsmPartition::pid`] / [`HsmPartition::ex_pub_key`] getters, so the
-/// compound type never surfaces in the public API.
+/// the [`HsmPartition::state`], [`HsmPartition::pid`], and
+/// [`HsmPartition::ex_pub_key`] getters, so the compound type never surfaces
+/// in the public API.
 pub(crate) struct HsmPartInfo {
+    /// Current firmware lifecycle state.
+    pub state: HsmPartState,
     /// 16-byte partition identity (PID).
     pub pid: Vec<u8>,
     /// Raw ECC-P384 identity public-key coordinates (`x ‖ y`, 96 B).
@@ -283,14 +285,15 @@ pub(crate) struct HsmPartInfo {
 impl From<TborPartInfoResp> for HsmPartInfo {
     fn from(resp: TborPartInfoResp) -> Self {
         Self {
+            state: HsmPartState(u32::from(u8::from(resp.part_state))),
             pid: resp.pid.to_vec(),
             pid_pub_key: resp.pid_pub_key.to_vec(),
         }
     }
 }
 
-/// Issue `PartInfo` on the partition, returning its identity (PID) and
-/// raw identity public key.
+/// Issue `PartInfo` on the partition, returning its lifecycle state,
+/// identity (PID), and raw identity public key.
 ///
 /// This is a partition-level query and carries no session id.
 ///
@@ -373,6 +376,34 @@ pub(super) fn get_cert_tbor(dev: &HsmDev, slot_id: u8, cert_id: u8) -> HsmResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn part_info_state_conversion_preserves_wire_values() {
+        let states = [
+            (0, HsmPartState::Unallocated),
+            (1, HsmPartState::Allocated),
+            (2, HsmPartState::Enabled),
+            (3, HsmPartState::Disabled),
+            (4, HsmPartState::Initializing),
+            (5, HsmPartState::Initialized),
+            (6, HsmPartState::Faulted),
+            (u8::MAX, HsmPartState(u32::from(u8::MAX))),
+        ];
+
+        for (raw_state, expected) in states {
+            let response = TborPartInfoResp {
+                device_kind: 2u8.into(),
+                part_state: raw_state.into(),
+                generation: 0u32.into(),
+                owner_svn: 0u64.into(),
+                mfgr_svn: 0u64.into(),
+                pid: [0; PID_LEN],
+                pid_pub_key: [0; PID_PUB_KEY_LEN],
+            };
+
+            assert_eq!(HsmPartInfo::from(response).state, expected);
+        }
+    }
 
     /// The `mach_seed` AAD must be `label ‖ session_id_le ‖ zero-pad`,
     /// matching the firmware's reconstruction.
