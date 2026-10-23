@@ -76,6 +76,10 @@ pub enum AzihsmPartPropId {
     /// Raw ECC-P384 partition identity public key (`x ‖ y`, 96 bytes).
     // Corresponds to AZIHSM_PART_PROP_ID_PART_EX_PUB_KEY
     PartExPubKey = 14,
+
+    /// Current firmware lifecycle state as an `azihsm_part_state`.
+    /// Requires API revision 1.1 or newer and queries the device on every call.
+    State = 15,
 }
 
 /// UUID structure.
@@ -210,6 +214,10 @@ fn get_partition_prop(
         AzihsmPartPropId::PartExPubKey => {
             let ex_pub_key = partition.ex_pub_key()?;
             copy_to_part_prop(part_prop, &ex_pub_key)
+        }
+        AzihsmPartPropId::State => {
+            let state = partition.state()?;
+            copy_to_part_prop(part_prop, state.as_bytes())
         }
         _ => Err(AzihsmStatus::UnsupportedProperty),
     }

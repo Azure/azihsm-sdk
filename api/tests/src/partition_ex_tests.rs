@@ -41,6 +41,51 @@ fn one_cert() -> Vec<u8> {
     vec![0u8; 4]
 }
 
+#[test]
+fn part_state_tracks_initialization_and_reset() {
+    let _guard = PARTITION_LOCK.lock();
+    let (part, rev) = new_partition();
+    assert_eq!(
+        part.state().expect("query fresh partition"),
+        HsmPartState::Enabled
+    );
+
+    let session = part
+        .open_session_ex(
+            rev,
+            HsmSessionPsk::new(HsmPskId::CO),
+            HsmSessionExType::Authenticated,
+        )
+        .expect("open CO session");
+    session
+        .change_psk(&[0xA5; PSK_LEN])
+        .expect("rotate default CO PSK");
+
+    let anchor = crate::utils::sd_provision::CaKey::generate();
+    let anchor_pub = anchor.raw_pub();
+    let policy = PartPolicyBuilder::new()
+        .version(1, 0)
+        .pota_key(PolicyKeyKind::Ecc384, &anchor_pub)
+        .sata_key(PolicyKeyKind::Ecc384, &anchor_pub)
+        .build()
+        .expect("build partition policy");
+    let (mach_seed, pota, sata) = valid_part_init_inputs();
+    session
+        .part_init_ex(&policy, &mach_seed, &pota, &sata, None)
+        .expect("initialize partition");
+    assert_eq!(
+        part.state().expect("query initializing partition"),
+        HsmPartState::Initializing
+    );
+
+    drop(session);
+    part.reset().expect("reset initialized partition");
+    assert_eq!(
+        part.state().expect("query reset partition"),
+        HsmPartState::Enabled
+    );
+}
+
 // ── PartInit ────────────────────────────────────────────────────────────────
 
 /// A wrong-length `pota_thumbprint` is rejected.

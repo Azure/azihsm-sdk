@@ -301,6 +301,7 @@ Retrieve partition property
 | max api revision supported by the device           | [struct azihsm_api_rev](#azihsm_api_rev) | \scriptsize AZIHSM_PART_PROP_ID_MAX_API_REV       |
 | manufacturer cert chain in PEM format              | [azihsm_char*](#azihsm_char)             | \scriptsize AZIHSM_PART_PROP_ID_MANUFACTURER_CERT_CHAIN |
 | partition identity (PID) public key in DER format  | uint8_t*                                 | \scriptsize AZIHSM_PART_PROP_ID_PART_PUB_KEY    |
+| current firmware lifecycle state                    | [azihsm_part_state](#azihsm_part_state)   | \scriptsize AZIHSM_PART_PROP_ID_STATE             |
 
 ```cpp
 azihsm_status azihsm_part_get_prop(
@@ -319,6 +320,49 @@ azihsm_status azihsm_part_get_prop(
 **Returns**
 
 `AZIHSM_STATUS_SUCCESS` on success, error code otherwise
+
+### azihsm_part_state
+
+`AZIHSM_PART_PROP_ID_STATE` (property ID 15) returns the current firmware
+lifecycle state. Its value type is `azihsm_part_state`, represented as a
+`uint32_t`; the required property buffer size is `sizeof(azihsm_part_state)`.
+
+| Value | Constant | Meaning |
+| ----- | -------- | ------- |
+| 0 | `AZIHSM_PART_STATE_UNALLOCATED` | Partition slot is free. |
+| 1 | `AZIHSM_PART_STATE_ALLOCATED` | Resources and identity allocated; DDI traffic not enabled. |
+| 2 | `AZIHSM_PART_STATE_ENABLED` | DDI traffic enabled; TBOR finalization has not run. |
+| 3 | `AZIHSM_PART_STATE_DISABLED` | Partition disabled. |
+| 4 | `AZIHSM_PART_STATE_INITIALIZING` | TBOR partition initialization complete; finalization pending. |
+| 5 | `AZIHSM_PART_STATE_INITIALIZED` | TBOR finalization has provisioned partition-local masking keys. |
+| 6 | `AZIHSM_PART_STATE_FAULTED` | Partition quarantined after an unrecoverable rollback failure. |
+
+```cpp
+azihsm_part_state state{};
+azihsm_part_prop prop{AZIHSM_PART_PROP_ID_STATE, &state, sizeof(state)};
+azihsm_status status = azihsm_part_get_prop(part_handle, &prop);
+```
+
+Only inspect `state` when `status` is `AZIHSM_STATUS_SUCCESS`. Future firmware
+state values are preserved even when no named constant is available.
+
+The partition handle must use API revision 1.1 or newer; revision 1.0 returns
+`AZIHSM_STATUS_UNSUPPORTED_API_REVISION`. Each call performs a fresh TBOR
+`PartInfo` query without opening a session or requiring credentials. The result
+is a point-in-time observation, not a guarantee about a subsequent operation.
+The discovery snapshot returned by `azihsm_part_get_info` is unchanged.
+
+On a successful device query, a zero-length size probe or an undersized buffer
+returns `AZIHSM_STATUS_BUFFER_TOO_SMALL`, sets `prop.len` to the required size,
+and leaves the value buffer unchanged. A NULL value pointer with sufficient
+length returns `AZIHSM_STATUS_INVALID_ARGUMENT`. Success sets `prop.len` to the
+number of bytes written, even when the supplied buffer is larger.
+
+The existing firmware IO gate accepts queries only in `ENABLED`, `INITIALIZING`,
+and `INITIALIZED`. It drops IO in the other lifecycle states, so this API cannot
+currently observe those states through normal DDI traffic. Device and transport
+failures are propagated and must not be treated as a particular state. Neither
+the firmware nor the IO gate is changed by this property.
 
 ## azihsm_part_reset
 
