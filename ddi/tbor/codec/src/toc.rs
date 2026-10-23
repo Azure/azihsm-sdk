@@ -21,7 +21,7 @@ pub const MAX_DATA_SIZE: usize = 8191;
 pub const PROTOCOL_VERSION: u8 = 0x01;
 
 /// Wire size of a single TOC entry in bytes.
-pub(crate) const TOC_ENTRY_LEN: usize = 4;
+pub const TOC_ENTRY_LEN: usize = 4;
 
 /// 6-bit entry-type mask.
 const TYPE_MASK: u32 = 0x3F;

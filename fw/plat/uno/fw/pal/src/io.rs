@@ -18,13 +18,14 @@
 //! | `IO_CQ[index]`  | 16B CQE           | Completion queue entry (write)       |
 //! | `IO_META[index]` | 8B metadata      | Controller/queue IDs from IIC recv   |
 //! | `DTCM_IO_BUF[index]` | 1.5KB fmem   | Fast DTCM workspace buffer           |
-//! | `SRAM_IO_BUF[index]` | 8KB smem     | Large SRAM workspace buffer          |
+//! | `SRAM_IO_BUF[index]` | 16KB smem    | Large SRAM workspace buffer          |
 //!
 //! The IIC controller DMAs incoming SQE data directly into `IO_SQ[index]`
 //! (configured via `io_pool_base`). The firmware reads the SQE in-place
 //! and writes the CQE into `IO_CQ[index]` for OIC to transmit.
 
 use core::mem;
+use core::ops::AsyncFnOnce;
 
 use azihsm_fw_hsm_pal_traits::HsmCqe;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -47,6 +48,7 @@ use tock_registers::interfaces::Writeable;
 use crate::UnoHsmPal;
 use crate::alloc::ADMIN_IO_INDEX;
 use crate::alloc::SELF_TEST_IO_INDEX;
+use crate::alloc::UnoScopedAlloc;
 use crate::alloc::reset_io_alloc;
 
 /// Typed overlay of the IO GSRAM region.
@@ -67,8 +69,8 @@ pub struct UnoHsmIo {
 }
 
 impl UnoHsmIo {
-    /// Constructs an IO handle over the dedicated admin slot
-    /// ([`ADMIN_IO_INDEX`]), targeting partition `pid`.
+    /// Constructs a **bare, unscrubbed** IO handle over the dedicated admin
+    /// slot ([`ADMIN_IO_INDEX`]), targeting partition `pid`.
     ///
     /// Internal provisioning (partition identity and enable-time keygen)
     /// runs without a host IO. Reusing the concrete [`UnoHsmIo`] /
@@ -77,15 +79,30 @@ impl UnoHsmIo {
     /// The target `pid` is written into the admin slot's `IO_META` so
     /// [`pid`](HsmIo::pid) resolves correctly.
     ///
+    /// # Prefer [`with_admin_io`](UnoHsmPal::with_admin_io)
+    ///
+    /// This constructor performs **no scrub**: anything the caller writes to
+    /// the admin slot's bump heaps stays resident until some later scrub.
+    /// Its only caller is [`with_admin_io`](UnoHsmPal::with_admin_io), which
+    /// wipes the slot on completion. The admin slot's `IO_META` is shared, so
+    /// it must only be written from the IPC task that runs admin sessions
+    /// sequentially; a host-IO path must use its own IO instead. The name is
+    /// deliberately blunt so a new call site has to opt into the hazard
+    /// explicitly.
+    ///
     /// [`ADMIN_IO_INDEX`]: crate::alloc::ADMIN_IO_INDEX
     /// [`UnoScopedAlloc`]: crate::alloc::UnoScopedAlloc
-    pub(crate) fn admin(pid: HsmPartId) -> Self {
+    pub(crate) fn admin_no_scrub(pid: HsmPartId) -> Self {
         let io = Self {
             index: ADMIN_IO_INDEX,
         };
+        // CONTROLLER_ID holds the hardware axi_id (what IIC `recv` records for
+        // a host IO), so an internally created admin IO stores the same
+        // encoding for `pid()` to round-trip it back to `pid`.
+        let axi_id = crate::pal::pfn_to_axi_id(u8::from(pid)).unwrap_or(crate::pal::NO_PARTITION);
         io.io_meta()
             .ctlr
-            .write(IO_META_CTLR::CONTROLLER_ID.val(u8::from(pid) as u32));
+            .write(IO_META_CTLR::CONTROLLER_ID.val(axi_id as u32));
         io
     }
 
@@ -130,16 +147,15 @@ impl HsmIo for UnoHsmIo {
         self.index
     }
 
-    /// Returns the partition ID (controller_id from IO_META).
+    /// Returns the partition ID for this IO.
     ///
-    /// The self-test slot ([`SELF_TEST_IO_INDEX`]) has no `IO_META` entry and
-    /// no partition context, so this returns partition `0` for it rather than
-    /// indexing `IO_META` out of bounds.
+    /// IO_META records the routing axi_id the hardware reported; partitions
+    /// are indexed by the dense PcieFunction id, so translate here. An axi_id
+    /// naming no function yields an out-of-range id, which the partition
+    /// lookup rejects with `InvalidArg` rather than aliasing a valid slot.
     fn pid(&self) -> HsmPartId {
-        if self.index as u32 >= IO_META_COUNT {
-            return HsmPartId::from(0u8);
-        }
-        HsmPartId::from(self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8)
+        let axi_id = self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8;
+        HsmPartId::from(crate::pal::axi_id_to_pfn(axi_id).unwrap_or(crate::pal::NO_PARTITION))
     }
 
     /// Returns the queue ID from IO_META.
@@ -215,11 +231,69 @@ impl HsmIoController for UnoHsmPal {
     }
 
     /// Drops an IO without sending a completion (e.g. for disabled
-    /// partitions). Returns the IO_SQ slot to the ISQ.
-    #[allow(clippy::unused_async)]
+    /// partitions). Scrubs the slot's scratch buffers, then returns the
+    /// IO_SQ slot to the ISQ.
+    ///
+    /// This is the universal IO teardown point (the core dispatch loop
+    /// calls it on both the completed and the dropped paths), so the
+    /// per-IO buffer scrub lives here. See
+    /// [`scrub_io_slot`](UnoHsmPal::scrub_io_slot).
     async fn drop_io(&self, io: Self::Io) -> HsmResult<()> {
         let queue_id = io.queue_id();
+        // Scrub both per-IO scratch buffers *before* returning the slot to
+        // the ISQ, so no key material from this IO can be observed by the
+        // next IO that reuses the slot.
+        self.scrub_io_slot(io.index).await;
         self.iic.free_io(io.index, queue_id);
         Ok(())
+    }
+}
+
+impl UnoHsmPal {
+    /// Runs `f` as an *admin session* over the dedicated admin IO slot
+    /// ([`ADMIN_IO_INDEX`]), scrubbing that slot when `f` completes.
+    ///
+    /// This is the admin-side counterpart of
+    /// [`drop_io`](HsmIoController::drop_io): internal provisioning
+    /// (partition identity, enable-time keygen, boot-key masking, vault
+    /// teardown) runs without a host IO, so it never reaches `drop_io` and
+    /// its scratch would otherwise only be watermark-rewound, never wiped —
+    /// leaving raw private-key material (e.g. the P-384 identity scalar)
+    /// resident in the admin slot indefinitely.
+    ///
+    /// Binding the scrub to the session rather than to each caller means no
+    /// admin path that dirties the slot can forget it. `f` also receives a
+    /// [`UnoScopedAlloc`] rewound to the slot's base, so every admin sequence
+    /// starts from a clean bump heap.
+    ///
+    /// Sessions must not nest — [`UnoScopedAlloc::for_admin`] rewinds the
+    /// slot's watermarks, so an inner session would alias an outer one's
+    /// live buffers. All current callers are strictly sequential.
+    ///
+    /// # Parameters
+    /// - `pid`: partition the session targets; written into the admin
+    ///   slot's `IO_META` so [`pid`](HsmIo::pid) resolves correctly.
+    /// - `f`: async closure run with the admin IO handle and a rewound
+    ///   scoped allocator.
+    ///
+    /// # Returns
+    /// Whatever `f` returned. `R` cannot borrow anything the scrub will wipe:
+    /// the higher-ranked bound stops it borrowing from the session's scoped
+    /// allocator, and `R: 'static` additionally stops it returning a buffer
+    /// obtained from the PAL-level allocator, whose lifetime is tied to the
+    /// PAL and so outlives the session. Every current caller returns an owned
+    /// value, so the bound costs nothing.
+    pub(crate) async fn with_admin_io<R, F>(&self, pid: HsmPartId, f: F) -> R
+    where
+        R: 'static,
+        F: for<'a> AsyncFnOnce(&'a UnoHsmIo, &'a UnoScopedAlloc<'a>) -> R,
+    {
+        let io = UnoHsmIo::admin_no_scrub(pid);
+        let result = {
+            let alloc = UnoScopedAlloc::for_admin(self);
+            f(&io, &alloc).await
+        };
+        self.scrub_io_slot(ADMIN_IO_INDEX).await;
+        result
     }
 }

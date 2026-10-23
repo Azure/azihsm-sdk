@@ -50,23 +50,23 @@ pub const TBOR_OP_CONCAT_KDF_DERIVE: u8 = 0x1D;
 pub const CONCAT_INFO_MAX_LEN: usize = 256;
 
 /// Minimum masked ECDH-secret IKM envelope length (P-256, 32-byte
-/// secret): `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(32) ‖ tag(16)`.  Pinned
-/// into the `#[tbor(buffer, min_len = 164)]` literal on
+/// secret): `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(32) ‖ tag(16)`.  Pinned
+/// into the `#[tbor(buffer, min_len = 260)]` literal on
 /// [`TborConcatKdfDeriveReq::masked_secret`].
-pub const CONCAT_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const CONCAT_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked ECDH-secret IKM envelope length (P-521, 66-byte
-/// secret).  Pinned into the `#[tbor(buffer, max_len = 198)]` literal on
+/// secret).  Pinned into the `#[tbor(buffer, max_len = 294)]` literal on
 /// [`TborConcatKdfDeriveReq::masked_secret`].
-pub const CONCAT_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 96 + 66 + 16;
+pub const CONCAT_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 192 + 66 + 16;
 
 /// Minimum masked derived-key envelope length (AES-128 / 16-byte key).
-pub const CONCAT_MASKED_KEY_MIN_LEN: usize = 8 + 12 + 96 + 16 + 16;
+pub const CONCAT_MASKED_KEY_MIN_LEN: usize = 8 + 12 + 192 + 16 + 16;
 
 /// Maximum masked derived-key envelope length (128-byte variable-length
-/// HMAC key).  Pinned into the `#[tbor(buffer, max_len = 260)]` literal on
+/// HMAC key).  Pinned into the `#[tbor(buffer, max_len = 356)]` literal on
 /// [`TborConcatKdfDeriveResp::masked_key`].
-pub const CONCAT_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+pub const CONCAT_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// Which single-step concatenation KDF to run on the TBOR wire.
 ///
@@ -118,8 +118,8 @@ pub struct TborConcatKdfDeriveReq<'a> {
     pub key_length: u8,
 
     /// The masked ECDH shared secret IKM (from `EcdhDerive`), an
-    /// AEAD-GCM-256 envelope of 164..=198 B; unmasked in place.
-    #[tbor(buffer, min_len = 164, max_len = 198, mutable)]
+    /// AEAD-GCM-256 envelope of 260..=294 B; unmasked in place.
+    #[tbor(buffer, min_len = 260, max_len = 294, mutable)]
     pub masked_secret: &'a [u8],
 
     /// Optional `SharedInfo` (X9.63) / `OtherInfo` (SP 800-56A), ≤ 256 B;
@@ -135,8 +135,8 @@ pub struct TborConcatKdfDeriveReq<'a> {
 #[tbor(response)]
 pub struct TborConcatKdfDeriveResp<'a> {
     /// The derived key, masked (AEAD-GCM-256) under the scope's masking
-    /// key.  148..=260 B depending on the derived key length.
-    #[tbor(buffer, max_len = 260, mutable)]
+    /// key.  244..=356 B depending on the derived key length.
+    #[tbor(buffer, max_len = 356, mutable)]
     pub masked_key: &'a [u8],
 }
 
@@ -192,10 +192,10 @@ mod tests {
 
     #[test]
     fn lengths_match_pinned_values() {
-        const _: () = assert!(164 == CONCAT_MASKED_SECRET_MIN_LEN);
-        const _: () = assert!(198 == CONCAT_MASKED_SECRET_MAX_LEN);
-        const _: () = assert!(260 == CONCAT_MASKED_KEY_MAX_LEN);
+        const _: () = assert!(260 == CONCAT_MASKED_SECRET_MIN_LEN);
+        const _: () = assert!(294 == CONCAT_MASKED_SECRET_MAX_LEN);
+        const _: () = assert!(356 == CONCAT_MASKED_KEY_MAX_LEN);
         assert_eq!(CONCAT_INFO_MAX_LEN, 256);
-        assert_eq!(CONCAT_MASKED_KEY_MIN_LEN, 148);
+        assert_eq!(CONCAT_MASKED_KEY_MIN_LEN, 244);
     }
 }

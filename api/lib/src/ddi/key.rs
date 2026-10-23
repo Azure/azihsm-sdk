@@ -91,10 +91,14 @@ impl<'a> HsmKeyIdGuard<'a> {
 ///
 /// All other errors are propagated to the caller.
 fn delete_key_raw_no_res(session: &HsmSession, key_id: HsmKeyHandle) -> HsmResult<()> {
+    // An unpinned key has no device-side handle to delete.
+    if matches!(key_id, HsmKeyHandle::Unpinned) {
+        return Ok(());
+    }
     let req = DdiDeleteKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::DeleteKey, session),
         data: DdiDeleteKeyReq {
-            key_id: ddi::get_key_id(key_id),
+            key_id: ddi::get_key_id(key_id)?,
         },
         ext: None,
     };
@@ -145,7 +149,7 @@ pub(crate) fn delete_key(
     delete_key_raw_no_res(session, key_id)
 }
 
-/// Executes the unmask key operation.
+/// Dispatches the unmask key operation to the session's protocol.
 ///
 /// # Arguments
 ///
@@ -156,6 +160,15 @@ pub(crate) fn delete_key(
 ///
 /// Returns the DDI unmask key command response.
 fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnmaskKeyCmdResp> {
+    if session.is_ex() {
+        unmask_key_exec_tbor(session, masked_key)
+    } else {
+        unmask_key_exec_mbor(session, masked_key)
+    }
+}
+
+/// Executes the MBOR unmask key operation.
+fn unmask_key_exec_mbor(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnmaskKeyCmdResp> {
     let req = DdiUnmaskKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::UnmaskKey, session),
         data: DdiUnmaskKeyReq {
@@ -166,6 +179,15 @@ fn unmask_key_exec(session: &HsmSession, masked_key: &[u8]) -> HsmResult<DdiUnma
     };
 
     session.with_dev(|dev| dev.exec_op_mbor(&req, &mut None).map_err(HsmError::from))
+}
+
+/// Placeholder for standalone TBOR unmasking, which is not currently supported.
+/// TBOR authenticates and unmasks caller-held blobs on use by crypto operations.
+fn unmask_key_exec_tbor(
+    _session: &HsmSession,
+    _masked_key: &[u8],
+) -> HsmResult<DdiUnmaskKeyCmdResp> {
+    Err(HsmError::UnsupportedKeyOperation)
 }
 
 /// Unmasks a masked key within the HSM.
@@ -263,6 +285,10 @@ pub(crate) fn generate_key_report(
     report_data: &[u8],
     report: Option<&mut [u8]>,
 ) -> HsmResult<usize> {
+    // Oversized report_data can't be encoded at all; reject it locally
+    // regardless of pass. This also keeps the size-query pass (`report:
+    // None`) working even when the caller hasn't assembled a valid
+    // `report_data` payload yet.
     if report_data.len() > DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
         return Err(HsmError::InvalidArgument);
     }
@@ -271,6 +297,19 @@ pub(crate) fn generate_key_report(
         return Ok(DdiAttestKeyResp::MAX_REPORT_SIZE);
     };
 
+    // Real hardware requires report_data to be exactly MAX_REPORT_DATA_SIZE
+    // bytes; a short payload is rejected deep in firmware's `key_report()`
+    // crypto call, which surfaces to callers as the generic
+    // `HsmError::DdiCmdFailure` (see `ddi/mod.rs`'s `DdiError` → `HsmError`
+    // mapping). Return that same status here directly, now that we know
+    // this is a real generation attempt (not a size query) — this avoids an
+    // unnecessary device round-trip for an input that is already known to
+    // be invalid, while remaining indistinguishable to callers from the
+    // device-rejected case.
+    if report_data.len() != DdiAttestKeyReq::MAX_REPORT_DATA_SIZE {
+        return Err(HsmError::DdiCmdFailure);
+    }
+
     if report.len() < DdiAttestKeyResp::MAX_REPORT_SIZE {
         return Err(HsmError::BufferTooSmall);
     }
@@ -278,7 +317,7 @@ pub(crate) fn generate_key_report(
     let req = DdiAttestKeyCmdReq {
         hdr: build_ddi_req_hdr_sess(DdiOp::AttestKey, session),
         data: DdiAttestKeyReq {
-            key_id: ddi::get_key_id(key_handle),
+            key_id: ddi::get_key_id(key_handle)?,
             report_data: MborByteArray::from_slice(report_data)
                 .map_hsm_err(HsmError::InternalError)?,
         },

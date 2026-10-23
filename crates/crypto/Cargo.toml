@@ -15,6 +15,7 @@ bitfield-struct.workspace = true
 cfg-if.workspace = true
 pem-rfc7468 = { features = ["alloc"], workspace = true }
 thiserror.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # foreign-types provides ForeignTypeRef::as_ptr to obtain the raw OSSL_LIB_CTX*
@@ -23,9 +24,6 @@ thiserror.workspace = true
 foreign-types.workspace = true
 openssl.workspace = true
 openssl-sys.workspace = true
-# Zeroizing wipes the transient plaintext HMAC key copy (raw_private_key) once
-# EVP_MAC_init has copied it into the MAC context.
-zeroize.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { features = ["Win32_Security_Cryptography"], workspace = true }

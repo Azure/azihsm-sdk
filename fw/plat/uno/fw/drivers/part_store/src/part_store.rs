@@ -12,6 +12,8 @@ use azihsm_fw_hsm_pal_traits::HsmKeyId;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::PartState;
+use azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CO;
+use azihsm_fw_hsm_pal_traits::DEFAULT_PSK_CU;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
 use azihsm_fw_uno_reg_soc::part_store_t::PART_STORE_T_BASE;
 
@@ -299,16 +301,16 @@ mod layout_asserts;
 /// Stateless entry point: [`PartStore::partition`] validates a raw
 /// partition id and returns a [`Partition`] handle through which the
 /// slot's fields are accessed. [`PartStore::init_default`] initializes
-/// every slot at PAL boot.
+/// every slot on power-on boot; warm boots preserve the store.
 #[derive(Debug)]
 pub struct PartStore;
 
 /// Selects how much partition state [`Partition::clear_state`] wipes.
 ///
-/// Both kinds clear the per-tenant runtime state (enable-time keys,
-/// credential, BK3 session key, nonce, session table, and PIN policy);
-/// they differ only in whether the write-once provisioning material is
-/// preserved. Future reset flavours can be added as additional variants.
+/// Both kinds clear the per-tenant runtime state (enable-time key handles,
+/// credential, BK3 session key, nonce, volatile session metadata, and PIN
+/// policy); they differ only in whether the write-once provisioning material is
+/// preserved. The persistent session table is left for the PAL to manage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartResetKind {
     /// NSSR `Migrate`: preserve the partition's provisioning material.
@@ -348,6 +350,25 @@ impl PartStore {
     pub fn init_default() {
         for idx in 0..NUM_PARTITIONS {
             Partition(idx).reset();
+        }
+    }
+
+    /// Re-arms Gate 1 (`unwrapping_key_required`) for every partition that
+    /// still owns table resources, after a warm / fw-update reboot.
+    ///
+    /// The GSRAM-resident store survives a warm reset, so each slot's
+    /// `res_mask` is already correct and no wipe is performed. But the SP
+    /// consumes and clears Gate 1 on every boot. Re-arm
+    /// `unwrapping_key_required` wherever the resource mask is non-zero,
+    /// without relying on a subsequent `SetResource` replay, so the SP
+    /// re-stages that partition's RSA unwrapping key. Mirrors the reference
+    /// `PartStateImpl::restore_res_mask`.
+    pub fn rearm_unwrapping_key_required() {
+        for idx in 0..NUM_PARTITIONS {
+            let part = Partition(idx);
+            if part.res_mask() != 0 {
+                part.set_unwrapping_key_required(true);
+            }
         }
     }
 }
@@ -442,8 +463,8 @@ impl Partition {
     /// The shared core (cleared for every kind) drops the enable-time and
     /// provisioning vault-key handles (the vault deletions themselves are the
     /// PAL's responsibility), the cached public keys, the caller-presented
-    /// credential, the derived BK3 session key, the nonce, the per-partition
-    /// session table + metadata, and the PIN lockout policy — matching the
+    /// credential, the derived BK3 session key, the nonce, the volatile
+    /// session metadata, and the PIN lockout policy — matching the
     /// reference `state.disable()` / `state.migrate()`, which both reset the
     /// policy.
     ///
@@ -452,12 +473,11 @@ impl Partition {
     /// thumbprints, sealed BK3 + incarnation flag, rotated PSKs, and the VM
     /// launch GUID); [`PartResetKind::Migrate`] preserves it so a host that
     /// resets via NSSR keeps its provisioning and only re-establishes its
-    /// credential. The partition identity and `Masked_BK_BOOT` are preserved
-    /// for both — they are torn down only on free (see [`reset`]). The
-    /// resource mask, generation counter, and lifecycle state are left for the
-    /// caller to manage.
-    ///
-    /// [`reset`]: Self::reset
+    /// credential. This helper leaves the partition identity,
+    /// `Masked_BK_BOOT`, persistent session table, resource mask, generation
+    /// counter, and lifecycle state for the caller to manage. The PAL
+    /// preserves established session reservations on disable and releases
+    /// all slots on NSSR/migrate or free.
     #[inline(never)]
     pub fn clear_state(mut self, kind: PartResetKind) {
         // ── Per-tenant runtime state (cleared for every reset kind) ──
@@ -471,23 +491,56 @@ impl Partition {
         self.set_ephemeral_mk_key_id(None);
         self.set_sd_mk_key_id(None);
         self.set_unwrapping_key_id(None);
+        // The SD one-shot must follow its key. `set_sd_mk_key_id(None)` above
+        // drops the SDMK handle and the caller wipes the vault material for
+        // *every* reset kind, so leaving `sd_initialized` set would leave the
+        // partition claiming a security domain whose masking key no longer
+        // exists — and `SdCreateRemoteBackup`'s one-shot gate would then
+        // refuse to mint a replacement, permanently. The std PAL clears this
+        // on both `part_enable` and `clear_enabled_state`; uno previously
+        // cleared it only on `Disable`, so an NSSR (`Migrate`) left the flag
+        // stranded. Note `bk3_initialized` is deliberately *not* moved here:
+        // its `sealed_bk3` blob is preserved by `Migrate`, so that flag stays
+        // consistent with its material.
+        self.set_sd_initialized(false);
         // Caller-presented secret + derived BK3 session key.
         self.clear_credential();
         self.clear_bk3_session();
         // Reset the PIN lockout policy to default (matches the reference
         // `state.disable()` and `state.migrate()`).
         self.set_pin_policy(PinPolicy::default());
-        // Per-tenant runtime: nonce, session table, session metadata.
+        // Per-tenant runtime: nonce and the volatile session metadata. The
+        // persistent `session_table` is deliberately *not* touched here,
+        // because the right disposition depends on the caller: a disable
+        // keeps the allocation mask so the host can still close the sessions
+        // it owns, while a migrate (NSSR) or free releases the slots. That
+        // policy needs the session-store layout, so it lives one layer up —
+        // see `SessionTable::mark_all_needs_renego` / `clear_all`, which
+        // every caller of this function invokes. Mirrors the reference, whose
+        // `disable` calls `session_table().restore(backup())` and whose
+        // `clear_partition_info` calls `session_table().restore(0)`.
         {
             let slot = self.slot_mut();
             slot.nonce = [0u8; NONCE_LEN];
-            slot.session_table = [0u8; SESSION_TABLE_LEN];
             slot.session_meta = [0u8; 2];
         }
 
         // ── Write-once provisioning material ──
         // Preserved by `Migrate` (NSSR keeps provisioning); wiped by `Disable`
         // (partition deallocation).
+        // An NSSR (`Migrate`) returns the partition to its just-allocated
+        // state as far as the session PSKs are concerned: `part_psk` is
+        // `RequiredPresent` and default-baked at allocation, so the slots
+        // must read back as the defaults rather than keeping a rotated
+        // value. Re-uses [`bake_default_psks`] so allocation and NSSR can
+        // never drift apart. Mirrors the std PAL, whose migrated entry
+        // resets `psk_co`/`psk_cu` to `None` and therefore reads back as
+        // `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU`. `Disable` instead zeroes
+        // them below, because the slot is being deallocated.
+        if matches!(kind, PartResetKind::Migrate) {
+            self.bake_default_psks();
+        }
+
         if matches!(kind, PartResetKind::Disable) {
             self.clear_pta_pub_key();
             self.clear_policy_hash();
@@ -496,7 +549,6 @@ impl Partition {
             self.clear_sapota_thumbprint();
             self.clear_sealed_bk3();
             self.set_bk3_initialized(false);
-            self.set_sd_initialized(false);
             // Disarm Gate 1 and wipe the SP-published unwrapping key: the slot
             // belongs to a partition that is being deallocated. A later
             // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh
@@ -507,6 +559,28 @@ impl Partition {
             slot.psk_cu = [0u8; PSK_LEN];
             slot.vm_launch_guid = [0u8; GUID_LEN];
         }
+    }
+
+    /// Bakes the default pre-shared keys into the slot.
+    ///
+    /// `part_psk` is contractually `RequiredPresent` — "default-baked at
+    /// allocation time" from [`DEFAULT_PSK_CO`] / [`DEFAULT_PSK_CU`] — so a
+    /// freshly allocated partition must present the defaults rather than the
+    /// all-zero GSRAM pattern. Without this the FW runs the TBOR session
+    /// handshake's HPKE `auth_psk` schedule with a zero PSK while the host
+    /// uses the default, so the derived export secrets diverge and the
+    /// Phase-1 confirm MAC fails.
+    ///
+    /// Called from `part_alloc`. The reset paths seed their own slots:
+    /// `clear_state([`PartResetKind::Migrate`])` re-bakes these same
+    /// defaults on an NSSR (so a rotated PSK does not survive the reset),
+    /// and [`PartResetKind::Disable`] zeroes them because the slot is being
+    /// deallocated.
+    #[inline(never)]
+    pub fn bake_default_psks(mut self) {
+        let slot = self.slot_mut();
+        slot.psk_co = DEFAULT_PSK_CO;
+        slot.psk_cu = DEFAULT_PSK_CU;
     }
 
     /// Borrows the partition's 16-byte identity.
@@ -691,11 +765,12 @@ impl Partition {
         unsafe { DmaBuf::from_raw(&slot.sealed_bk3.data[..len]) }
     }
 
-    /// Writes the sealed BK3 blob (stores length + data).
+    /// Stores a sealed BK3 blob once until explicitly cleared.
     ///
     /// # Errors
     ///
     /// - [`HsmError::InvalidArg`] — `v` exceeds `SEALED_BK3_DATA_LEN`.
+    /// - [`HsmError::SealedBk3AlreadySet`] — a non-empty blob is already stored.
     #[inline(never)]
     pub fn set_sealed_bk3(mut self, v: &DmaBuf) -> HsmResult<()> {
         let src: &[u8] = v;
@@ -703,10 +778,12 @@ impl Partition {
             return Err(HsmError::InvalidArg);
         }
         let slot = self.slot_mut();
+        if slot.sealed_bk3.len != 0 {
+            return Err(HsmError::SealedBk3AlreadySet);
+        }
         slot.sealed_bk3.len = src.len() as u32;
         slot.sealed_bk3.data[..src.len()].copy_from_slice(src);
-        // Zeroize any stale (sensitive) bytes left by a previously longer
-        // blob so nothing survives past the new length.
+        // Clear the unused tail of the storage slot.
         slot.sealed_bk3.data[src.len()..].fill(0);
         Ok(())
     }

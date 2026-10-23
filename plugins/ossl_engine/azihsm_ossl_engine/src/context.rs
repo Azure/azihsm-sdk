@@ -12,6 +12,11 @@ use std::path::Path;
 use azihsm_api::HsmCredentials;
 use azihsm_api::HsmEccPrivateKey;
 use azihsm_api::HsmError;
+use azihsm_api::HsmKeyClass;
+use azihsm_api::HsmKeyDeleteOp;
+use azihsm_api::HsmKeyKind;
+use azihsm_api::HsmKeyManager;
+use azihsm_api::HsmKeyPropsBuilder;
 use azihsm_api::HsmOwnerBackupKey;
 use azihsm_api::HsmOwnerBackupKeyConfig;
 use azihsm_api::HsmOwnerBackupKeySource;
@@ -20,6 +25,9 @@ use azihsm_api::HsmPartitionManager;
 use azihsm_api::HsmPotaEndorsement;
 use azihsm_api::HsmPotaEndorsementData;
 use azihsm_api::HsmPotaEndorsementSource;
+use azihsm_api::HsmRsaKeyUnwrappingKeyGenAlgo;
+use azihsm_api::HsmRsaPrivateKey;
+use azihsm_api::HsmRsaPublicKey;
 use azihsm_api::HsmSession;
 use azihsm_api::MobkProviderCallback;
 use azihsm_api::PotaEndorsementCallback;
@@ -52,10 +60,10 @@ pub struct EngineData {
     /// HSM private keys loaded via the engine's `load_private_key` path. Owned
     /// here — never via an `EC_KEY` ex_data free callback, which would leave a
     /// libcrypto-held function pointer into this `.so` (see the module docs of
-    /// [`azihsm_ossl_engine_core::exdata`]). Each key's `Drop` deletes it from
-    /// the HSM; that runs when this `EngineData` is dropped by the destroy
-    /// handler, while the `.so` is loaded. Declared before `hsm` so it drops
-    /// first, while the session is still open.
+    /// [`azihsm_ossl_engine_core::exdata`]). HSM keys are not deleted by their
+    /// own drop: they are deleted explicitly, on `release_loaded_key` and by
+    /// this type's `Drop` at engine teardown (which runs while the `.so` is
+    /// loaded and the session still open).
     ///
     /// Keys therefore accumulate for the engine's lifetime: repeated loads (even
     /// of the same URI) each retain a handle. That is fine for the usual load-key-
@@ -67,7 +75,24 @@ pub struct EngineData {
     // the `vec_box` suggestion to drop the `Box` does not apply.
     #[allow(clippy::vec_box)]
     loaded_keys: Mutex<Vec<Box<HsmEccPrivateKey>>>,
+    /// Loaded HSM RSA private keys, retained like `loaded_keys` (the RSA loader
+    /// stashes a raw pointer into `RSA` ex_data, so the `Box` address must be
+    /// stable across `Vec` growth). Deleted at teardown alongside the EC keys.
+    #[allow(clippy::vec_box)]
+    loaded_rsa_keys: Mutex<Vec<Box<HsmRsaPrivateKey>>>,
+    /// The HSM's RSA unwrapping key pair, fetched once on first import and
+    /// cached for the engine's lifetime (fetching is a stateful HSM op, so
+    /// re-fetching would leak handles). Deleted at teardown, mirroring the
+    /// provider's session-scoped unwrapping-key cache.
+    unwrapping_key: Mutex<Option<UnwrappingKey>>,
     hsm: Mutex<Option<HsmEngineContext>>,
+}
+
+/// The HSM's RSA unwrapping key pair: the public half wraps an external key
+/// (`azihsm.input_key`), the private half unwraps it into the HSM.
+pub(crate) struct UnwrappingKey {
+    pub(crate) private: HsmRsaPrivateKey,
+    pub(crate) public: HsmRsaPublicKey,
 }
 
 impl Default for EngineData {
@@ -80,6 +105,8 @@ impl EngineData {
     pub fn new() -> Self {
         Self {
             loaded_keys: Mutex::new(Vec::new()),
+            loaded_rsa_keys: Mutex::new(Vec::new()),
+            unwrapping_key: Mutex::new(None),
             hsm: Mutex::new(None),
         }
     }
@@ -142,11 +169,12 @@ impl EngineData {
     }
 
     /// Take ownership of a loaded HSM private key so it lives until the engine
-    /// is destroyed (its `Drop` deletes it from the HSM), and return a stable
-    /// non-owning pointer to it for stashing in `EC_KEY` ex_data. Boxing keeps
-    /// the address stable across `Vec` growth; the returned pointer stays valid
-    /// until this `EngineData` is dropped by the destroy handler, or until
-    /// [`release_loaded_key`](Self::release_loaded_key) drops it early.
+    /// is destroyed (deleted from the HSM at teardown — HSM keys are not
+    /// deleted by their own drop), and return a stable non-owning pointer to
+    /// it for stashing in `EC_KEY` ex_data. Boxing keeps the address stable
+    /// across `Vec` growth; the returned pointer stays valid until this
+    /// `EngineData` is dropped by the destroy handler, or until
+    /// [`release_loaded_key`](Self::release_loaded_key) deletes it early.
     ///
     /// Crate-internal: an implementation detail of the key loader.
     pub(crate) fn retain_loaded_key(&self, key: HsmEccPrivateKey) -> *const HsmEccPrivateKey {
@@ -156,16 +184,111 @@ impl EngineData {
         ptr
     }
 
-    /// Drop a key previously handed to [`retain_loaded_key`](Self::retain_loaded_key),
+    /// Delete a key previously handed to [`retain_loaded_key`](Self::retain_loaded_key),
     /// identified by the pointer it returned. Used to roll back on a partial
     /// load failure (e.g. if stashing the ex_data pointer fails) so the key
     /// doesn't linger in the HSM until engine teardown. A no-op if the pointer
-    /// isn't currently retained. Dropping the box deletes the key from the HSM.
+    /// isn't currently retained.
     pub(crate) fn release_loaded_key(&self, ptr: *const HsmEccPrivateKey) {
-        let mut keys = self.loaded_keys.lock();
-        if let Some(pos) = keys.iter().position(|k| std::ptr::eq(k.as_ref(), ptr)) {
-            keys.remove(pos);
+        let removed = {
+            let mut keys = self.loaded_keys.lock();
+            keys.iter()
+                .position(|k| std::ptr::eq(k.as_ref(), ptr))
+                .map(|pos| keys.remove(pos))
+        };
+        if let Some(key) = removed {
+            delete_hsm_key(*key, "released EC private key");
         }
+    }
+
+    /// RSA counterpart of [`retain_loaded_key`](Self::retain_loaded_key): take
+    /// ownership of a loaded HSM RSA private key and return a stable non-owning
+    /// pointer for stashing in `RSA` ex_data.
+    pub(crate) fn retain_loaded_rsa_key(&self, key: HsmRsaPrivateKey) -> *const HsmRsaPrivateKey {
+        let boxed = Box::new(key);
+        let ptr: *const HsmRsaPrivateKey = boxed.as_ref();
+        self.loaded_rsa_keys.lock().push(boxed);
+        ptr
+    }
+
+    /// RSA counterpart of [`release_loaded_key`](Self::release_loaded_key).
+    pub(crate) fn release_loaded_rsa_key(&self, ptr: *const HsmRsaPrivateKey) {
+        let removed = {
+            let mut keys = self.loaded_rsa_keys.lock();
+            keys.iter()
+                .position(|k| std::ptr::eq(k.as_ref(), ptr))
+                .map(|pos| keys.remove(pos))
+        };
+        if let Some(key) = removed {
+            delete_hsm_key(*key, "released RSA private key");
+        }
+    }
+
+    /// Run `f` with the HSM's RSA unwrapping key pair, fetching and caching it
+    /// on first use. `session` must be this engine's open session (the caller
+    /// already holds it via [`with_session`](Self::with_session)).
+    pub(crate) fn with_unwrapping_key<F, R>(&self, session: &HsmSession, f: F) -> EngineResult<R>
+    where
+        F: FnOnce(&HsmRsaPrivateKey, &HsmRsaPublicKey) -> EngineResult<R>,
+    {
+        let mut guard = self.unwrapping_key.lock();
+        if guard.is_none() {
+            *guard = Some(fetch_unwrapping_key(session)?);
+        }
+        let uk = guard
+            .as_ref()
+            .ok_or_else(|| EngineError::Other("unwrapping key unavailable".into()))?;
+        f(&uk.private, &uk.public)
+    }
+}
+
+impl Drop for EngineData {
+    /// HSM keys are not deleted by their own drop: delete every retained key
+    /// and the cached unwrapping key explicitly at engine teardown.
+    fn drop(&mut self) {
+        for key in self.loaded_keys.get_mut().drain(..) {
+            delete_hsm_key(*key, "retained EC private key");
+        }
+        for key in self.loaded_rsa_keys.get_mut().drain(..) {
+            delete_hsm_key(*key, "retained RSA private key");
+        }
+        if let Some(uk) = self.unwrapping_key.get_mut().take() {
+            // The public half's delete is a documented no-op; deleting the
+            // private half releases the HSM handle.
+            delete_hsm_key(uk.private, "RSA unwrapping key");
+        }
+    }
+}
+
+/// Fetch the HSM's RSA unwrapping key pair (2048-bit, unwrap/wrap usage), the
+/// props matching the api's `HsmRsaKeyUnwrappingKeyGenAlgo` requirements.
+fn fetch_unwrapping_key(session: &HsmSession) -> EngineResult<UnwrappingKey> {
+    let priv_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Private)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_unwrap(true)
+        .build()
+        .map_err(|e| EngineError::wrap("build unwrapping private props", e))?;
+    let pub_props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Public)
+        .key_kind(HsmKeyKind::Rsa)
+        .bits(2048)
+        .can_wrap(true)
+        .build()
+        .map_err(|e| EngineError::wrap("build unwrapping public props", e))?;
+    let mut algo = HsmRsaKeyUnwrappingKeyGenAlgo::default();
+    let (private, public) =
+        HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
+            .map_err(|e| EngineError::wrap("fetch RSA unwrapping key", e))?;
+    Ok(UnwrappingKey { private, public })
+}
+
+/// Best-effort HSM key deletion for cleanup paths: failures are logged, never
+/// propagated (the caller's operation should not fail over cleanup).
+pub(crate) fn delete_hsm_key<K: HsmKeyDeleteOp>(key: K, what: &str) {
+    if let Err(e) = key.delete_key() {
+        tracing::warn!(target: "azihsm", "failed to delete {what} from the HSM: {e}");
     }
 }
 

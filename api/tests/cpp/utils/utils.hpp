@@ -9,10 +9,20 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-/// Returns the standard test API revision (1.0) used across all C++ tests.
+inline constexpr uint32_t kReportDataSize = 128;
+inline constexpr uint32_t kShortReportDataSize = kReportDataSize / 2;
+inline constexpr uint32_t kValidReportDataSize = kReportDataSize;
+
+/// Returns the standard test API revision (1.0) used by MBOR tests.
 inline azihsm_api_rev test_api_rev()
 {
     return azihsm_api_rev{ 1, 0 };
+}
+
+/// Returns the minimum API revision used by `open_session_ex` test fixtures.
+inline azihsm_api_rev session_ex_test_api_rev()
+{
+    return azihsm_api_rev{ 1, 1 };
 }
 
 /// Returns the system temporary directory (`/tmp` on Linux, `%TEMP%` on Windows).

@@ -237,7 +237,7 @@ impl<P: HsmPal> Hsm<P> {
             )?;
 
         // ── Phase 2: decode + validate + dispatch (no yield) ───────
-        let (resp, session_ctrl, cqe_sess_id, cqe_closed) = {
+        let (resp, session_ctrl, cqe_sess_id, cqe_app_vault_id, cqe_closed) = {
             let req = &mut req_buf[..params.src_len];
             let mut decoder = DdiDecoder::new(req);
             let hdr: DdiReqHdr = decoder.decode_hdr().op_err(
@@ -248,16 +248,42 @@ impl<P: HsmPal> Hsm<P> {
 
             let session_ctrl = SessionCtrl::from_op(hdr.op);
 
-            let dispatch_result = match Self::validate_session(
-                &hdr,
-                session_ctrl,
-                params.session_flags,
-                params.sqe_session_id,
-            )
-            .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
-            {
-                Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
-                Err(e) => Err(e),
+            // The decoder borrows the request buffer, so it is scoped:
+            // the borrow has to end before the buffer can be handed to
+            // the platform below.
+            let core_result = {
+                let mut decoder = decoder;
+                match Self::validate_session(
+                    &hdr,
+                    session_ctrl,
+                    params.session_flags,
+                    params.sqe_session_id,
+                )
+                .and_then(|()| self.validate_session_live(io, &hdr, session_ctrl))
+                {
+                    Ok(()) => ddi::mbor::dispatch(self.pal(), io, &mut decoder, &hdr).await,
+                    Err(e) => Err(e),
+                }
+            };
+            // `UnsupportedCmd` means no core handler claimed this
+            // opcode. Offer the untouched request to the platform before
+            // giving up; its answer, including its own `UnsupportedCmd`,
+            // is what the host sees.
+            //
+            // A handler for a *known* opcode can also return this status
+            // — `rsa_unwrap` does for an unsupported key type — so the
+            // hook may occasionally be offered a request the core did
+            // recognise. That is harmless as long as a platform claims
+            // only opcodes the core has no handler for, which is the
+            // documented contract; the alternative, duplicating the
+            // opcode table here to distinguish the two, would rot.
+            let dispatch_result = match core_result {
+                Err(HsmError::UnsupportedCmd) => self
+                    .pal()
+                    .mbor_dispatch(io, &mut req_buf[..params.src_len])
+                    .await
+                    .map(ddi::mbor::DispatchResult::from_resp),
+                other => other,
             };
 
             // Fill the CQE session fields so the host can track the session
@@ -266,13 +292,17 @@ impl<P: HsmPal> Hsm<P> {
             // a successful CloseSession additionally sets `session_closed`.
             // Both are left cleared on any dispatch failure so the fields are
             // only populated on success.
-            let (cqe_sess_id, cqe_closed) = match &dispatch_result {
+            let (cqe_sess_id, cqe_app_vault_id, cqe_closed) = match &dispatch_result {
                 Ok(out) => match session_ctrl {
-                    SessionCtrl::Open => (out.session_id, false),
-                    SessionCtrl::Close => (hdr.sess_id, true),
-                    _ => (None, false),
+                    SessionCtrl::Open => (
+                        out.session_id,
+                        Some(ddi::mbor::open_session::SESSION_SHORT_APP_ID),
+                        false,
+                    ),
+                    SessionCtrl::Close => (hdr.sess_id, None, true),
+                    _ => (None, None, false),
                 },
-                Err(_) => (None, false),
+                Err(_) => (None, None, false),
             };
 
             let resp: &DmaBuf = dispatch_result.map(|out| out.resp).or_else(|status| {
@@ -282,7 +312,13 @@ impl<P: HsmPal> Hsm<P> {
                     .map(|b| &*b)
             })?;
 
-            (resp, session_ctrl, cqe_sess_id, cqe_closed)
+            (
+                resp,
+                session_ctrl,
+                cqe_sess_id,
+                cqe_app_vault_id,
+                cqe_closed,
+            )
         };
 
         let resp_len = resp.len();
@@ -301,7 +337,7 @@ impl<P: HsmPal> Hsm<P> {
             resp_len,
             session_ctrl,
             cqe_sess_id,
-            None,
+            cqe_app_vault_id,
             cqe_closed,
         ))
     }
@@ -344,7 +380,7 @@ impl<P: HsmPal> Hsm<P> {
             )?;
 
         // ── Phase 2: parse TBOR header, validate session, dispatch ─
-        let (resp, session_ctrl) = {
+        let (resp, session_ctrl, cqe_sess_id, cqe_closed) = {
             // Capture `opcode` via a short-lived shared reborrow so
             // the parsed `RequestView` is dropped before `dispatch`
             // takes a mutable borrow of the same buffer.  AEAD-path
@@ -374,7 +410,7 @@ impl<P: HsmPal> Hsm<P> {
                         ddi::tbor::encode_tbor_err(opcode, HsmError::InvalidArg, buf)
                     })
                     .op_status(HostStatus::INTERNAL_ERROR)?;
-                (resp, session_ctrl)
+                (resp, session_ctrl, None, false)
             } else {
                 let dispatch_result = ddi::tbor::dispatch(
                     self.pal(),
@@ -386,13 +422,33 @@ impl<P: HsmPal> Hsm<P> {
                     undo,
                 )
                 .await;
-                let resp: &DmaBuf = dispatch_result.or_else(|err| {
+                // Mirror `handle_mbor_op`: a successful session-establishing
+                // command reports its allocated id in `session_id` (which sets
+                // `session_id_valid`), and a successful SessionClose additionally
+                // sets `session_closed`. The host driver registers/drops the
+                // session against the calling file handle from these fields —
+                // without them every follow-up in-session TBOR ioctl is rejected
+                // with `NoExistingSession` before reaching the firmware. Both are
+                // left cleared on any dispatch failure.
+                let (cqe_sess_id, cqe_closed) = match &dispatch_result {
+                    Ok(out) => match session_ctrl {
+                        SessionCtrl::Open => (out.session_id, false),
+                        // The dispatcher already proved the body `session_id`
+                        // matches the SQE one for close, so use the SQE value
+                        // directly rather than threading it back out.
+                        SessionCtrl::Close => (Some(params.sqe_session_id), true),
+                        _ => (None, false),
+                    },
+                    Err(_) => (None, false),
+                };
+
+                let resp: &DmaBuf = dispatch_result.map(|out| out.resp).or_else(|err| {
                     self.pal()
                         .dma_alloc_var(io, |buf| ddi::tbor::encode_tbor_err(opcode, err, buf))
                         .op_status(HostStatus::INTERNAL_ERROR)
                         .map(|b| &*b)
                 })?;
-                (resp, session_ctrl)
+                (resp, session_ctrl, cqe_sess_id, cqe_closed)
             }
         };
 
@@ -408,7 +464,13 @@ impl<P: HsmPal> Hsm<P> {
                 HostStatus::DMA_TXN_ERROR,
             )?;
 
-        Ok(HsmOpStatus::new(resp_len, session_ctrl, None, None, false))
+        Ok(HsmOpStatus::new(
+            resp_len,
+            session_ctrl,
+            cqe_sess_id,
+            None,
+            cqe_closed,
+        ))
     }
 
     /// Validates the SQE for an MBOR / TBOR IO command and extracts the
@@ -541,13 +603,46 @@ impl<P: HsmPal> Hsm<P> {
 
     /// Handles an [`OP_FLUSH`] IO command.
     ///
-    /// Returns [`HsmError::IoChannelUnknownOp`] — flush is not yet supported.
-    async fn handle_flush_op(&self, _io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
-        Err(OpError::new(
-            HsmError::IoChannelUnknownOp,
-            HostStatus::INVALID_COMMAND_OPCODE,
-        ))
+    /// Tears down the SQE's session without DMA or a DDI response body.
+    /// An already-free slot is an idempotent cleanup.
+    async fn handle_flush_op(&self, io: &mut P::Io) -> Result<HsmOpStatus, OpError> {
+        let sess_id = flush_session_id(&Sqe::from(io.sqe()))
+            .op_status(HostStatus::INVALID_FIELD_IN_COMMAND)?;
+        let _lock = self
+            .pal()
+            .partition_lock(io)
+            .await
+            .op_status(HostStatus::INTERNAL_ERROR)?;
+        let result = self
+            .pal()
+            .session_destroy(io, HsmSessId::from(sess_id))
+            .await;
+        flush_session_completion(sess_id, result)
     }
+}
+
+fn flush_session_completion(sess_id: u16, result: HsmResult<()>) -> Result<HsmOpStatus, OpError> {
+    match result {
+        Ok(()) | Err(HsmError::SessionNotFound) => Ok(HsmOpStatus::new(
+            0,
+            SessionCtrl::Close,
+            Some(sess_id),
+            None,
+            true,
+        )),
+        Err(err) => Err(err).op_status(HostStatus::INTERNAL_ERROR),
+    }
+}
+
+fn flush_session_id(sqe: &Sqe<'_>) -> HsmResult<u16> {
+    let flags = sqe.session_flags();
+    if flags.ctrl() != SessionCtrl::Close as u8 {
+        return Err(HsmError::InvalidSessionControlOpcode);
+    }
+    if !flags.id_valid() {
+        return Err(HsmError::SessionExpected);
+    }
+    Ok(sqe.session_id())
 }
 
 /// Fields extracted from a validated MBOR / TBOR IO SQE.
@@ -601,6 +696,86 @@ fn classify_session_state(session_ctrl: SessionCtrl, state: HsmSessionState) -> 
 #[cfg(test)]
 mod session_gate_tests {
     use super::*;
+
+    #[test]
+    fn flush_success_and_absent_session_report_closed_completion() {
+        for sess_id in [0, 7, u16::MAX] {
+            for result in [Ok(()), Err(HsmError::SessionNotFound)] {
+                let status = flush_session_completion(sess_id, result).unwrap();
+                let flags = CqeDw0::from(status.cqe_dw0_session);
+                let ids = CqeDw1::from(status.cqe_dw1);
+                assert_eq!(status.resp_len, 0);
+                assert_eq!(flags.dst_len(), 0);
+                assert_eq!(flags.session_ctrl(), SessionCtrl::Close as u8);
+                assert!(flags.session_id_valid());
+                assert!(flags.session_closed());
+                assert!(!flags.app_vault_id_valid());
+                assert_eq!(ids.session_id(), sess_id);
+                assert_eq!(ids.app_vault_id(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn flush_preserves_other_teardown_errors() {
+        for err in [
+            HsmError::KeyNotFound,
+            HsmError::InvalidArg,
+            HsmError::InternalError,
+        ] {
+            let result = flush_session_completion(7, Err(err)).unwrap_err();
+            assert_eq!(result.err, err);
+            assert_eq!(result.status, HostStatus::INTERNAL_ERROR);
+        }
+    }
+
+    #[test]
+    fn flush_uses_sqe_session_without_dma_buffers() {
+        for sess_id in [0, 7, u16::MAX] {
+            let sqe = SqeBuilder::new()
+                .cmd(CmdDword::new().with_op(OP_FLUSH))
+                .session_flags(
+                    SessionFlags::new()
+                        .with_ctrl(SessionCtrl::Close as u8)
+                        .with_id_valid(true),
+                )
+                .session_id(sess_id)
+                .build();
+            assert_eq!(flush_session_id(&Sqe::from(&sqe)), Ok(sess_id));
+        }
+    }
+
+    #[test]
+    fn flush_rejects_wrong_session_control() {
+        for ctrl in [
+            SessionCtrl::NoSession,
+            SessionCtrl::Open,
+            SessionCtrl::InSession,
+        ] {
+            let sqe = SqeBuilder::new()
+                .session_flags(
+                    SessionFlags::new()
+                        .with_ctrl(ctrl as u8)
+                        .with_id_valid(true),
+                )
+                .build();
+            assert_eq!(
+                flush_session_id(&Sqe::from(&sqe)),
+                Err(HsmError::InvalidSessionControlOpcode)
+            );
+        }
+    }
+
+    #[test]
+    fn flush_requires_session_id_valid() {
+        let sqe = SqeBuilder::new()
+            .session_flags(SessionFlags::new().with_ctrl(SessionCtrl::Close as u8))
+            .build();
+        assert_eq!(
+            flush_session_id(&Sqe::from(&sqe)),
+            Err(HsmError::SessionExpected)
+        );
+    }
 
     #[test]
     fn no_session_and_open_never_require_a_live_slot() {

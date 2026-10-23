@@ -40,15 +40,17 @@ fn sd_restore_peer_backup_roundtrip() {
     // capturing the peer backup plus the sd_mk / local_mk backups device 2
     // needs to restore.
     let (session1, policy, pid_pub, local_mk) = provision_backing(&sata, &pota, None, None);
-    let (masked, report) = masked_key_and_report(&session1);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session1);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session1.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session1.sd_create_remote_backup(&policy, &masked, rcvr_chain, ev)
+        })
         .expect("create remote backup");
     // Self-peer backup: seal to our own attested identity as destination.
     let pok_peer_backup = evidence
         .with_hsm_evidence(|dst| {
-            session1.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session1.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
     drop(session1);
@@ -56,26 +58,26 @@ fn sd_restore_peer_backup_roundtrip() {
     // Device 2 (reboot, same seed): restore PartLocalMK from device 1's
     // backup, then restore the security domain from the peer backup.
     let (session2, _policy2, _pid_pub2, _lmk2) =
-        provision_backing(&sata, &pota, Some(policy), Some(&local_mk));
+        provision_backing(&sata, &pota, Some(&policy), Some(&local_mk));
     let restored = evidence
         .with_hsm_evidence(|src| {
             session2.sd_restore_peer_backup(
+                &policy,
                 &masked,
                 src,
-                &policy,
                 &pok_peer_backup,
                 &created.sd_mk_backup,
             )
         })
         .expect("restore peer backup");
 
-    // Local backup (BKS3 re-masked under PartLocalMK), 180 B, non-zero.
+    // Local backup (BKS3 re-masked under PartLocalMK), 276 B, non-zero.
     assert_eq!(restored.pok_local_backup.len(), MASKED_SD_LEN);
     assert!(
         restored.pok_local_backup.iter().any(|&b| b != 0),
         "pok_local_backup must not be all-zero",
     );
-    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 164 B.
+    // Refreshed masking-key backup (SDMK re-masked under SDBMK), 260 B.
     assert_eq!(restored.sd_mk_backup.len(), SD_MK_BACKUP_LEN);
     assert!(
         restored.sd_mk_backup.iter().any(|&b| b != 0),
@@ -93,22 +95,24 @@ fn sd_restore_peer_backup_is_one_shot() {
     let pota = CaKey::generate();
 
     let (session, policy, pid_pub, _local_mk) = provision_backing(&sata, &pota, None, None);
-    let (masked, report) = masked_key_and_report(&session);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
     let created = evidence
-        .with_hsm_evidence(|ev| session.sd_create_remote_backup(&masked, ev, &policy))
+        .with_create_backup(|rcvr_chain, ev| {
+            session.sd_create_remote_backup(&policy, &masked, rcvr_chain, ev)
+        })
         .expect("create remote backup");
     let pok_peer_backup = evidence
         .with_hsm_evidence(|dst| {
-            session.sd_create_peer_backup(&masked, dst, &policy, &created.pok_local_backup)
+            session.sd_create_peer_backup(&policy, &masked, dst, &created.pok_local_backup)
         })
         .expect("create peer backup");
 
     let restored = evidence.with_hsm_evidence(|src| {
         session.sd_restore_peer_backup(
+            &policy,
             &masked,
             src,
-            &policy,
             &pok_peer_backup,
             &created.sd_mk_backup,
         )
@@ -132,13 +136,13 @@ fn sd_restore_peer_backup_rejects_without_peer_cloning() {
 
     let (session, policy, pid_pub, _local_mk) =
         provision_backing_ex(&sata, &pota, None, None, false);
-    let (masked, report) = masked_key_and_report(&session);
-    let evidence = build_receiver_evidence(&pid_pub, &sata, &report);
+    let (masked, rcvr_pub, report) = masked_key_and_report(&session);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata, &report);
 
     let pok_peer_backup = [0u8; POK_REMOTE_BACKUP_LEN];
     let prev_sd_mk_backup = [0u8; SD_MK_BACKUP_LEN];
     let restored = evidence.with_hsm_evidence(|src| {
-        session.sd_restore_peer_backup(&masked, src, &policy, &pok_peer_backup, &prev_sd_mk_backup)
+        session.sd_restore_peer_backup(&policy, &masked, src, &pok_peer_backup, &prev_sd_mk_backup)
     });
     assert!(
         matches!(restored, Err(HsmError::SdPeerCloningNotAllowed)),

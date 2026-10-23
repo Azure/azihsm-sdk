@@ -45,9 +45,6 @@ use super::resolve_masking_key;
 use super::validate_active_session;
 use crate::part_state;
 
-/// Envelope key-label recorded in the masked blob's `MaskedKeyMetadata`.
-const HMAC_KEY_LABEL: &[u8] = b"HmacKey";
-
 /// Map the wire [`HashAlgo`] onto the firmware hash algorithm, the
 /// variable-length HMAC vault kind stamped into the masked blob's
 /// metadata, and the `[min, max]` key-length range for the variant
@@ -134,6 +131,9 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 
     let (algo, kind, min_len, max_len) = hmac_variant(req.hash_algo())?;
     let key_len = validate_key_len(req.key_length(), min_len, max_len)?;
+    // Caller-supplied label stamped into the masked metadata (≤ 128 B,
+    // bounded by the wire `max_len`); empty for an unlabeled key.
+    let caller_label = req.key_label();
     // The masked-blob length is fixed by the requested key length
     // (32..=128 B → 164..=260 B), so the response slot can be reserved up
     // front, before any key material exists.
@@ -165,8 +165,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
             pal.hmac_gen_key(io, algo, key_buf).await?;
 
             let masking_key = resolve_masking_key(pal, io, scope, sess_id)?;
-            let key_label = alloc.dma_alloc(HMAC_KEY_LABEL.len())?;
-            key_label.copy_from_slice(HMAC_KEY_LABEL);
+            let key_label = alloc.dma_alloc(caller_label.len())?;
+            key_label.copy_from_slice(caller_label);
             let params = MaskParams {
                 key_kind: kind,
                 key_attrs: attrs,

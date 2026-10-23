@@ -108,8 +108,8 @@ pub trait HsmCertStore {
     /// - `slot_id` — chain slot within the partition.
     /// - `idx` — zero-based certificate index; must satisfy
     ///   `idx < CertChainInfo::count` for the same `(part_id,
-    ///   slot_id)`.  By convention `idx == 0` is the leaf and the
-    ///   last index is the root.
+    ///   slot_id)`.  By convention `idx == 0` is the root and the
+    ///   last index (`count - 1`) is the partition leaf.
     /// - `cert` — `None` to query the size, or `Some(buf)` to copy
     ///   the DER-encoded certificate into `buf[..size]`.  `buf.len()`
     ///   must be ≥ size.

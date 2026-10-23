@@ -22,6 +22,40 @@ fn import_rsa_key(
     .expect("Failed to import RSA encrypt/decrypt key pair")
 }
 
+/// Verify labeled, session-scoped RSA-CRT keys through OAEP for every key size.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
+#[session_test]
+fn test_rsa_crt_enc_dec_labeled_session_keys(session: HsmSession) {
+    for (bits, modulus_bytes) in [(2048, 256), (3072, 384), (4096, 512)] {
+        let label = b"rsa-crt-decrypt-key";
+        let host_key =
+            crypto::RsaPrivateKey::generate(modulus_bytes).expect("Failed to generate RSA Key");
+        let der = host_key.to_vec().expect("Failed to export RSA Key");
+        let (priv_key, pub_key) = try_import_rsa_key_pair_with_kind(
+            &session,
+            &der,
+            bits,
+            HsmKeyKind::RsaCrt,
+            label,
+            ImportedRsaKeyUsage::EncryptDecrypt,
+            true,
+        )
+        .expect("Failed to import RSA-CRT encrypt/decrypt key pair");
+        assert_eq!(priv_key.label(), label.to_vec());
+        assert_eq!(pub_key.label(), label.to_vec());
+
+        let plaintext = b"RSA encrypt/decrypt";
+        let mut algo = HsmRsaEncryptAlgo::with_oaep_padding(HsmHashAlgo::Sha256, None);
+        let ciphertext = HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext)
+            .expect("Failed to encrypt data");
+        let decrypted = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext)
+            .expect("Failed to decrypt data");
+
+        assert_eq!(decrypted, plaintext, "Decryption failed for {bits}-bit key");
+    }
+}
+
 /// Ensure RSA-2048 PKCS1 encryption and decryption round-trips successfully.
 #[session_test]
 fn test_rsa_2048_pkcs1_enc_dec(session: HsmSession) {
@@ -157,18 +191,32 @@ fn test_rsa_decrypt_with_wrong_key_fails(session: HsmSession) {
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_b, &ciphertext);
 
-    assert!(matches!(
+    #[cfg(feature = "session-ex-tests")]
+    let expected_error = matches!(
         result,
-        Err(HsmError::DdiCmdFailure | HsmError::InternalError)
-    ));
+        Err(HsmError::InternalError | HsmError::InvalidArgument)
+    );
+    #[cfg(not(feature = "session-ex-tests"))]
+    let expected_error = matches!(
+        result,
+        Err(HsmError::InternalError | HsmError::DdiCmdFailure)
+    );
+
+    assert!(
+        expected_error,
+        "Unexpected error for wrong RSA private key: {:?}",
+        result.as_ref().err()
+    );
 }
 
 /// Ensure tampered ciphertext fails to decrypt
 #[session_test]
 fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
-    let priv_key = RsaPrivateKey::generate(256).expect("Failed to generate RSA Key");
+    const RSA_KEY_BITS: u32 = 2048;
+    let key_bytes = usize::try_from(RSA_KEY_BITS / u8::BITS).expect("RSA key size must fit usize");
+    let priv_key = RsaPrivateKey::generate(key_bytes).expect("Failed to generate RSA Key");
     let der = priv_key.to_vec().expect("Failed to export RSA Key");
-    let (priv_key, pub_key) = import_rsa_key(&session, &der, 2048);
+    let (priv_key, pub_key) = import_rsa_key(&session, &der, RSA_KEY_BITS);
 
     let plaintext = b"tamper test";
 
@@ -176,15 +224,28 @@ fn test_rsa_tampered_ciphertext_fails(session: HsmSession) {
     let mut ciphertext =
         HsmEncrypter::encrypt_vec(&mut algo, &pub_key, plaintext).expect("Failed to encrypt data");
 
-    // Flip one byte
-    ciphertext[0] ^= 0xFF;
+    *ciphertext
+        .first_mut()
+        .expect("RSA encryption must produce ciphertext") ^= u8::MAX;
 
     let result = HsmDecrypter::decrypt_vec(&mut algo, &priv_key, &ciphertext);
 
-    assert!(matches!(
+    #[cfg(feature = "session-ex-tests")]
+    let expected_error = matches!(
         result,
-        Err(HsmError::DdiCmdFailure | HsmError::InternalError)
-    ));
+        Err(HsmError::InternalError | HsmError::InvalidArgument)
+    );
+    #[cfg(not(feature = "session-ex-tests"))]
+    let expected_error = matches!(
+        result,
+        Err(HsmError::InternalError | HsmError::DdiCmdFailure)
+    );
+
+    assert!(
+        expected_error,
+        "Unexpected error for tampered RSA ciphertext: {:?}",
+        result.as_ref().err()
+    );
 }
 
 /// Ensure empty plaintext encryption works or is handled

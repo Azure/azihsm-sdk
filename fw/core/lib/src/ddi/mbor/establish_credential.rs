@@ -394,10 +394,8 @@ async fn verify_pota_signature<P: HsmPal>(
     pal.hash(io, HsmHashAlgo::Sha384, id_uncompressed, digest, true)
         .await?;
     // The POTA signature was produced over the natural big-endian digest; the
-    // LE-native `ecc_verify` consumes the PKA-LE (fully byte-reversed) digest,
-    // so reverse it here in the handler. (SHA's `big_endian = false` does a
-    // per-word byte-swap, not the full-digest reversal the PKA needs.)
-    // Byte-order conversion lives in the handler now, not the PAL.
+    // LE-native `ecc_verify` consumes the PKA-LE digest, which is the full byte
+    // reversal of the big-endian digest, so reverse it here.
     digest[..HsmHashAlgo::Sha384.digest_len()].reverse();
 
     let verify_result = pal.dma_alloc(io, 4)?;

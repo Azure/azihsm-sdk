@@ -38,11 +38,10 @@ fn aes_generate_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
     HsmKeyManager::generate_key(session, &mut algo, props).expect("Failed to generate AES key")
 }
 
-/// Generate a non-session AES key for streaming tests.
+/// Generate an AES key for streaming tests.
 ///
-/// Streaming contexts take ownership of a key (by value). Since `HsmAesKey` is `Clone` and
-/// session keys auto-delete on `Drop`, using a session key in streaming tests can lead to
-/// premature deletion when a cloned key in a context is dropped.
+/// The streaming context and caller share ownership of the key, so the key can
+/// retain the same session-bound lifetime used by the other CBC tests.
 fn aes_generate_streaming_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
     let props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Secret)
@@ -50,7 +49,7 @@ fn aes_generate_streaming_key(bit_len: u32, session: &HsmSession) -> HsmAesKey {
         .key_kind(HsmKeyKind::Aes)
         .can_encrypt(true)
         .can_decrypt(true)
-        .is_session(false)
+        .is_session(true)
         .build()
         .expect("Failed to build key properties");
 
@@ -445,6 +444,57 @@ fn test_cbc_crypt_basic_no_pad_256(session: HsmSession) {
     let iv = test_iv();
     let plaintext = vec![0x22u8; AES_CBC_BLOCK_SIZE];
     run_cbc_roundtrip(&session, 256, false, &iv, &plaintext);
+}
+
+/// Verify AES key labels round-trip and labeled keys remain usable for CBC.
+/// Unlabeled keys must report an empty label.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
+#[session_test]
+fn test_aes_generate_key_label_roundtrip(session: HsmSession) {
+    let iv = test_iv();
+    let plaintext = [0x5Au8; AES_CBC_BLOCK_SIZE * 2];
+    let label = b"my-aes-label";
+
+    for key_bits in [128u32, 192, 256] {
+        let props = HsmKeyPropsBuilder::default()
+            .class(HsmKeyClass::Secret)
+            .key_kind(HsmKeyKind::Aes)
+            .bits(key_bits)
+            .can_encrypt(true)
+            .can_decrypt(true)
+            .is_session(true)
+            .label(label)
+            .build()
+            .expect("build labeled AES key props");
+        let mut algo = HsmAesKeyGenAlgo::default();
+        let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+            .expect("generate labeled AES key");
+
+        assert_eq!(key.label(), label.to_vec(), "caller label must round-trip");
+
+        let ct = cbc_encrypt(&key, false, &iv, &plaintext).expect("encrypt labeled key");
+        let pt = cbc_decrypt(&key, false, &iv, &ct).expect("decrypt labeled key");
+        assert_eq!(pt, plaintext, "labeled key roundtrip failed ({key_bits}b)");
+    }
+
+    // An unlabeled key still generates and reports an empty label.
+    let props = HsmKeyPropsBuilder::default()
+        .class(HsmKeyClass::Secret)
+        .key_kind(HsmKeyKind::Aes)
+        .bits(256)
+        .can_encrypt(true)
+        .can_decrypt(true)
+        .is_session(true)
+        .build()
+        .expect("build unlabeled AES key props");
+    let mut algo = HsmAesKeyGenAlgo::default();
+    let key = HsmKeyManager::generate_key(&session, &mut algo, props)
+        .expect("generate unlabeled AES key");
+    assert!(
+        key.label().is_empty(),
+        "unlabeled key must report an empty label"
+    );
 }
 
 /// Basic AES-CBC PKCS#7 padding roundtrip with a 128-bit key and non-block-aligned plaintext.

@@ -209,7 +209,7 @@ async fn ddi_get_api_rev() {
     assert_eq!(resp_data.min.major, 1);
     assert_eq!(resp_data.min.minor, 0);
     assert_eq!(resp_data.max.major, 1);
-    assert_eq!(resp_data.max.minor, 0);
+    assert_eq!(resp_data.max.minor, 1);
 
     // CQE status must be Success (0)
     let status = (c[3] >> 17) & 0x7FF;

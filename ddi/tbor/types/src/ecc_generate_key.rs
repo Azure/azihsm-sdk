@@ -17,9 +17,9 @@ use crate::tbor;
 pub const TBOR_OP_ECC_GENERATE_KEY: u8 = 0x17;
 
 /// Minimum masked ECC private-key envelope length (P-256).
-pub const MASKED_ECC_KEY_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_ECC_KEY_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 /// Maximum masked ECC private-key envelope length (P-521).
-pub const MASKED_ECC_KEY_MAX_LEN: usize = 8 + 12 + 96 + 68 + 16;
+pub const MASKED_ECC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 68 + 16;
 /// Maximum wire public-key length (`x ‖ y`, P-521 padded).
 pub const ECC_PUB_KEY_MAX_LEN: usize = 136;
 
@@ -32,7 +32,7 @@ pub const ECC_CURVE_P521: u8 = 3;
 
 /// Host-facing TBOR `EccGenerateKey` request.
 #[tbor(opcode = TBOR_OP_ECC_GENERATE_KEY, session_ctrl = in_session)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborEccGenerateKeyReq {
     /// Session id this request is bound to.
     #[tbor(session_id)]
@@ -44,6 +44,19 @@ pub struct TborEccGenerateKeyReq {
     /// NIST curve as the 1-byte `EccCurve` discriminant (see
     /// [`ECC_CURVE_P256`] / [`ECC_CURVE_P384`] / [`ECC_CURVE_P521`]).
     pub curve: u8,
+
+    /// Requested key-usage permissions as a `KeyUsage` bitfield (see
+    /// `KEY_USAGE_SIGN` / `KEY_USAGE_DERIVE`), carried as a `u64` for
+    /// headroom (mirrors the masked metadata's 64-bit `usage_flags`).
+    /// Exactly one of `SIGN` (ECDSA) or `DERIVE` (ECDH) is valid for a
+    /// generated ECC private key.
+    pub key_usage: u64,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to `TBOR_KEY_LABEL_MAX_LEN` (128) bytes.  Empty for an unlabeled
+    /// key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `EccGenerateKey` response.
@@ -51,7 +64,7 @@ pub struct TborEccGenerateKeyReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborEccGenerateKeyResp {
     /// The generated private key, masked under the scope's masking key.
-    #[tbor(max_len = 200)]
+    #[tbor(max_len = 296)]
     pub masked_key: Vec<u8>,
 
     /// The wire public key `x ‖ y` (little-endian, P-521 padded).
@@ -64,6 +77,7 @@ mod tests {
     use azihsm_ddi_tbor_types::TborOpReq;
 
     use super::*;
+    use crate::KEY_USAGE_SIGN;
 
     #[test]
     fn request_encodes_scope_and_curve() {
@@ -71,6 +85,8 @@ mod tests {
             session_id: 5,
             scope: 0b011,
             curve: ECC_CURVE_P384,
+            key_usage: KEY_USAGE_SIGN,
+            key_label: b"lbl".to_vec(),
         };
         let mut buf = [0u8; 256];
         let frame = req.encode_request(&mut buf).expect("encode");

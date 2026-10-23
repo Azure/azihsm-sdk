@@ -552,6 +552,50 @@ fn run_ecdh_with_signature_verification(session: &HsmSession, curve: HsmEccCurve
 // test cases sections
 // ============================================================
 
+/// Derive labeled, session-scoped ECDH shared secrets for every supported curve.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
+#[session_test]
+fn test_ecdh_derive_labeled_session_secret_all_curves(session: HsmSession) {
+    for curve in [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521] {
+        let (priv_a, pub_a) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
+            .expect("generate party A key");
+        let (priv_b, pub_b) = generate_ecc_keypair_with_derive(session.clone(), curve, true)
+            .expect("generate party B key");
+
+        // A non-empty label proves end-to-end label propagation: the
+        // firmware must stamp this exact label into the derived-secret
+        // metadata, else `validate_dev_props` rejects the mismatch.
+        let derived_props = || {
+            HsmKeyPropsBuilder::default()
+                .class(HsmKeyClass::Secret)
+                .key_kind(HsmKeyKind::SharedSecret)
+                .bits(curve.key_size_bits() as u32)
+                .can_derive(true)
+                .is_session(true)
+                .label(b"ecdh-shared-secret")
+                .build()
+                .expect("build shared-secret props")
+        };
+
+        let secret_a =
+            ecdh_derive_shared_secret_with_props(&session, &priv_a, &pub_b, derived_props())
+                .expect("derive secret A");
+        let secret_b =
+            ecdh_derive_shared_secret_with_props(&session, &priv_b, &pub_a, derived_props())
+                .expect("derive secret B");
+
+        assert_eq!(secret_a.kind(), HsmKeyKind::SharedSecret);
+        assert_eq!(secret_a.bits(), curve.key_size_bits() as u32);
+        assert!(secret_a.can_derive());
+        // Both agreement directions yield a same-length masked secret.
+        assert_eq!(
+            secret_a.masked_key(None).expect("secret A size"),
+            secret_b.masked_key(None).expect("secret B size"),
+        );
+    }
+}
+
 /// Test ECDH key derivation.
 ///
 /// Generates two ECC P-256 key pairs (party A and party B) and performs ECDH from both sides.

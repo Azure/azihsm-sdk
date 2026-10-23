@@ -252,16 +252,51 @@ pub trait HsmEcc {
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;
 
-    /// Derive an ECC keypair deterministically from `okm` (output
-    /// keying material from a KDF), per FIPS 186-5 §A.2.1 / SP
-    /// 800-133r2 §6.2.3. `okm.len()` must be
-    /// `curve.wire_coord_len() + 8` bytes.
-    async fn ecc_gen_keypair_from_okm(
+    /// Derive an ECC keypair deterministically from a KDF-derived
+    /// `root` secret (the caller's `PartRoot`).
+    ///
+    /// The PAL owns the entire derivation from `root`: it applies its
+    /// platform-appropriate FIPS 186-5 §A.2 method — a hardware PAL
+    /// whose modular unit cannot reduce by the even value `n − 1` uses
+    /// §A.2.2 rejection sampling, while a software PAL may use §A.2.1
+    /// extra-random-bits. `root` is the per-partition secret; PALs fan
+    /// the per-key material out of it via a domain-separated
+    /// HKDF-Expand internally.
+    ///
+    /// # Determinism is per-platform, not across platforms
+    ///
+    /// The same `root` regenerates the same keypair on **every call on
+    /// a given PAL**, which is what makes the partition identity stable
+    /// across resets. It does **not** produce the same keypair on two
+    /// different PALs: the HKDF info string, the OKM length and the
+    /// §A.2 method are all chosen per platform, so `std` and `uno`
+    /// derive different scalars from an identical `root` by
+    /// construction. Tests must therefore not assert a fixed public key
+    /// across backends, and an emulated key is not a prediction of the
+    /// on-silicon key.
+    ///
+    /// # Parameters
+    ///
+    /// - `root` — the key-derivation root. Must be `curve.wire_coord_len()`
+    ///   bytes (48 for P-384, the `PartRoot` size); any other length is
+    ///   [`HsmError::InvalidArg`]. Validated in **both** query and use
+    ///   mode, so the error does not depend on `out`.
+    /// - `out` — `None` to query the required `(priv_len, pub_len)`, or
+    ///   `Some((priv_out, pub_out))` to derive into caller buffers.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::InvalidArg`] — `root` is the wrong length, or `out`
+    ///   is `Some` and a buffer is too short.
+    /// - [`HsmError::UnsupportedCmd`] — the PAL does not implement the
+    ///   requested `curve`. Reported in query mode too, so query and use
+    ///   mode agree.
+    async fn ecc_gen_keypair_from_root(
         &self,
         io: &impl HsmIo,
         alloc: &impl HsmScopedAlloc,
         curve: HsmEccCurve,
-        okm: &DmaBuf,
+        root: &DmaBuf,
         out: Option<(&mut DmaBuf, &mut DmaBuf)>,
         pct: HsmEccPct,
     ) -> HsmResult<(usize, usize)>;
@@ -331,13 +366,11 @@ pub trait HsmEcc {
     ///   coordinate internally.
     /// - `hash` — message digest that was signed, in **little-endian**
     ///   byte order: the natural big-endian digest with **all bytes fully
-    ///   reversed** (BE->LE), at least the curve's digest length.  This is a
-    ///   full-digest reversal, distinct from
-    ///   `HsmHash::hash(.., big_endian = false)`, which only byte-swaps within
-    ///   each 32-bit word.  The digest is PKA-native LE like `pub_key` /
-    ///   `signature`; the DDI handler performs the conversion (hash big-endian,
-    ///   then reverse), so PKA-native PALs consume it as-is while
-    ///   big-endian-native PALs (e.g. OpenSSL) reverse it internally.
+    ///   reversed** (BE->LE), at least the curve's digest length.  This is the
+    ///   full-digest reversal produced by `HsmHash::hash(.., big_endian =
+    ///   false)`.  The digest is PKA-native LE like `pub_key` / `signature`;
+    ///   PKA-native PALs consume it as-is while big-endian-native PALs (e.g.
+    ///   OpenSSL) reverse it internally.
     /// - `signature` — signature to verify; must be exactly
     ///   `curve.wire_sig_len()` bytes (`r || s`).  **Each component
     ///   is in little-endian byte order** with P-521 components
@@ -481,4 +514,66 @@ pub trait HsmEcc {
         pub_key: &DmaBuf,
         secret: &mut DmaBuf,
     ) -> HsmResult<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HsmEccCurve;
+
+    /// Every supported curve. Kept in sync with [`index_in_all`] by
+    /// [`all_lists_every_curve`].
+    const ALL: [HsmEccCurve; 3] = [HsmEccCurve::P256, HsmEccCurve::P384, HsmEccCurve::P521];
+
+    /// Position of `curve` in [`ALL`].
+    ///
+    /// This match has no wildcard arm, so adding a variant to
+    /// [`HsmEccCurve`] stops this module compiling until the variant is
+    /// given an arm here -- and [`all_lists_every_curve`] then fails
+    /// unless it is also appended to [`ALL`] at that index. Without this,
+    /// `ALL` was just a hand-written list that a new variant could bypass
+    /// silently, skipping every check below.
+    fn index_in_all(curve: HsmEccCurve) -> usize {
+        match curve {
+            HsmEccCurve::P256 => 0,
+            HsmEccCurve::P384 => 1,
+            HsmEccCurve::P521 => 2,
+        }
+    }
+
+    /// `ALL` must list every curve, in `index_in_all` order.
+    #[test]
+    fn all_lists_every_curve() {
+        for (i, curve) in ALL.iter().enumerate() {
+            assert_eq!(
+                index_in_all(*curve),
+                i,
+                "ALL is out of sync with index_in_all: {curve:?} is listed at \
+                 index {i} but indexed as {}",
+                index_in_all(*curve)
+            );
+        }
+    }
+
+    /// `wire_priv_key_len` must stay pairwise distinct across the
+    /// supported curves.
+    ///
+    /// Callers are allowed to recover the curve from a raw scalar's
+    /// length -- `HsmEcc::ecc_priv_pub_key` does exactly that, and
+    /// `ecc_pub_from_priv` delegates to it. That inference is only sound
+    /// while no two curves share a wire length. If a new variant ever
+    /// collides, this fails instead of the firmware quietly computing on
+    /// the wrong curve.
+    #[test]
+    fn wire_priv_key_len_is_unambiguous() {
+        for (i, a) in ALL.iter().enumerate() {
+            for b in ALL.iter().skip(i + 1) {
+                assert_ne!(
+                    a.wire_priv_key_len(),
+                    b.wire_priv_key_len(),
+                    "{a:?} and {b:?} share a wire scalar length, so recovering \
+                     the curve from a scalar length is no longer sound"
+                );
+            }
+        }
+    }
 }

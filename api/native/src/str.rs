@@ -7,20 +7,19 @@ use std::mem::ManuallyDrop;
 #[cfg(not(target_os = "windows"))]
 pub type AzihsmChar = u8;
 
+/// Character (UTF-16 for Windows)
+#[cfg(target_os = "windows")]
+pub type AzihsmChar = u16;
+
 /// Wide character (UTF-16 for Windows)
 #[cfg(target_os = "windows")]
-pub type AzihsmWideChar = u16;
+pub type AzihsmWideChar = AzihsmChar;
 
 /// String
 #[repr(C)]
 pub struct AzihsmStr {
     /// Pointer to the string
-    #[cfg(not(target_os = "windows"))]
     pub str: *mut AzihsmChar,
-
-    /// Pointer to the string
-    #[cfg(target_os = "windows")]
-    pub str: *mut AzihsmWideChar,
 
     /// Length of the string (including null terminator)
     pub len: u32,

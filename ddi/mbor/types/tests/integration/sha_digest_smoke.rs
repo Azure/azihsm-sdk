@@ -161,8 +161,7 @@ fn test_sha_digest_multiblock_smoke() {
             // bytes, SHA-384/512 block = 128 bytes), so the engine runs
             // several compression rounds and the digest is emitted in NIST
             // big-endian byte order. A matching known-answer digest confirms
-            // both the multi-block path and the per-word byte-swap of the
-            // output.
+            // the multi-block path.
 
             // SHA-256 over a 56-byte message (spans two 64-byte blocks).
             check_digest(

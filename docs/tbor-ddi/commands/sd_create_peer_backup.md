@@ -60,13 +60,13 @@ variable-length data section.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4  | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
-| 8  | `masked_sealing_key` | `buffer` (fixed 180 B) | The **sender's** masked SD-sealing key (from [`SdSealingKeyGen`](sd_sealing_key_gen.md)); unmasked on-device to recover `SndrPriv`. Length pinned to `MASKED_SEALING_KEY_LEN` (180 B). Never a vault handle. |
+| 8  | `masked_sealing_key` | `buffer` (fixed 276 B) | The **sender's** masked SD-sealing key (from [`SdSealingKeyGen`](sd_sealing_key_gen.md)); unmasked on-device to recover `SndrPriv`. Length pinned to `MASKED_SEALING_KEY_LEN` (276 B). Never a vault handle. |
 | 12 | `policy` | `buffer` (fixed 484 B) | Caller-asserted unified `PartPolicy` describing the security domain being backed up. Length pinned to `PART_POLICY_LEN` (484 B); its SHA-384 digest must equal the partition's bound `policy_hash` and the receiver report's v2 `policy_hash`. |
 | 16 | `mfgr_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Destination manufacturer certificate-chain descriptors (from the `dst_evidence` field group). |
 | 20 | `owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Destination owner certificate-chain descriptors. |
 | 24 | `part_owner_cert_chain` | `buffer` (typed `&[CertDescriptor]`) | Destination partition-owner certificate-chain descriptors. |
 | 28 | `evidence` | `buffer` (single `&ReportDescriptor`, 4 B) | Destination attestation-report (COSE_Sign1) descriptor. |
-| 32 | `pok_local_backup` | `buffer` (fixed 180 B) | Device-local partition-owner-key backup (a masked BKS3 wrapped under `PartLocalMK`) from which BKS3 is recovered = `MASKED_SD_LEN` (180 B). |
+| 32 | `pok_local_backup` | `buffer` (fixed 276 B) | Device-local partition-owner-key backup (a masked BKS3 wrapped under `PartLocalMK`) from which BKS3 is recovered = `MASKED_SD_LEN` (276 B). |
 
 The four `mfgr_cert_chain` … `evidence` entries are spliced in by the
 shared [`Evidence`](../../../fw/core/ddi/tbor/types/src/evidence.rs)
@@ -76,8 +76,8 @@ COSE_Sign1 report travel **out of band**, referenced by these
 
 ### Data section
 
-Carries the 180-byte `masked_sealing_key`, the 484-byte `policy` image,
-the packed destination cert-chain and report descriptors, and the 180-byte
+Carries the 276-byte `masked_sealing_key`, the 484-byte `policy` image,
+the packed destination cert-chain and report descriptors, and the 276-byte
 `pok_local_backup` blob.
 
 ## Response
@@ -99,7 +99,7 @@ Carries the 161-byte `pok_peer_backup` seal.
 
 | Error | Cause |
 |---|---|
-| `TborInvalidFixedLength` | `masked_sealing_key` ≠ 180 B, `policy` ≠ 484 B, or `pok_local_backup` ≠ 180 B (rejected at decode before the handler runs) |
+| `TborInvalidFixedLength` | `masked_sealing_key` ≠ 276 B, `policy` ≠ 484 B, or `pok_local_backup` ≠ 276 B (rejected at decode before the handler runs) |
 | `InvalidArg` | Partition is not `Initialized` (not finalized); the policy `SATA` key is not P-384; the destination report's `policy_hash` ≠ `SHA-384(policy)`; or the missing OOB evidence page |
 | `SdPeerCloningNotAllowed` | The partition's policy does not set `allow_peer_cloning` |
 | `SdBackupSvnRollback` | `pok_local_backup`'s bound SVN is newer than the current firmware SVN (anti-rollback) |

@@ -12,7 +12,12 @@ test = false
 
 [dependencies]
 azihsm_fw_core_crypto_key_derive = { workspace = true }
+azihsm_fw_core_crypto_key_masking = { optional = true, workspace = true }
 azihsm_fw_core_crypto_x509_builder = { workspace = true }
+azihsm_fw_ddi_mbor = { optional = true, workspace = true }
+azihsm_fw_ddi_mbor_derive = { optional = true, workspace = true }
+azihsm_fw_ddi_mbor_types = { optional = true, workspace = true }
+azihsm_fw_hsm_io = { workspace = true }
 azihsm_fw_hsm_pal_traits = { workspace = true }
 azihsm_fw_single_cell = { workspace = true }
 azihsm_fw_static_init = { workspace = true }
@@ -32,22 +37,28 @@ azihsm_fw_uno_drivers_rng = { workspace = true }
 azihsm_fw_uno_drivers_semihosting = { optional = true, workspace = true }
 azihsm_fw_uno_drivers_session_store = { workspace = true }
 azihsm_fw_uno_drivers_sha = { workspace = true }
+azihsm_fw_uno_drivers_soc = { workspace = true }
 azihsm_fw_uno_drivers_systick = { workspace = true }
+azihsm_fw_uno_drivers_tcon = { workspace = true }
 azihsm_fw_uno_drivers_upka = { workspace = true }
 azihsm_fw_uno_drivers_vault = { workspace = true }
 azihsm_fw_uno_error = { workspace = true }
+azihsm_fw_uno_fault = { workspace = true }
 azihsm_fw_uno_key_vault = { workspace = true }
 azihsm_fw_uno_pac = { workspace = true }
 azihsm_fw_uno_reg_soc = { workspace = true }
 azihsm_fw_uno_trace = { workspace = true }
 
 embassy-futures = { workspace = true }
+embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 tock-registers = { workspace = true }
 
 bitfield-struct = { workspace = true }
+der = { workspace = true }
 open-enum = { workspace = true }
 zerocopy = { workspace = true }
+zeroize = { workspace = true }
 
 [features]
 default = []
@@ -56,3 +67,14 @@ default = []
 # that cannot snoop semihosting (e.g. production) should disable this
 # feature — boot_handshake alone is sufficient.
 semihosting = ["dep:azihsm_fw_uno_drivers_semihosting"]
+
+# Test-only DDI commands, routed through the `HsmCustomDispatch` PAL hook
+# rather than the core opcode tables. Never enable either feature in a
+# production build.
+azihsm_test_hooks = ["dep:azihsm_fw_ddi_mbor", "dep:azihsm_fw_ddi_mbor_derive"]
+fips_validation_hooks = [
+  "dep:azihsm_fw_core_crypto_key_masking",
+  "dep:azihsm_fw_ddi_mbor",
+  "dep:azihsm_fw_ddi_mbor_derive",
+  "dep:azihsm_fw_ddi_mbor_types",
+]

@@ -37,12 +37,13 @@ const SESSION_BLOB_SIZE: usize = SESSION_API_REV_SIZE + SESSION_MASKING_KEY_SIZE
 /// `api_rev(8) || param_key(32) || masking_key(32)` = 72 B.  The
 /// SessionEx masking key is the 32 B AES-256-GCM `key_masking::aead`
 /// key ([`SESSION_MASKING_KEY_LEN`]), not the legacy 80 B cbc key.
-const SESSION_CU_BLOB_SIZE: usize =
+pub(crate) const SESSION_CU_BLOB_SIZE: usize =
     SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN + SESSION_MASKING_KEY_LEN;
 
 /// `SessionEx`-kind blob size for **Authenticated (CO)** sessions:
 /// PlainText blob ‖ `mac_tx(48) ‖ mac_rx(48)` = 168 B.
-const SESSION_CU_AUTH_BLOB_SIZE: usize = SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
+pub(crate) const SESSION_CU_AUTH_BLOB_SIZE: usize =
+    SESSION_CU_BLOB_SIZE + 2 * SESSION_MAC_DIR_KEY_LEN;
 
 impl HsmSessionManager for StdHsmPal {
     /// Check whether the partition's session table is full.
@@ -128,11 +129,16 @@ impl HsmSessionManager for StdHsmPal {
     ///
     /// For [`Pending`](HsmSessionState::Pending) slots no vault entry
     /// exists yet, so steps 1–3 are skipped and only step 4 runs.
+    /// [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation) slots
+    /// have no backing vault key after partition disable and likewise
+    /// only require freeing the logical slot.
     async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
         let entry = self.active_part_mut(io.pid())?;
 
-        // Pending slots: no vault state to clean up.
-        if matches!(entry.session_table.state(id), HsmSessionState::Pending) {
+        if matches!(
+            entry.session_table.state(id),
+            HsmSessionState::Pending | HsmSessionState::NeedsRenegotiation
+        ) {
             entry.session_table.delete(id)?;
             return Ok(());
         }

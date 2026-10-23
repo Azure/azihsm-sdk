@@ -34,7 +34,7 @@ available to **both Crypto-Officer and Crypto-User** sessions.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4 | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
-| 8 | `masked_key` | `buffer` (164..=260 B) | The masked HMAC key (from `HmacGenerateKey` / unwrap), an AEAD-GCM-256 envelope. Its scope selects the masking key; its kind selects the SHA variant. |
+| 8 | `masked_key` | `buffer` (260..=356 B) | The masked HMAC key (from `HmacGenerateKey` / unwrap), an AEAD-GCM-256 envelope. Its scope selects the masking key; its kind selects the SHA variant. |
 | 12 | `msg` | `buffer` (≤ 1024 B) | The message to MAC. |
 
 ### Data section

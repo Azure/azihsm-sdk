@@ -33,7 +33,7 @@ pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
 /// of the Security-Domain backup family (`SdReseal`, `SdRestore*`), which
 /// re-export it; **this** command's response is an HPKE-Auth seal sized
 /// by [`POK_REMOTE_BACKUP_LEN`].
-pub const MASKED_SD_LEN: usize = 180;
+pub const MASKED_SD_LEN: usize = 276;
 
 /// Exact on-the-wire length of the remote partition-owner-key backup (an
 /// HPKE-Auth seal of BKS3: `enc(97) ‖ ct(64)`).  Mirrors
@@ -44,7 +44,7 @@ pub const POK_REMOTE_BACKUP_LEN: usize = 161;
 /// Exact on-the-wire length of the security-domain masking-key backup
 /// envelope (`SDMK` masked under `SDBMK`).  Mirrors the firmware
 /// `LOCAL_MK_BACKUP_LEN`; the firmware schema is the length authority.
-pub const SD_MK_BACKUP_LEN: usize = 164;
+pub const SD_MK_BACKUP_LEN: usize = 260;
 
 /// Host-facing TBOR `SdCreateRemoteBackup` request.
 #[tbor(opcode = TBOR_OP_SD_CREATE_REMOTE_BACKUP, session_ctrl = in_session)]
@@ -56,11 +56,18 @@ pub struct TborSdCreateRemoteBackupReq {
     pub session_id: u16,
 
     /// The sender's masked SD-sealing key (from `SdSealingKeyGen`),
-    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to
     /// recover the sender's private ECDH key.  A fixed-length `[u8; N]`
     /// field (a `min_len == max_len` buffer): the array type is the host
-    /// derive's exact-length form, mirroring the firmware `len = 180`.
+    /// derive's exact-length form, mirroring the firmware `len = 276`.
     pub masked_sealing_key: [u8; MASKED_SEALING_KEY_LEN],
+
+    /// Receiver key certificate-chain descriptors (spec `RcvrCertChain`).
+    /// Always present; validated and anchored to the policy **SATA** key,
+    /// its leaf public key is the recipient public key (`RcvrPub`) the
+    /// remote backup is sealed to.  The DER bytes travel out of band.
+    #[tbor(max_len = 24)]
+    pub receiver_cert_chain: Vec<CertDescriptor>,
 
     /// Receiver manufacturer certificate-chain descriptors.  Flattened
     /// from the firmware `receiver_evidence` field group (first of its
@@ -96,14 +103,14 @@ pub struct TborSdCreateRemoteBackupResp {
     pub pok_remote_backup: [u8; POK_REMOTE_BACKUP_LEN],
 
     /// Local partition-owner-key backup: the fresh BKS3 masked under the
-    /// partition-local masking key (exactly [`MASKED_SD_LEN`] = 180 B on
+    /// partition-local masking key (exactly [`MASKED_SD_LEN`] = 276 B on
     /// the wire).  Persisted by the host and replayed to recover the
     /// security domain locally.
     pub pok_local_backup: [u8; MASKED_SD_LEN],
 
     /// Security-domain masking-key backup: the freshly minted `SDMK`
     /// masked under the derived `SDBMK` (exactly [`SD_MK_BACKUP_LEN`] =
-    /// 164 B on the wire).  Persisted by the host and replayed on restore.
+    /// 260 B on the wire).  Persisted by the host and replayed on restore.
     pub sd_mk_backup: [u8; SD_MK_BACKUP_LEN],
 }
 
@@ -118,6 +125,7 @@ mod tests {
         let req = TborSdCreateRemoteBackupReq {
             session_id: 9,
             masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
+            receiver_cert_chain: Vec::new(),
             receiver_mfgr_cert_chain: Vec::new(),
             receiver_owner_cert_chain: Vec::new(),
             receiver_part_owner_cert_chain: Vec::new(),

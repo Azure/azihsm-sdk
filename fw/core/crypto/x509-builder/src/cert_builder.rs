@@ -351,8 +351,8 @@ async fn build_signed_from_template<'a>(
 
     let digest_dma = alloc.dma_alloc(SHA384_DIGEST_LEN)?;
     // Natural big-endian SHA-384 over the TBS; the `TbsSigner` reverses it to
-    // the PKA little-endian message hash (`big_endian = false` would be a
-    // per-word swap, not the full reversal the PKA sign needs).
+    // the PKA little-endian message hash (the full byte reversal of the natural
+    // digest).
     pal.hash(io, HsmHashAlgo::Sha384, tbs_dma, digest_dma, true)
         .await?;
 
@@ -417,9 +417,8 @@ where
     patch(tbs_dma)?;
 
     let digest_dma = alloc.dma_alloc(SHA384_DIGEST_LEN)?;
-    // Natural big-endian SHA-384, then a FULL byte reversal to the PKA-native
-    // little-endian message hash `ecc_sign` consumes. `big_endian = false` is
-    // only a per-word swap on Uno, not the full reversal the PKA path needs.
+    // Natural big-endian SHA-384, then a full byte reversal to the PKA-native
+    // little-endian message hash `ecc_sign` consumes.
     pal.hash(io, HsmHashAlgo::Sha384, tbs_dma, digest_dma, true)
         .await?;
 

@@ -34,22 +34,15 @@
 
 namespace
 {
-// Pinned wire lengths. Mirror the `azihsm_ddi_tbor_types` constants
-// (`MASKED_SEALING_KEY_LEN`, `POK_REMOTE_BACKUP_LEN`, `MASKED_SD_LEN`,
-// `SD_MK_BACKUP_LEN`), which are not exposed in the C header.
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-constexpr uint32_t kPokRemoteBackupLen = 161;
-constexpr uint32_t kMaskedSdLen = 180;
-constexpr uint32_t kSdMkBackupLen = 164;
-
 // Create a real remote backup sealed to `receiver`'s attested key by
-// `masked`, capturing both the 161-byte remote backup and the 164-byte
+// `masked`, capturing both the 161-byte remote backup and the 260-byte
 // masking-key backup needed to drive a later restore. Sizes the three output
 // buffers via the probe/fill convention. Records a gtest failure and returns
 // false on error.
 bool create_backup_capture(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_remote,
@@ -60,9 +53,10 @@ bool create_backup_capture(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
-        &masked_buf,
-        &receiver,
         &policy_buf,
+        &masked_buf,
+        receiver_chain,
+        &receiver,
     };
 
     std::vector<uint8_t> remote;
@@ -165,7 +159,7 @@ class azihsm_sd_restore_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, session_ex_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
@@ -221,13 +215,14 @@ TEST_F(azihsm_sd_restore_backup_test, restore_backup_roundtrip)
         ASSERT_FALSE(key.report.empty());
 
         // Self-backup: the same attested key is both sender and receiver.
-        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.pub, key.report);
 
         std::vector<uint8_t> remote_backup;
         std::vector<uint8_t> prev_sd_mk;
         ASSERT_TRUE(create_backup_capture(
             dev1.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             dev1.policy,
             remote_backup,
@@ -260,15 +255,16 @@ TEST_F(azihsm_sd_restore_backup_test, restore_backup_roundtrip)
                                   static_cast<uint32_t>(remote_backup.size()) };
         azihsm_buffer prev_mk_buf{ prev_sd_mk.data(), static_cast<uint32_t>(prev_sd_mk.size()) };
         azihsm_sd_restore_remote_backup_params params{
-            &masked_buf, &evidence.get(), &policy_buf, &remote_buf, &prev_mk_buf,
+            &policy_buf,     &masked_buf, evidence.receiver_chain(),
+            &evidence.get(), &remote_buf, &prev_mk_buf,
         };
 
         std::vector<uint8_t> pok_local;
         std::vector<uint8_t> sd_mk;
         ASSERT_EQ(restore_fill(dev2.session, &params, pok_local, sd_mk), AZIHSM_STATUS_SUCCESS);
 
-        // Refreshed device-local backups: 180-byte local pok backup and
-        // 164-byte masking-key backup, both non-zero.
+        // Refreshed device-local backups: 276-byte local pok backup and
+        // 260-byte masking-key backup, both non-zero.
         ASSERT_EQ(pok_local.size(), kMaskedSdLen);
         ASSERT_TRUE(any_nonzero(pok_local)) << "pok_local_backup must not be all-zero";
         ASSERT_EQ(sd_mk.size(), kSdMkBackupLen);

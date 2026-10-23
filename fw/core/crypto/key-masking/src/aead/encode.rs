@@ -79,7 +79,7 @@ pub struct MaskParams<'a> {
 /// * `crypto`        — PAL providing AES and RNG (any [`HsmCrypto`]).
 /// * `io`         — caller's I/O context.
 /// * `alloc`      — scoped allocator. Used internally to stage the
-///   IV (12 B) and AAD copy (96 B); the plaintext is sealed **directly**
+///   IV (12 B) and AAD copy (192 B); the plaintext is sealed **directly**
 ///   from `target_key` (no copy). Both buffers are freed when the
 ///   enclosing scope exits.
 /// * `alg`        — AEAD algorithm for this blob (e.g.

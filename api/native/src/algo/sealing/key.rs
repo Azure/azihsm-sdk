@@ -45,7 +45,7 @@ pub(crate) fn sealing_generate_key(
     Ok(HANDLE_TABLE.alloc_handle(HandleType::SealingKey, Box::new(key)))
 }
 
-/// Generates a key-attestation report for a non-resident sealing key.
+/// Generates a key-attestation report for an unpinned sealing key.
 ///
 /// The report is produced over the key's masked-key envelope via TBOR
 /// `KeyReport`. Follows the probe/fill convention: sizes `output` on the

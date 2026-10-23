@@ -323,6 +323,50 @@ pub enum TborStatus {
     /// policy does not permit peer cloning (mirror of
     /// `HsmError::SdPeerCloningNotAllowed`).
     SdPeerCloningNotAllowed = 0x0870010A,
+
+    // -- CPT (CryptoController) errors --------------------------------
+    // Mirror of `HsmError`'s CPT range, which itself mirrors tiger-collab's
+    // `DeviceErrorCodes::CryptoController` range
+    // (fw/crates/error/src/device.rs, subopcode 0x0a). Values copied
+    // verbatim.
+
+    // Software validation / PAL / runtime errors.
+    CryptoNotInitialized = 0x090A0001,
+    CryptoBufferTooSmall = 0x090A0002,
+    CryptoInputTooLarge = 0x090A0003,
+    CryptoInvalidAlg = 0x090A0004,
+    CryptoTimeout = 0x090A0005,
+    CryptoUnalignedCptr = 0x090A0006,
+    CryptoInvalidArg = 0x090A0007,
+    CryptoInvalidIvLength = 0x090A0008,
+    CryptoInvalidKeyLength = 0x090A0009,
+    CryptoInvalidDataLength = 0x090A000A,
+    CryptoInvalidContextLength = 0x090A000B,
+    CryptoInvalidPartialContext = 0x090A000C,
+    CryptoUnsupportedMode = 0x090A000D,
+    CryptoUnalignedBuffer = 0x090A000E,
+    CryptoNotSupported = 0x090A000F,
+    CryptoHardwareError = 0x090A0010,
+
+    // CPT hardware completion codes (payload16 >= 0x0100).
+    CryptoCptRsaUcErrModLenInvalid = 0x090A0106,
+    CryptoCptRsaUcErrExpLenInvalid = 0x090A0107,
+    CryptoCptRsaUcErrDataLenInvalid = 0x090A0108,
+    CryptoCptGcUcErrDataLenInvalid = 0x090A0143,
+    CryptoCptGcUcErrCipherUnsupported = 0x090A0146,
+    CryptoCptGcUcErrAuthUnsupported = 0x090A0147,
+    CryptoCptGcUcErrHashModeUnsupported = 0x090A0149,
+    CryptoCptGcUcErrIcvMiscompare = 0x090A014C,
+    CryptoCptGcUcErrKeyLenInvalid = 0x090A014E,
+    CryptoCptRsaUcErrPkcsDecoding = 0x090A0151,
+    CryptoCptRsaUcErrPkcsSignatureInvalid = 0x090A0152,
+
+    // CPT completion status errors.
+    CryptoCptFault = 0x090A0200,
+    CryptoCptSwErr = 0x090A0300,
+    CryptoCptHwErr = 0x090A0400,
+    CryptoCptInstErr = 0x090A0500,
+    CryptoCptSwWarn = 0x090A0600,
 }
 
 impl core::fmt::Debug for TborStatus {

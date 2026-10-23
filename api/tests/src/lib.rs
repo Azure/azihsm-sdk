@@ -4,19 +4,25 @@
 #![allow(clippy::unwrap_used)]
 #![cfg(test)]
 
+#[cfg(all(feature = "mock", feature = "session-ex-tests"))]
+compile_error!("features `mock` and `session-ex-tests` cannot be enabled together");
+
 mod algo;
+#[cfg(not(feature = "session-ex-tests"))]
 mod partition_tests;
+#[cfg(not(feature = "session-ex-tests"))]
 mod resiliency;
-#[cfg(feature = "res-test")]
+#[cfg(all(feature = "res-test", not(feature = "session-ex-tests")))]
 mod resiliency_tests;
+#[cfg(not(feature = "session-ex-tests"))]
 mod session_tests;
 mod utils;
 
-#[cfg(not(feature = "mock"))]
+#[cfg(all(feature = "session-ex-tests", not(feature = "mock")))]
 mod partition_ex_tests;
-#[cfg(not(feature = "mock"))]
+#[cfg(all(feature = "session-ex-tests", not(feature = "mock")))]
 mod sd;
-#[cfg(not(feature = "mock"))]
+#[cfg(all(feature = "session-ex-tests", not(feature = "mock")))]
 mod session_ex_tests;
 
 use azihsm_api::*;

@@ -28,6 +28,7 @@ use azihsm_crypto::RsaPrivateKey;
 use azihsm_crypto::RsaPublicKey;
 use azihsm_crypto::RsaSignAlgo;
 use azihsm_crypto::Verifier;
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborRsaModExpReq;
 use azihsm_ddi_tbor_types::TborStatus;
 use azihsm_ddi_tbor_types::KEY_CLASS_AES;
@@ -43,7 +44,6 @@ use azihsm_ddi_tbor_types::RSA_OP_SIGN;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
 use crate::commands::unwrap_key::unwrap_with_usage;
-use crate::harness::TestCtx;
 
 /// Reverse `bytes` into a fresh vec (wire-LE ↔ OpenSSL-BE conversion).
 fn rev(bytes: &[u8]) -> Vec<u8> {
@@ -68,7 +68,7 @@ fn import_rsa(
     session_id: u16,
     modulus_bytes: usize,
     crt: bool,
-    usage: u8,
+    usage: u64,
 ) -> (Vec<u8>, RsaPublicKey, usize) {
     let key = RsaPrivateKey::generate(modulus_bytes).expect("generate host RSA key");
     let modulus_len = key.size();

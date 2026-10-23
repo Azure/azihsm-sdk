@@ -715,6 +715,11 @@ fn get_cert_chain_raw_no_res(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmRe
 /// and returns [`HsmError::CertChainChanged`] if the count or thumbprint
 /// changed in between.
 ///
+/// TBOR slot 2 is special: it mints a fresh, independently randomized PID
+/// certificate on every access (count always 1, thumbprint deliberately
+/// ignored), so the stability probes add no value and only cost redundant
+/// certificate generations. For that slot certificate 0 is fetched directly.
+///
 /// Returns `InternalError` if the certificate count is zero (a partition
 /// must always have a provisioned cert chain).
 ///
@@ -727,6 +732,20 @@ pub(super) fn fetch_cert_chain_checked(
     rev: HsmApiRev,
     slot_id: u8,
 ) -> HsmResult<(String, Vec<u8>)> {
+    // TBOR slot 2 mints a fresh, independently randomized PID certificate on
+    // every access: its `GetCertChainInfo` thumbprint would change on every
+    // read and its count is always 1. The pre/post-fetch stability probes
+    // therefore provide no guarantee for this slot while each triggers a
+    // redundant certificate generation and P-384 signature in the firmware.
+    // Fetch certificate 0 directly instead. The legacy MBOR path falls
+    // through to the stability-checked loop below, where slot 2 is a stable
+    // provisioned certificate whose thumbprint must still match.
+    if rev_supports_tbor(rev) && slot_id == 2 {
+        let der = get_cert(dev, rev, slot_id, 0)?;
+        let pem = crypto::der_to_pem(&der).map_hsm_err(HsmError::InternalError)?;
+        return Ok((pem, der));
+    }
+
     let (count, thumbprint) = get_cert_chain_info(dev, rev, slot_id)?;
     if count == 0 {
         return Err(HsmError::InternalError);
@@ -764,7 +783,20 @@ pub(super) fn fetch_cert_chain_checked(
 /// # Returns
 ///
 /// Returns a tuple containing the number of certificates and the thumbprint.
+///
+/// Dispatches to [`get_cert_chain_info_tbor`] when the negotiated revision
+/// is at least [`TBOR_MIN_API_REV`], otherwise to
+/// [`get_cert_chain_info_mbor`].
 fn get_cert_chain_info(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
+    if rev_supports_tbor(rev) {
+        get_cert_chain_info_tbor(dev, slot_id)
+    } else {
+        get_cert_chain_info_mbor(dev, rev, slot_id)
+    }
+}
+
+/// MBOR `GetCertChainInfo`: returns the certificate count and thumbprint.
+fn get_cert_chain_info_mbor(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(u8, Vec<u8>)> {
     let req = DdiGetCertChainInfoCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::GetCertChainInfo, Some(rev), None),
         data: DdiGetCertChainInfoReq { slot_id },
@@ -790,7 +822,20 @@ fn get_cert_chain_info(dev: &HsmDev, rev: HsmApiRev, slot_id: u8) -> HsmResult<(
 /// # Returns
 ///
 /// Returns a vector containing the certificate bytes.
+///
+/// Dispatches to [`get_cert_tbor`] when the negotiated revision is at
+/// least [`TBOR_MIN_API_REV`], otherwise to [`get_cert_mbor`].
 fn get_cert(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
+    if rev_supports_tbor(rev) {
+        get_cert_tbor(dev, slot_id, cert_id)
+    } else {
+        get_cert_mbor(dev, rev, slot_id, cert_id)
+    }
+}
+
+/// MBOR `GetCertificate`: returns the DER-encoded certificate at
+/// `(slot_id, cert_id)`.
+fn get_cert_mbor(dev: &HsmDev, rev: HsmApiRev, slot_id: u8, cert_id: u8) -> HsmResult<Vec<u8>> {
     let req = DdiGetCertificateCmdReq {
         hdr: build_ddi_req_hdr(DdiOp::GetCertificate, Some(rev), None),
         data: DdiGetCertificateReq { slot_id, cert_id },

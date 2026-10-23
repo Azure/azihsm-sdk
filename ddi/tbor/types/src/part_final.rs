@@ -40,13 +40,13 @@ pub const CERT_DESCRIPTORS_MAX_LEN: usize = MAX_CERTS * CERT_DESCRIPTOR_LEN;
 
 /// On-the-wire length of a `local_mk` backup envelope (matches the
 /// firmware schema's `LOCAL_MK_BACKUP_LEN`).
-pub const LOCAL_MK_BACKUP_LEN: usize = 164;
+pub const LOCAL_MK_BACKUP_LEN: usize = 260;
 
 // The TBOR derive requires an integer literal for `max_len`, so the
 // `prev_local_mk_backup` / `local_mk_backup` fields below hardcode
-// `max_len = 164`; pin that literal to LOCAL_MK_BACKUP_LEN so the two
+// `max_len = 260`; pin that literal to LOCAL_MK_BACKUP_LEN so the two
 // cannot silently drift.
-const _: () = assert!(LOCAL_MK_BACKUP_LEN == 164);
+const _: () = assert!(LOCAL_MK_BACKUP_LEN == 260);
 
 /// One PTA-chain certificate descriptor: the OOB SGL-descriptor `index`
 /// and byte `length` of a DER certificate carried out of band.
@@ -106,7 +106,7 @@ pub struct TborPartFinalReq {
 
     /// Optional previously-generated `local_mk` backup to restore.
     /// Empty on first instantiation.
-    #[tbor(max_len = 164)]
+    #[tbor(max_len = 260)]
     pub prev_local_mk_backup: Vec<u8>,
 }
 
@@ -118,7 +118,7 @@ pub struct TborPartFinalReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborPartFinalResp {
     /// Current `local_mk` backup envelope (`CurrPartLocalMKBackup`).
-    #[tbor(max_len = 164)]
+    #[tbor(max_len = 260)]
     pub local_mk_backup: Vec<u8>,
 }
 

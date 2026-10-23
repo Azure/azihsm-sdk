@@ -1,0 +1,199 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+[package]
+edition = "2024"
+name = "azihsm_sdk_fuzz"
+publish = false
+version = "0.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+azihsm_crypto = { path = "../crates/crypto" }
+azihsm_ddi = { path = "../ddi/lib" }
+azihsm_ddi_emu = { optional = true, path = "../ddi/emu" }
+azihsm_ddi_interface = { path = "../ddi/interface" }
+azihsm_ddi_mbor_sim = { path = "../ddi/mbor/sim" }
+azihsm_ddi_tbor_codec = { path = "../ddi/tbor/codec" }
+azihsm_ddi_tbor_test_harness = { path = "../crates/tbor_test_harness" }
+azihsm_ddi_tbor_types = { path = "../ddi/tbor/types" }
+azihsm_session_ex_crypto = { path = "../crates/session_ex_crypto" }
+x509 = { path = "../crates/x509" }
+zerocopy = { features = ["derive"], version = "0.8.17" }
+
+# dependencies for fuzzing
+libfuzzer-sys = { features = ["arbitrary-derive"], version = "0.4" }
+minicbor = "0.19.1"
+
+[features]
+default = []
+emu = ["azihsm_ddi/emu", "azihsm_ddi_tbor_test_harness/emu"]
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_request_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_round_trip.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_request_view"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_request_view.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_response_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_round_trip.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_response_view"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_response_view.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_session_open_round_trip"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_session_open_round_trip.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_psk_change"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_psk_change.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_part_init"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_init.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_part_final"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_part_final.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_restore_peer_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_peer_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_create_peer_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_create_peer_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_restore_remote_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_remote_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_create_remote_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_create_remote_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_restore_local_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_restore_local_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_reseal_remote_backup"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_reseal_remote_backup.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_aes_encrypt_decrypt"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_aes_encrypt_decrypt.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_attest_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_attest_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_establish_credential"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_establish_credential.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecc_sign"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_sign.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_ecdh_key_exchange"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecdh_key_exchange.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_sd_sealing_key_gen"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_sd_sealing_key_gen.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_rsa_unwrap"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_rsa_unwrap.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_hmac"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_hmac.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_hkdf"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_hkdf.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_rsa_mod_exp"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_rsa_mod_exp.rs"
+test = false

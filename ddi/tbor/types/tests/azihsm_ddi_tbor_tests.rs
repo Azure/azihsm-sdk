@@ -15,7 +15,4 @@
 //! compiles the crate only and runs zero tests.
 
 #[cfg(not(feature = "mock"))]
-pub mod harness;
-
-#[cfg(not(feature = "mock"))]
 pub mod commands;

@@ -40,13 +40,20 @@ pub struct TborSdRestoreRemoteBackupReq {
     pub session_id: u16,
 
     /// The receiver's masked SD-sealing key (from `SdSealingKeyGen`),
-    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to
     /// recover the receiver's private HPKE key (`RcvrPriv`).
     pub masked_sealing_key: [u8; MASKED_SEALING_KEY_LEN],
 
     /// Unified [`PartPolicy`] describing the security domain being
     /// restored.  Encoded as its 484-byte little-endian image.
     pub policy: PartPolicy,
+
+    /// Sender key certificate-chain descriptors (spec `SndrCertChain`).
+    /// Always present; validated and anchored to the policy **SATA** key,
+    /// its leaf public key is the sender public key (`SndrPub`) that sealed
+    /// `src_remote_backup`.  The DER bytes travel out of band.
+    #[tbor(max_len = 24)]
+    pub sender_cert_chain: Vec<CertDescriptor>,
 
     /// Sender manufacturer certificate-chain descriptors.  Flattened from
     /// the firmware `sender_evidence` field group (first of its four TOC
@@ -71,7 +78,7 @@ pub struct TborSdRestoreRemoteBackupReq {
     pub src_remote_backup: [u8; POK_REMOTE_BACKUP_LEN],
 
     /// Previous security-domain masking-key backup (SDMK masked under the
-    /// derived SDBMK), exactly [`SD_MK_BACKUP_LEN`] (164 B), from which
+    /// derived SDBMK), exactly [`SD_MK_BACKUP_LEN`] (260 B), from which
     /// `SDMK` is recovered.
     pub prev_sd_mk_backup: [u8; SD_MK_BACKUP_LEN],
 }
@@ -81,14 +88,14 @@ pub struct TborSdRestoreRemoteBackupReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborSdRestoreRemoteBackupResp {
     /// Partition-owner-key backup re-wrapped under the device-local key
-    /// (exactly 180 B on the wire; the firmware schema is the length
+    /// (exactly 276 B on the wire; the firmware schema is the length
     /// authority).
-    #[tbor(max_len = 180)]
+    #[tbor(max_len = 276)]
     pub pok_local_backup: Vec<u8>,
 
-    /// Security-domain masking-key backup envelope (exactly 164 B on the
+    /// Security-domain masking-key backup envelope (exactly 260 B on the
     /// wire; the firmware schema is the length authority).
-    #[tbor(max_len = 164)]
+    #[tbor(max_len = 260)]
     pub sd_mk_backup: Vec<u8>,
 }
 
@@ -104,6 +111,7 @@ mod tests {
             session_id: 9,
             masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
             policy: PartPolicy::zeroed(),
+            sender_cert_chain: Vec::new(),
             sender_mfgr_cert_chain: Vec::new(),
             sender_owner_cert_chain: Vec::new(),
             sender_part_owner_cert_chain: Vec::new(),

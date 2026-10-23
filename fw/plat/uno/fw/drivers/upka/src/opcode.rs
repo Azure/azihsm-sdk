@@ -5,6 +5,7 @@ use azihsm_fw_uno_error::HsmResult;
 
 use crate::UpkaEccCurve;
 use crate::UpkaError;
+use crate::UpkaModSize;
 use crate::UpkaRsaKeyType;
 
 pub(crate) const ECC_VERIFY_256: u32 = 0x1000_0000;
@@ -22,42 +23,53 @@ pub(crate) const ECC_POINT_VALIDATE_521: u32 = 0x1005_0008;
 pub(crate) const ECC_KEY_GEN_256: u32 = 0x1006_0000;
 pub(crate) const ECC_KEY_GEN_384: u32 = 0x1006_0001;
 pub(crate) const ECC_KEY_GEN_521: u32 = 0x1006_0008;
-pub(crate) const MONT_CONST_CALC_256: u32 = 0x500c_0000;
-pub(crate) const MONT_CONST_CALC_384: u32 = 0x500c_0001;
-pub(crate) const MONT_CONST_CALC_521: u32 = 0x500c_0008;
-
-// ── Modular / Montgomery opcodes (per-curve) ──
-//
-// PKA modular primitives used to assemble a firmware-side ECDSA sign from
-// scalar arithmetic (no firmware big-int), mirroring the mcr-hsm ECC-sign
-// self-test. Exposed for all three NIST curves via the `*_opcode` selectors
-// below; the deterministic cert-chain PID-leaf sign only exercises P-384 (the
-// alias key curve). Encodings mirror `PkaCommandCode` in mcr-hsm
-// `cp/hsm/types/src/crypto/pka.rs`.
-pub(crate) const MOD_REDUCTION_256: u32 = 0x5009_0000;
-pub(crate) const MOD_REDUCTION_384: u32 = 0x5009_0001;
-pub(crate) const MOD_REDUCTION_521: u32 = 0x5009_0008;
-pub(crate) const MONT_REPR_IN_256: u32 = 0x500b_0000;
-pub(crate) const MONT_REPR_IN_384: u32 = 0x500b_0001;
-pub(crate) const MONT_REPR_IN_521: u32 = 0x500b_0008;
-pub(crate) const MONT_REPR_OUT_256: u32 = 0x500a_0000;
-pub(crate) const MONT_REPR_OUT_384: u32 = 0x500a_0001;
-pub(crate) const MONT_REPR_OUT_521: u32 = 0x500a_0008;
-pub(crate) const MOD_INVERSE_256: u32 = 0x5007_0000;
-pub(crate) const MOD_INVERSE_384: u32 = 0x5007_0001;
-pub(crate) const MOD_INVERSE_521: u32 = 0x5007_0008;
-pub(crate) const MOD_MULTIPLICATION_256: u32 = 0x5004_0000;
-pub(crate) const MOD_MULTIPLICATION_384: u32 = 0x5004_0001;
-pub(crate) const MOD_MULTIPLICATION_521: u32 = 0x5004_0008;
-pub(crate) const MOD_ADDITION_256: u32 = 0x5005_0000;
-pub(crate) const MOD_ADDITION_384: u32 = 0x5005_0001;
-pub(crate) const MOD_ADDITION_521: u32 = 0x5005_0008;
 pub(crate) const RSA_PRIV_2K: u32 = 0x5000_0003;
 pub(crate) const RSA_PRIV_3K: u32 = 0x5000_0004;
 pub(crate) const RSA_PRIV_4K: u32 = 0x5000_0005;
 pub(crate) const RSA_PUB_2K: u32 = 0x5001_0003;
 pub(crate) const RSA_PUB_3K: u32 = 0x5001_0004;
 pub(crate) const RSA_PUB_4K: u32 = 0x5001_0005;
+pub(crate) const MOD_MULTIPLICATION_256: u32 = 0x5004_0000;
+pub(crate) const MOD_MULTIPLICATION_384: u32 = 0x5004_0001;
+pub(crate) const MOD_MULTIPLICATION_1K: u32 = 0x5004_0002;
+pub(crate) const MOD_MULTIPLICATION_2K: u32 = 0x5004_0003;
+pub(crate) const MOD_MULTIPLICATION_3K: u32 = 0x5004_0004;
+pub(crate) const MOD_MULTIPLICATION_4K: u32 = 0x5004_0005;
+pub(crate) const MOD_MULTIPLICATION_521: u32 = 0x5004_0008;
+pub(crate) const MOD_ADDITION_256: u32 = 0x5005_0000;
+pub(crate) const MOD_ADDITION_384: u32 = 0x5005_0001;
+pub(crate) const MOD_ADDITION_521: u32 = 0x5005_0008;
+pub(crate) const MOD_INVERSE_256: u32 = 0x5007_0000;
+pub(crate) const MOD_INVERSE_384: u32 = 0x5007_0001;
+pub(crate) const MOD_INVERSE_1K: u32 = 0x5007_0002;
+pub(crate) const MOD_INVERSE_2K: u32 = 0x5007_0003;
+pub(crate) const MOD_INVERSE_3K: u32 = 0x5007_0004;
+pub(crate) const MOD_INVERSE_4K: u32 = 0x5007_0005;
+pub(crate) const MOD_INVERSE_521: u32 = 0x5007_0008;
+pub(crate) const MOD_REDUCTION_256: u32 = 0x5009_0000;
+pub(crate) const MOD_REDUCTION_384: u32 = 0x5009_0001;
+pub(crate) const MOD_REDUCTION_521: u32 = 0x5009_0008;
+pub(crate) const MONT_REPR_OUT_256: u32 = 0x500a_0000;
+pub(crate) const MONT_REPR_OUT_384: u32 = 0x500a_0001;
+pub(crate) const MONT_REPR_OUT_1K: u32 = 0x500a_0002;
+pub(crate) const MONT_REPR_OUT_2K: u32 = 0x500a_0003;
+pub(crate) const MONT_REPR_OUT_3K: u32 = 0x500a_0004;
+pub(crate) const MONT_REPR_OUT_4K: u32 = 0x500a_0005;
+pub(crate) const MONT_REPR_OUT_521: u32 = 0x500a_0008;
+pub(crate) const MONT_REPR_IN_256: u32 = 0x500b_0000;
+pub(crate) const MONT_REPR_IN_384: u32 = 0x500b_0001;
+pub(crate) const MONT_REPR_IN_1K: u32 = 0x500b_0002;
+pub(crate) const MONT_REPR_IN_2K: u32 = 0x500b_0003;
+pub(crate) const MONT_REPR_IN_3K: u32 = 0x500b_0004;
+pub(crate) const MONT_REPR_IN_4K: u32 = 0x500b_0005;
+pub(crate) const MONT_REPR_IN_521: u32 = 0x500b_0008;
+pub(crate) const MONT_CONST_CALC_256: u32 = 0x500c_0000;
+pub(crate) const MONT_CONST_CALC_384: u32 = 0x500c_0001;
+pub(crate) const MONT_CONST_CALC_1K: u32 = 0x500c_0002;
+pub(crate) const MONT_CONST_CALC_2K: u32 = 0x500c_0003;
+pub(crate) const MONT_CONST_CALC_3K: u32 = 0x500c_0004;
+pub(crate) const MONT_CONST_CALC_4K: u32 = 0x500c_0005;
+pub(crate) const MONT_CONST_CALC_521: u32 = 0x500c_0008;
 pub(crate) const RSA_CRT_2K: u32 = 0x500E_0003;
 pub(crate) const RSA_CRT_3K: u32 = 0x500E_0004;
 pub(crate) const RSA_CRT_4K: u32 = 0x500E_0005;
@@ -212,6 +224,56 @@ pub(crate) fn mod_addition_opcode(curve: UpkaEccCurve) -> u32 {
         UpkaEccCurve::P256 => MOD_ADDITION_256,
         UpkaEccCurve::P384 => MOD_ADDITION_384,
         UpkaEccCurve::P521 => MOD_ADDITION_521,
+    }
+}
+
+/// Return the RSA-sized Montgomery-constant-calculation opcode.
+pub(crate) fn rsa_mont_const_calc_opcode(size: UpkaModSize) -> u32 {
+    match size {
+        UpkaModSize::Rsa1k => MONT_CONST_CALC_1K,
+        UpkaModSize::Rsa2k => MONT_CONST_CALC_2K,
+        UpkaModSize::Rsa3k => MONT_CONST_CALC_3K,
+        UpkaModSize::Rsa4k => MONT_CONST_CALC_4K,
+    }
+}
+
+/// Return the RSA-sized "to Montgomery representation" opcode.
+pub(crate) fn rsa_mont_repr_in_opcode(size: UpkaModSize) -> u32 {
+    match size {
+        UpkaModSize::Rsa1k => MONT_REPR_IN_1K,
+        UpkaModSize::Rsa2k => MONT_REPR_IN_2K,
+        UpkaModSize::Rsa3k => MONT_REPR_IN_3K,
+        UpkaModSize::Rsa4k => MONT_REPR_IN_4K,
+    }
+}
+
+/// Return the RSA-sized "from Montgomery representation" opcode.
+pub(crate) fn rsa_mont_repr_out_opcode(size: UpkaModSize) -> u32 {
+    match size {
+        UpkaModSize::Rsa1k => MONT_REPR_OUT_1K,
+        UpkaModSize::Rsa2k => MONT_REPR_OUT_2K,
+        UpkaModSize::Rsa3k => MONT_REPR_OUT_3K,
+        UpkaModSize::Rsa4k => MONT_REPR_OUT_4K,
+    }
+}
+
+/// Return the RSA-sized modular-inverse opcode.
+pub(crate) fn rsa_mod_inverse_opcode(size: UpkaModSize) -> u32 {
+    match size {
+        UpkaModSize::Rsa1k => MOD_INVERSE_1K,
+        UpkaModSize::Rsa2k => MOD_INVERSE_2K,
+        UpkaModSize::Rsa3k => MOD_INVERSE_3K,
+        UpkaModSize::Rsa4k => MOD_INVERSE_4K,
+    }
+}
+
+/// Return the RSA-sized modular-multiplication opcode.
+pub(crate) fn rsa_mod_multiplication_opcode(size: UpkaModSize) -> u32 {
+    match size {
+        UpkaModSize::Rsa1k => MOD_MULTIPLICATION_1K,
+        UpkaModSize::Rsa2k => MOD_MULTIPLICATION_2K,
+        UpkaModSize::Rsa3k => MOD_MULTIPLICATION_3K,
+        UpkaModSize::Rsa4k => MOD_MULTIPLICATION_4K,
     }
 }
 

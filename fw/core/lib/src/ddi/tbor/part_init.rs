@@ -24,9 +24,11 @@
 //!    command that binds them to the POTA-endorsed PTA cert chain.)
 //!
 //! 4. **PTACSR build** — assembles a PKCS#10 CertificationRequest
-//!    for the PTA public key.  The subject `serialNumber` is the
-//!    hex-encoded **PTAID** (`SHA-384("AZIHSM-PTAID-v1" || sec1_pub)[..16]`).
-//!    The TBS is hashed (LE digest) and signed via
+//!    for the PTA public key.  The subject is a single 64-byte
+//!    `commonName` holding the fixed PTA name (`"Azure Integrated HSM
+//!    PTA"`), a separating space, and the hex-encoded **PTAID**
+//!    (`SHA-384("AZIHSM-PTAID-v1" || sec1_pub)[..16]`), padded with
+//!    trailing spaces.  The TBS is hashed (LE digest) and signed via
 //!    [`HsmEcc::ecc_sign`]; the resulting LE `(r, s)` are byte-
 //!    reversed to BE for DER encoding.
 //!
@@ -57,7 +59,6 @@ use azihsm_fw_core_crypto_key_report::REPORT_DATA_LEN;
 use azihsm_fw_core_crypto_key_report::VM_LAUNCH_ID_LEN;
 use azihsm_fw_core_crypto_x509_builder::csr;
 use azihsm_fw_core_crypto_x509_builder::csr_builder;
-use azihsm_fw_core_crypto_x509_builder::padding;
 use azihsm_fw_ddi_tbor_types::TborPartInitReq;
 use azihsm_fw_ddi_tbor_types::TborPartInitResp;
 use azihsm_fw_ddi_tbor_types::MACH_SEED_LEN;
@@ -77,6 +78,12 @@ use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_hsm_pal_traits::SessionRole;
 use azihsm_fw_hsm_undo::UndoLog;
 
+use super::pta;
+use super::pta::PTAID_LABEL;
+#[cfg(test)]
+use super::pta::PTAID_LEN;
+#[cfg(test)]
+use super::pta::PTA_SUBJECT_CN;
 use super::*;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -100,17 +107,6 @@ const SHA384_LEN: usize = 48;
 // checked at runtime below; this guards against a future key-report
 // size increase silently exceeding the advertised response field.
 const _: () = assert!(PTA_REPORT_MAX_LEN >= KEY_REPORT_MAX_LEN);
-
-/// Subject Common Name fixed for every PTACSR (24 ASCII chars;
-/// space-padded to [`csr::SUBJECT_CN_LEN`] by the builder).
-const PTA_SUBJECT_CN: &str = "Azure Integrated HSM PTA";
-
-/// Domain-separation label hashed into the PTAID derivation.
-const PTAID_LABEL: &[u8] = b"AZIHSM-PTAID-v1";
-
-/// Bytes of the PTAID hash retained as the partition's short
-/// identifier (encoded as 32 hex chars in the CSR's serialNumber).
-const PTAID_LEN: usize = 16;
 
 /// Domain-separation label hashed into the PTAReport `report_data`.
 const REPORT_DATA_LABEL: &[u8] = b"AZIHSM-PTAReport-v1";
@@ -403,7 +399,7 @@ async fn derive_pta_keypair_buf<'a, P: HsmPal>(
     pub_sec1[0] = 0x04;
     let pub_xy = pub_sec1.split_at_mut(1).1;
     let _ = kdf::derive_pta_keypair(pal, io, alloc, root, Some((priv_scalar, pub_xy))).await?;
-    // `ecc_gen_keypair_from_okm` returns each coordinate in PAL-LE
+    // `ecc_gen_keypair_from_root` returns each coordinate in PAL-LE
     // wire form, but every downstream consumer here (CSR SPKI,
     // PTAID hash, KeyReport `pk_x`/`pk_y`) expects standard SEC1
     // big-endian. Reverse each coordinate in place so `pub_sec1`
@@ -417,10 +413,10 @@ async fn derive_pta_keypair_buf<'a, P: HsmPal>(
     })
 }
 
-/// Compute the PTACSR subject `commonName` and `serialNumber` slots.
-/// Build the CSR subject fields, then sign with the PTA private key
-/// and emit the full DER-encoded CSR.  The `cn`/`sn` arrays are local
-/// to this function so they never cross an await boundary in `handle`.
+/// Build the CSR subject `commonName` (fixed PTA name plus hex PTAID),
+/// then sign with the PTA private key and emit the full DER-encoded CSR.
+/// The `cn` array is local to this function so it never crosses an await
+/// boundary in `handle`.
 async fn build_signed_csr<'a, P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -428,9 +424,6 @@ async fn build_signed_csr<'a, P: HsmPal>(
     pub_sec1: &DmaBuf,
     pta_priv: &DmaBuf,
 ) -> HsmResult<(&'a mut DmaBuf, usize)> {
-    let mut cn = [0u8; csr::SUBJECT_CN_LEN];
-    padding::pad_cn_to(PTA_SUBJECT_CN, &mut cn).ok_or(HsmError::InternalError)?;
-
     // PTAID = SHA-384("AZIHSM-PTAID-v1" || sec1_pub)[..PTAID_LEN].
     let ptaid_input = alloc.dma_alloc(PTAID_LABEL.len() + P384_PUB_SEC1_LEN)?;
     ptaid_input[..PTAID_LABEL.len()].copy_from_slice(PTAID_LABEL);
@@ -439,12 +432,10 @@ async fn build_signed_csr<'a, P: HsmPal>(
     pal.hash(io, HsmHashAlgo::Sha384, ptaid_input, ptaid_digest, true)
         .await?;
 
-    let mut ptaid_hex = [0u8; PTAID_LEN * 2];
-    hex_encode(&ptaid_digest[..PTAID_LEN], &mut ptaid_hex);
-
-    let mut sn = [0u8; csr::SUBJECT_SN_LEN];
-    let ptaid_hex_str = core::str::from_utf8(&ptaid_hex).map_err(|_| HsmError::InternalError)?;
-    padding::pad_sn_to(ptaid_hex_str, &mut sn).ok_or(HsmError::InternalError)?;
+    let digest_bytes: &[u8] = ptaid_digest;
+    let digest =
+        <&[u8; SHA384_LEN]>::try_from(digest_bytes).map_err(|_| HsmError::InternalError)?;
+    let cn = pta::subject_cn(digest);
 
     let input = csr_builder::CsrInput {
         tbs_template: &csr::TBS_TEMPLATE,
@@ -452,8 +443,6 @@ async fn build_signed_csr<'a, P: HsmPal>(
         public_key: pub_sec1,
         subject_cn_offset: csr::SUBJECT_CN_OFFSET,
         subject_cn: &cn,
-        subject_sn_offset: csr::SUBJECT_SN_OFFSET,
-        subject_sn: &sn,
     };
 
     let csr = alloc.dma_alloc(PTA_CSR_MAX_LEN)?;
@@ -733,6 +722,7 @@ fn encode_response<'p, P: HsmPal>(
 
 /// Hex-encode `src` into `dst` using lowercase ASCII.
 /// `dst.len()` must equal `2 * src.len()`.
+#[cfg(test)]
 fn hex_encode(src: &[u8], dst: &mut [u8]) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     debug_assert_eq!(dst.len(), src.len() * 2);
@@ -768,15 +758,9 @@ mod tests {
     #[test]
     fn pta_subject_cn_fits_template() {
         assert!(PTA_SUBJECT_CN.is_ascii());
-        assert!(PTA_SUBJECT_CN.len() <= csr::SUBJECT_CN_LEN);
-    }
-
-    #[test]
-    fn ptaid_hex_width_equals_subject_sn_len() {
-        // The serialNumber field is exactly `2 * PTAID_LEN` hex
-        // chars; any future tweak to `PTAID_LEN` or the template's
-        // SN length must keep these aligned.
-        assert_eq!(PTAID_LEN * 2, csr::SUBJECT_SN_LEN);
+        // The single commonName holds the PTA name, a separating space, and
+        // the hex-encoded PTAID; all of it must fit the template CN width.
+        assert!(PTA_SUBJECT_CN.len() + 1 + PTAID_LEN * 2 <= csr::SUBJECT_CN_LEN);
     }
 }
 
@@ -818,10 +802,12 @@ pub(crate) mod kdf {
     //!   root via a distinct domain-separation label, without re-running
     //!   the expensive UDS-touching KBKDF.  (Future part-final local
     //!   keys will fan out from `PartRoot` the same way.)
-    //! - The third stage delegates to
-    //!   [`azihsm_crypto::EccPrivateKey::from_okm_a2_1`] via the
-    //!   PAL trait
-    //!   [`HsmEcc::ecc_gen_keypair_from_okm`](azihsm_fw_hsm_pal_traits::HsmEcc::ecc_gen_keypair_from_okm).
+    //! - The third stage delegates to the PAL trait
+    //!   [`HsmEcc::ecc_gen_keypair_from_root`](azihsm_fw_hsm_pal_traits::HsmEcc::ecc_gen_keypair_from_root),
+    //!   which owns the HKDF-Expand + FIPS 186-5 §A.2 scalar
+    //!   generation for its platform (§A.2.1 on the software PAL via
+    //!   [`azihsm_crypto::EccPrivateKey::from_okm_a2_1`], §A.2.2 on the
+    //!   uno hardware PAL).
     //!
     //! # Public surface
     //!
@@ -995,41 +981,37 @@ pub(crate) mod kdf {
         Ok(PART_ROOT_LEN)
     }
 
-    /// Domain-separation label for the PartRoot → PTA keypair derivation
-    /// (HKDF-Expand info prefix).  Mirrors [`PART_ROOT_LABEL`]
-    /// versioning: rotating the suffix retires the associated key.
-    /// Exposed as a `pub` constant so integration tests can construct
-    /// alternate labels and assert domain separation.
-    pub const KEYPAIR_LABEL_PTA: &[u8] = b"AZIHSM-PartInit-PTA-v1";
-
     /// Derive the deterministic per-partition PTA key pair (P-384) from
-    /// a `PartRoot` produced by [`derive_part_root`], composing RFC 5869
-    /// HKDF-Expand-SHA384 with FIPS 186-5 §A.2.1 (Extra Random Bits)
-    /// keypair generation.
+    /// a `PartRoot` produced by [`derive_part_root`].
     ///
-    /// The HKDF info input is `KEYPAIR_LABEL_PTA ‖ u16_be(okm_len)` so
-    /// that two different curves (or two different labels of the same
-    /// length) can never share an OKM, and so that increasing `okm_len`
-    /// in a future protocol revision is a domain-separating change.
+    /// The `PartRoot` is handed directly to the PAL, which owns the
+    /// full FIPS 186-5 §A.2 derivation: a domain-separated
+    /// HKDF-Expand-SHA384 (info built from the PAL's own
+    /// `KEYPAIR_LABEL_PTA`)
+    /// followed by the platform's §A.2 scalar generation — §A.2.1
+    /// (extra random bits) on a software PAL, or §A.2.2 (rejection
+    /// sampling) on a hardware PAL whose modular unit cannot reduce by
+    /// the even value `n − 1`.  Each fans out of the same `PartRoot`,
+    /// so the keypair regenerates byte-identically per platform.
     ///
-    /// Same query/copy convention as [`derive_part_root`] and as the
-    /// underlying PAL primitives
-    /// ([`HsmEcc::ecc_gen_keypair_from_okm`]):
+    /// Same query/copy convention as [`derive_part_root`] and the
+    /// underlying PAL primitive
+    /// ([`HsmEcc::ecc_gen_keypair_from_root`]):
     ///
     /// 1. **Query** — call with `out = None`.  No derivation happens;
     ///    returns the per-curve `(priv_len, pub_len)` byte counts the
     ///    caller must allocate.  `root` is still validated.
     /// 2. **Alloc** — caller allocates two DMA buffers of those sizes.
     /// 3. **Use** — call with `out = Some((priv_out, pub_out))`.  The
-    ///    method runs HKDF-Expand to produce 56 B OKM, then dispatches
-    ///    to the PAL §A.2.1 derive primitive.
+    ///    `PartRoot` is dispatched to the PAL derive primitive.
     ///
     /// # Parameters
     ///
-    /// - `pal` — PAL providing [`HsmKdf::hkdf_expand`] and
-    ///   [`HsmEcc::ecc_gen_keypair_from_okm`].
+    /// - `pal` — PAL providing
+    ///   [`HsmEcc::ecc_gen_keypair_from_root`].
     /// - `io` — caller's I/O context (per-IO scope).
-    /// - `alloc` — scoped allocator for HKDF info and OKM scratch.
+    /// - `alloc` — scoped allocator forwarded to the PAL derive
+    ///   primitive.
     /// - `root` — `PartRoot` from [`derive_part_root`].  Length
     ///   must equal [`PART_ROOT_LEN`].
     /// - `out` — `None` to query buffer sizes; `Some((priv_out,
@@ -1055,7 +1037,6 @@ pub(crate) mod kdf {
         let curve = HsmEccCurve::P384;
         let priv_len = curve.wire_coord_len();
         let pub_len = curve.wire_pub_key_len();
-        let okm_len = curve.a2_1_okm_len();
 
         if root.len() != PART_ROOT_LEN {
             return Err(HsmError::InvalidArg);
@@ -1068,22 +1049,14 @@ pub(crate) mod kdf {
             return Err(HsmError::InvalidArg);
         }
 
-        // ── HKDF-Expand info: KEYPAIR_LABEL_PTA ‖ u16_be(okm_len) ──
-        let info = alloc.dma_alloc(KEYPAIR_LABEL_PTA.len() + 2)?;
-        info[..KEYPAIR_LABEL_PTA.len()].copy_from_slice(KEYPAIR_LABEL_PTA);
-        info[KEYPAIR_LABEL_PTA.len()..].copy_from_slice(&(okm_len as u16).to_be_bytes());
-
-        // ── HKDF-Expand → OKM (curve-specific length) ─────────────
-        let okm = alloc.dma_alloc(okm_len)?;
-        pal.hkdf_expand(io, HsmHashAlgo::Sha384, root, Some(info), okm)
-            .await?;
-
-        // ── §A.2.1 keypair derivation via PAL primitive ────────────
-        pal.ecc_gen_keypair_from_okm(
+        // Hand the raw PartRoot to the PAL; each platform owns its
+        // FIPS 186-5 §A.2 derivation (a domain-separated HKDF-Expand
+        // followed by its A.2.x scalar generation) from it.
+        pal.ecc_gen_keypair_from_root(
             io,
             alloc,
             curve,
-            okm,
+            root,
             Some((priv_out, pub_out)),
             HsmEccPct::None,
         )

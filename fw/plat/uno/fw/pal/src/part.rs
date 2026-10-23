@@ -26,6 +26,8 @@ use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmPartitionManager;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
+use azihsm_fw_hsm_pal_traits::HsmSessId;
+use azihsm_fw_hsm_pal_traits::HsmVault;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
@@ -67,9 +69,11 @@ impl UnoHsmPal {
     ///   this provisions the deferred enable-time keys too and leaves the
     ///   partition [`PartState::Enabled`], ready for host IO.
     ///
-    /// Any existing allocation is freed first — except the PF pre-enable case,
-    /// which must preserve the enable — so `SetResource` is a declarative
-    /// "set the resources to this mask" operation.
+    /// Re-asserting the same mask on an already-provisioned partition is a
+    /// no-op (the recovery replay path). Otherwise any existing allocation is
+    /// freed first — except the PF pre-enable case, which must preserve the
+    /// enable — so `SetResource` is a declarative "set the resources to this
+    /// mask" operation.
     ///
     /// [`part_enable`]: Self::part_enable
     pub(crate) async fn part_alloc(
@@ -80,13 +84,39 @@ impl UnoHsmPal {
     ) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
 
+        // Re-asserting the *same* resource mask on an already-provisioned
+        // partition is a no-op. The driver replays `SetResource` verbatim
+        // during controller re-initialization (an NVMe Level-2 abort and
+        // firmware-crash recovery both re-run Identify → SetResCount), and
+        // `init()` deliberately preserved this partition's GSRAM state across
+        // the warm reset. Freeing here would delete the identity, every
+        // enable-time and session-blob vault key, the host credential and the
+        // session table on an otherwise recoverable fault. Mirrors the
+        // reference firmware's `part_init`, which short-circuits with
+        // `Success` once the partition identifiers are present.
+        //
+        // The mask must match: `res_mask` selects the partition's key-vault
+        // tables (see `crate::vault::vault`), so a *changed* mask falls
+        // through to the free-and-reallocate path below — otherwise the
+        // existing keys would be stranded in tables the partition no longer
+        // owns. `id_key_id` is the "identifiers present" marker: `part_free`
+        // and `rollback_alloc` clear it and `part_migrate` re-provisions it,
+        // so a partially-provisioned slot never short-circuits here.
+        //
+        // Nothing is re-run on this path. Gate 1 in particular is already
+        // re-armed for every partition with a non-zero `res_mask` by
+        // `PartStore::rearm_unwrapping_key_required()` in `init()`.
+        if mask == part.res_mask() && part.id_key_id().is_some() {
+            return Ok(());
+        }
+
         // A PF enabled before its resources were assigned is `Enabled` with no
         // resource mask yet (its identity/enabled keys are deferred); freeing
         // it would tear the enable down, so skip the free only in that exact
         // PF pre-enable case. Every other prior state — a VF, or a
-        // fully-provisioned `Enabled` partition being reallocated — is freed so
-        // keygen starts from a clean slate (no leaked vault keys, no stale
-        // resource mask).
+        // fully-provisioned `Enabled` partition being reallocated under a
+        // *different* mask — is freed so keygen starts from a clean slate (no
+        // leaked vault keys, no stale resource mask).
         let pre_enabled = is_pf && part.state()? == PartState::Enabled && part.res_mask() == 0;
         if !pre_enabled {
             self.part_free(pid).await?;
@@ -101,6 +131,13 @@ impl UnoHsmPal {
         if mask != 0 {
             part.set_unwrapping_key_required(true);
         }
+
+        // Bake the default PSKs. `part_psk` is `RequiredPresent`
+        // (default-baked at allocation time), but GSRAM boots zeroed, so a
+        // freshly allocated slot must be seeded here or it would keep an
+        // all-zero PSK. (An NSSR restores the defaults separately, in
+        // `clear_state(PartResetKind::Migrate)`.)
+        part.bake_default_psks();
 
         // Provision the identity then the masked boot key; on any failure
         // roll the whole allocation back so the slot is left fully
@@ -148,7 +185,10 @@ impl UnoHsmPal {
             return;
         };
         if let Some(key_id) = part.id_key_id() {
-            self.delete_key(pid, key_id).await;
+            self.with_admin_io(pid, async |admin_io, _alloc| {
+                self.delete_key(admin_io, key_id).await;
+            })
+            .await;
         }
         part.clear_identity();
         part.clear_masked_bk_boot();
@@ -170,35 +210,57 @@ impl UnoHsmPal {
     /// (survives enable/disable; cleared on free).
     async fn provision_masked_bk_boot(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
-        let admin_io = UnoHsmIo::admin(pid);
-        // Rewind the admin slot's bump heap before the masking sequence.
-        let _alloc = UnoScopedAlloc::for_admin(self);
-        let masked = azihsm_fw_core_crypto_key_derive::mask_bk_boot(self, &admin_io).await?;
-        part.set_masked_bk_boot(masked)
+        self.with_admin_io(pid, async |admin_io, _alloc| {
+            let masked = azihsm_fw_core_crypto_key_derive::mask_bk_boot(self, admin_io).await?;
+            part.set_masked_bk_boot(masked)
+        })
+        .await
     }
 
     /// Frees partition `pid` (mirrors `part_free`):
     /// `Allocated | Enabled | Disabled → Unallocated`.
     ///
     /// If the partition is `Enabled`, its enable-time state is cleared first
-    /// (an implicit disable). The identity key is deleted, all identity and
-    /// enable-time material is zeroized, the resource mask is released, and
-    /// the generation counter is bumped so previously issued key handles are
-    /// rejected. Freeing an already-`Unallocated` partition is a no-op.
+    /// (an implicit disable). The identity key and every other vault key are
+    /// deleted (releasing the partition's fast-path bulk-key slots), all
+    /// identity and enable-time material is zeroized, the resource mask is
+    /// released, and the generation counter is bumped so previously issued
+    /// key handles are rejected. Freeing an already-`Unallocated` partition is
+    /// a no-op. If the vault clear fails, its error is returned and the
+    /// partition stays allocated so the free can be retried.
     pub(crate) async fn part_free(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         if part.state()? == PartState::Unallocated {
             return Ok(());
         }
 
-        // Disable: clear enable-time keys/state (no-op if not enabled).
-        self.clear_enabled_state(pid).await;
+        // Disable: clear enable-time keys/state (no-op if not enabled), then
+        // delete the identity key and every remaining vault key, which also
+        // releases the fast-path bulk-key slots (the engine drops the keys on
+        // the function's teardown). One admin session covers every vault
+        // delete below, so the slot is scrubbed once instead of once per key.
+        let cleared = self
+            .with_admin_io(pid, async |admin_io, _alloc| {
+                self.clear_enabled_state(admin_io, pid).await;
+                if let Some(key_id) = part.id_key_id() {
+                    self.delete_key(admin_io, key_id).await;
+                }
+                self.vault_clear(admin_io).await
+            })
+            .await;
 
-        // Dealloc: delete the identity key and zeroize identity material.
-        if let Some(key_id) = part.id_key_id() {
-            self.delete_key(pid, key_id).await;
-        }
+        cleared?;
         part.clear_identity();
+        // Release every session slot. `clear_enabled_state` above only
+        // flagged them for renegotiation (the disable case); the partition
+        // is now being deallocated, so the reservations must not outlive it
+        // — `part_alloc`'s own `part_free` call short-circuits on an
+        // `Unallocated` slot, so this is the last chance to clean them
+        // before the slot is handed to a new tenant. Mirrors the reference
+        // `clear_partition_info`'s `session_table().restore(0)`.
+        if let Ok(mut sessions) = SessionStore::partition(pid) {
+            sessions.clear_all();
+        }
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
         part.clear_masked_bk_boot();
@@ -224,65 +286,65 @@ impl UnoHsmPal {
         pct: HsmEccPct,
     ) -> HsmResult<HsmKeyId> {
         let part = PartStore::partition(pid)?;
-        let admin_io = UnoHsmIo::admin(pid);
-        let alloc = UnoScopedAlloc::for_admin(self);
+        self.with_admin_io(pid, async |admin_io, alloc| {
+            // Generate the key pair into transient admin-slot DMA scratch
+            // buffers. The public key is *not* written straight into its
+            // part_store field: doing so would hold a `&mut` borrow into the
+            // GSRAM-backed PartStore across the keygen `.await`, which the
+            // PartStore driver forbids (no yielding while a slot is mutably
+            // borrowed). The store is updated synchronously after the await.
+            let priv_buf = alloc.dma_alloc(P384_PRIV_LEN)?;
+            let pub_buf = alloc.dma_alloc(ID_PUB_KEY_LEN)?;
+            let (_priv_len, pub_len) = self
+                .ecc_gen_keypair(
+                    admin_io,
+                    alloc,
+                    HsmEccCurve::P384,
+                    Some((priv_buf, pub_buf)),
+                    pct,
+                )
+                .await?;
 
-        // Generate the key pair into transient admin-slot DMA scratch
-        // buffers. The public key is *not* written straight into its
-        // part_store field: doing so would hold a `&mut` borrow into the
-        // GSRAM-backed PartStore across the keygen `.await`, which the
-        // PartStore driver forbids (no yielding while a slot is mutably
-        // borrowed). The store is updated synchronously after the await.
-        let priv_buf = alloc.dma_alloc(P384_PRIV_LEN)?;
-        let pub_buf = alloc.dma_alloc(ID_PUB_KEY_LEN)?;
-        let (_priv_len, pub_len) = self
-            .ecc_gen_keypair(
-                &admin_io,
-                &alloc,
-                HsmEccCurve::P384,
-                Some((priv_buf, pub_buf)),
-                pct,
-            )
-            .await?;
-
-        if pub_len != ID_PUB_KEY_LEN {
-            return Err(HsmError::InternalError);
-        }
-
-        // Persist the freshly generated public key into its part_store
-        // field (selected by `kind`). This borrow of the PartStore slot is
-        // strictly synchronous — no `.await` is reached while it is held.
-        match kind {
-            HsmVaultKeyKind::Ecc384Private => {
-                // The PKA emits the public key little-endian; store the identity
-                // key big-endian (natural SEC1/DER order) so every host-facing
-                // consumer (PartInfo, POTA verify, X.509 leaf, session HPKE)
-                // reads `part_id_pub_key` directly without per-handler swaps.
-                pub_buf[..ID_PUB_KEY_LEN / 2].reverse();
-                pub_buf[ID_PUB_KEY_LEN / 2..].reverse();
-                part.set_id_pub_key(pub_buf)?
+            if pub_len != ID_PUB_KEY_LEN {
+                return Err(HsmError::InternalError);
             }
-            HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
-            HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
-            _ => return Err(HsmError::InternalError),
-        }
 
-        // Assemble the stored blob to the format the vault expects for
-        // `kind`: the identity key stores the bare 48-byte private scalar,
-        // while the establish-credential and session-encryption keys store
-        // the 144-byte `pub(96) ‖ priv(48)` blob (matching the reference
-        // firmware's on-storage layout), using the scratch public key.
-        let key_buf: &DmaBuf = match kind {
-            HsmVaultKeyKind::Ecc384Private => priv_buf,
-            HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
-                self.build_enable_key_blob(&alloc, pub_buf, priv_buf)?
+            // Persist the freshly generated public key into its part_store
+            // field (selected by `kind`). This borrow of the PartStore slot is
+            // strictly synchronous — no `.await` is reached while it is held.
+            match kind {
+                HsmVaultKeyKind::Ecc384Private => {
+                    // The PKA emits the public key little-endian; store the identity
+                    // key big-endian (natural SEC1/DER order) so every host-facing
+                    // consumer (PartInfo, POTA verify, X.509 leaf, session HPKE)
+                    // reads `part_id_pub_key` directly without per-handler swaps.
+                    pub_buf[..ID_PUB_KEY_LEN / 2].reverse();
+                    pub_buf[ID_PUB_KEY_LEN / 2..].reverse();
+                    part.set_id_pub_key(pub_buf)?
+                }
+                HsmVaultKeyKind::EstablishCred => part.set_ec_pub_key(pub_buf)?,
+                HsmVaultKeyKind::SessionEncryption => part.set_se_pub_key(pub_buf)?,
+                _ => return Err(HsmError::InternalError),
             }
-            _ => return Err(HsmError::InternalError),
-        };
 
-        crate::vault::vault(&admin_io)
-            .create(self, &admin_io, u8::from(pid), key_buf, kind, None, attrs)
-            .await
+            // Assemble the stored blob to the format the vault expects for
+            // `kind`: the identity key stores the bare 48-byte private scalar,
+            // while the establish-credential and session-encryption keys store
+            // the 144-byte `pub(96) ‖ priv(48)` blob (matching the reference
+            // firmware's on-storage layout), using the scratch public key.
+            let key_buf: &DmaBuf = match kind {
+                HsmVaultKeyKind::Ecc384Private => priv_buf,
+                HsmVaultKeyKind::EstablishCred | HsmVaultKeyKind::SessionEncryption => {
+                    self.build_enable_key_blob(alloc, pub_buf, priv_buf)?
+                }
+                _ => return Err(HsmError::InternalError),
+            };
+
+            crate::vault::vault(admin_io)
+                .create(self, admin_io, u8::from(pid), key_buf, kind, None, attrs)
+                .await
+        })
+        .await
     }
 
     /// Builds the enable-key blob (`pub(96) ‖ priv(48)`, the
@@ -328,12 +390,12 @@ impl UnoHsmPal {
         Ok(())
     }
 
-    /// Generates the enable-time ECC P-384 key pairs — the
-    /// establish-credential and session-encryption keys — mirroring the
-    /// reference firmware's `part_enable`. On failure, any partial key is
-    /// rolled back. Certificates, nonce, and BK_BOOT are out of scope.
+    /// Refreshes the nonce and generates the establish-credential and
+    /// session-encryption key pairs. On failure, any partial key is
+    /// rolled back. Certificates and BK_BOOT are out of scope.
     async fn provision_enabled_keys(&self, pid: HsmPartId) -> HsmResult<()> {
-        let part = PartStore::partition(pid)?;
+        let mut part = PartStore::partition(pid)?;
+        self.rng.fill_bytes(part.nonce_mut())?;
         let attrs = HsmVaultKeyAttrs::new()
             .with_internal(true)
             .with_local(true)
@@ -364,33 +426,42 @@ impl UnoHsmPal {
             }
             Err(e) => {
                 // Roll back the establish-credential key.
-                self.delete_key(pid, ec_id).await;
+                self.with_admin_io(pid, async |admin_io, _alloc| {
+                    self.delete_key(admin_io, ec_id).await;
+                })
+                .await;
                 part.clear_enabled_keys();
                 Err(e)
             }
         }
     }
 
-    /// Best-effort deletion of one vault key for partition `pid`.
-    async fn delete_key(&self, pid: HsmPartId, key_id: HsmKeyId) {
-        let admin_io = UnoHsmIo::admin(pid);
-        let _ = crate::vault::vault(&admin_io)
-            .delete(self, &admin_io, key_id)
+    /// Best-effort deletion of one vault key, on the caller's admin session.
+    ///
+    /// Takes the caller's `admin_io` instead of opening its own session:
+    /// [`KeyVault::delete`](azihsm_fw_uno_key_vault::KeyVault::delete) takes
+    /// only a GDMA controller and an IO — no allocator — so it writes nothing
+    /// to the admin slot's bump heaps. A session per key would scrub the full
+    /// 16 KiB slot once per deletion for no benefit, and
+    /// [`clear_enabled_state`](Self::clear_enabled_state) deletes one key per
+    /// provisioning slot *and* per live session.
+    async fn delete_key(&self, admin_io: &UnoHsmIo, key_id: HsmKeyId) {
+        let _ = crate::vault::vault(admin_io)
+            .delete(self, admin_io, key_id)
             .await;
     }
 
     /// Clears partition `pid`'s per-tenant state — deletes every
-    /// enable-time and provisioning vault key plus every session-blob
-    /// vault key, then zeroizes all cached public keys, caller-presented
+    /// enable-time and provisioning vault key plus the mapped Active/Pending
+    /// session blobs, then zeroizes cached public keys, caller-presented
     /// secrets, write-once provisioning fields, the nonce, VM launch GUID,
-    /// BK3 incarnation flag, and the session table (see [`PartStore`]'s
-    /// `clear_enabled_state`).
+    /// and BK3 incarnation flag. Established logical session slots remain
+    /// reserved as NeedsRenegotiation; pending slots are released.
     ///
-    /// The partition identity and `Masked_BK_BOOT` are preserved — they
-    /// are torn down only on free. Best-effort and idempotent: keys are
-    /// deleted only if present, so it is safe to call regardless of the
-    /// current lifecycle state.
-    async fn clear_enabled_state(&self, pid: HsmPartId) {
+    /// This helper preserves the partition identity and `Masked_BK_BOOT`.
+    /// Best-effort and idempotent: keys are deleted only if present, so it is
+    /// safe to call regardless of the current lifecycle state.
+    async fn clear_enabled_state(&self, admin_io: &UnoHsmIo, pid: HsmPartId) {
         let Ok(part) = PartStore::partition(pid) else {
             return;
         };
@@ -409,15 +480,22 @@ impl UnoHsmPal {
         .into_iter()
         .flatten()
         {
-            self.delete_key(pid, key_id).await;
+            self.delete_key(admin_io, key_id).await;
         }
-        // Delete every session-blob vault key (Active, NeedsRenegotiation,
-        // or Pending) mapped by the session table, so none are orphaned in
-        // the vault when the table is zeroized below.
-        if let Ok(sessions) = SessionStore::partition(pid) {
+        // Delete the mapped Active/Pending session blobs before dropping
+        // their indirection. Renegotiating slots have no live vault mapping
+        // and are excluded by occupied_physical_ids().
+        if let Ok(mut sessions) = SessionStore::partition(pid) {
             for key_id in sessions.occupied_physical_ids().into_iter().flatten() {
-                self.delete_key(pid, key_id).await;
+                self.delete_key(admin_io, key_id).await;
             }
+            // Keep established logical session IDs reserved for renegotiation
+            // and release pending handshakes. The host may still close its
+            // established sessions (the DDI admits `Close` on a renegotiating
+            // slot), and an NVMe Level-2 abort reaches us here as
+            // `PfnEnableDisable(Disable)`. `part_free` releases the slots
+            // afterwards, for the deallocation case.
+            sessions.mark_all_needs_renego();
         }
         part.clear_state(PartResetKind::Disable);
     }
@@ -427,15 +505,15 @@ impl UnoHsmPal {
     ///
     /// - **VF / re-enable** (`Allocated | Disabled → Enabled`): the
     ///   establish-credential and session-encryption ECC P-384 key pairs are
-    ///   generated here, then host IO is accepted.
+    ///   generated here with a fresh nonce, then host IO is accepted.
     /// - **PF enable-before-SetResource** (`Unallocated → Enabled`, only when
     ///   `is_pf`): `res_mask` is not yet assigned, so the enable-time keys
     ///   cannot be provisioned (the vault has no table). The enable is
     ///   recorded and key provisioning is *deferred* to [`part_alloc`], which
     ///   runs when `SetResource` arrives.
     ///
-    /// Re-enabling an already-`Enabled` partition is idempotent. Certificates,
-    /// nonce, and BK_BOOT are out of scope.
+    /// Re-enabling an already-`Enabled` partition preserves its keys and nonce.
+    /// Certificates and BK_BOOT are out of scope.
     ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
     ///
@@ -464,15 +542,30 @@ impl UnoHsmPal {
 
     /// Disables partition `pid`: `Enabled` → `Disabled`.
     ///
-    /// Deletes the enable-time keys and clears their handles and public
-    /// keys.
+    /// Deletes session-owned keys before clearing the enable-time keys and
+    /// session mappings. If session-key cleanup fails, mappings are kept so
+    /// the operation can be retried.
     ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
     pub(crate) async fn part_disable(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
         match part.state()? {
             PartState::Enabled => {
-                self.clear_enabled_state(pid).await;
+                self.with_admin_io(pid, async |admin_io, _alloc| -> HsmResult<()> {
+                    let sessions = SessionStore::partition(pid)?;
+                    for (slot, key_id) in sessions.occupied_physical_ids().into_iter().enumerate() {
+                        if key_id.is_some() {
+                            self.vault_key_delete_by_session(
+                                admin_io,
+                                HsmSessId::from(slot as u16),
+                            )
+                            .await?;
+                        }
+                    }
+                    self.clear_enabled_state(admin_io, pid).await;
+                    Ok(())
+                })
+                .await?;
                 part.set_state(PartState::Disabled);
                 Ok(())
             }
@@ -481,7 +574,8 @@ impl UnoHsmPal {
     }
 
     /// Resets partition `pid`'s per-tenant state for an NSSR `Migrate`,
-    /// mirroring the reference firmware's `state.migrate()`.
+    /// mirroring the reference firmware's `state.migrate()` — the middle of
+    /// its three reset levels (disable / migrate / `clear_partition_info`).
     ///
     /// Wipes ALL vault key material (app, session, and internal keys — the
     /// reference does `vault().clear()` / `KeyStore::nuke()`) so no prior
@@ -495,45 +589,112 @@ impl UnoHsmPal {
     /// regenerated — matching the *std* reference firmware, whose NSSR/erase
     /// always provisions a fresh identity. Note this intentionally diverges
     /// from mcr-hsm, whose `state.migrate()` preserves the PID keypair inline
-    /// in its persistent store. Finally regenerates the enable-time
-    /// establish-credential and session-encryption keys.
+    /// in its persistent store. Finally refreshes the nonce and regenerates
+    /// the establish-credential and session-encryption keys.
     ///
-    /// The net effect matches the reference: the partition keeps its
-    /// provisioning across the reset — with a freshly regenerated identity —
-    /// and only needs its credential re-established, preserving the
-    /// impactless-update guarantee — unlike a full [`part_disable`], which
-    /// additionally tears down the provisioning material.
+    /// The session slots are **released** (`SessionTable::clear_all`), a
+    /// second deliberate divergence from `state.migrate()`, which preserves
+    /// them for renegotiation via `restore(backup())`. Uno regenerates the
+    /// identity and does not preserve the pre-reset session context. This
+    /// preserves the behaviour of the original `clear_state(PartResetKind::Migrate)`, which
+    /// zeroized the session table itself before that policy moved here.
+    ///
+    /// Provisioning survives NSSR with a freshly regenerated identity, and
+    /// credentials can be re-established. A full [`part_disable`] additionally
+    /// tears down the provisioning material. This does not implement IDFU
+    /// queue quiesce/resume.
+    ///
+    /// # Accepted states
+    ///
+    /// Applies to a partition in **any** lifecycle state, mirroring the
+    /// reference firmware's unconditional `state.migrate()`; it does not
+    /// require `Enabled`. An earlier revision rejected every non-`Enabled`
+    /// state with [`HsmError::InvalidArg`], which left the session table
+    /// leaked whenever a partition was migrated while disabled.
+    ///
+    /// - `Unallocated` — no resources and no vault table: no-op, `Ok(())`.
+    /// - `res_mask == 0` (the PF enabled before `SetResource` assigned it
+    ///   any tables) — the vault is built over empty storage and the
+    ///   identity / enable-time keys are deliberately deferred, so only the
+    ///   per-tenant state and identity fields are cleared; provisioning is
+    ///   left to the later `SetResource` → [`part_alloc`] path.
+    /// - Anything else — full wipe, then re-provision and leave the
+    ///   partition `Enabled` and re-provisionable.
+    ///
+    /// Note the last case leaves a previously-`Disabled` partition
+    /// `Enabled`, so an NSSR is also an implicit re-enable.
     ///
     /// [`part_disable`]: Self::part_disable
+    /// [`part_alloc`]: Self::part_alloc
     pub(crate) async fn part_migrate(&self, pid: HsmPartId) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
-        match part.state()? {
-            PartState::Enabled => {
-                // Wipe every vault key (app + session + internal) so no prior
-                // tenant key material survives the reset.
-                let admin_io = UnoHsmIo::admin(pid);
-                crate::vault::vault(&admin_io)
-                    .clear(self, &admin_io)
-                    .await?;
-                // Clear per-tenant persistent state, preserving provisioning.
-                part.clear_state(PartResetKind::Migrate);
-                // The `vault.clear()` above also deleted the identity private
-                // key. Zero the identity fields (id, `id_key_id`, cached public
-                // key) *before* awaiting so no concurrent reader can observe
-                // `id_key_id` dangling at a deleted vault key while a fresh
-                // identity is being provisioned across the await points below.
-                part.clear_identity();
-                // Regenerate a fresh partition identity (new keypair + id blob).
-                // Matches the std reference firmware, which always provisions a
-                // fresh identity on NSSR (diverges from mcr-hsm, which preserves
-                // the PID keypair).
-                self.provision_identity(pid).await?;
-                // Regenerate the enable-time establish-credential and
-                // session-encryption keys (this PAL provisions them eagerly).
-                self.provision_enabled_keys(pid).await
-            }
-            _ => Err(HsmError::InvalidArg),
+        // An unallocated partition has neither resources nor a vault table,
+        // so there is nothing to reset.
+        if matches!(part.state()?, PartState::Unallocated) {
+            return Ok(());
         }
+
+        // A PF enabled before `SetResource` assigned it any tables is
+        // `Enabled` with `res_mask == 0`, so `vault()` is built over empty
+        // storage (see `crate::vault::vault`) and its identity / enable-time
+        // keys are deliberately deferred. There is no key material to wipe
+        // and nowhere to provision a fresh identity into, so reset only the
+        // per-tenant state and leave provisioning to the later
+        // `SetResource` → `part_alloc` path.
+        if part.res_mask() == 0 {
+            part.clear_state(PartResetKind::Migrate);
+            if let Ok(mut sessions) = SessionStore::partition(pid) {
+                sessions.clear_all();
+            }
+            part.clear_identity();
+            return Ok(());
+        }
+
+        // Reap ALL per-tenant state regardless of the current lifecycle
+        // state (Enabled / Allocated / Disabled), mirroring the reference
+        // firmware's unconditional `state.migrate()`. uno previously
+        // guarded on `Enabled` and returned `InvalidArg` for every other
+        // state, which left a leaked session table intact whenever a
+        // partition was migrated while not Enabled (e.g. after the owning
+        // host fd closed and disabled it) — perpetuating
+        // `VaultSessionLimitReached` across the NSSR that `erase()` drives,
+        // because the session slots were never freed.
+
+        // Wipe every vault key (app + session + internal) so no prior
+        // tenant key material survives the reset, and release the partition's
+        // fast-path engine bulk-key slots. Runs inside a `with_admin_io`
+        // session so the per-IO scratch the clear touches is scrubbed on
+        // exit — an admin IO obtained any other way would bypass the
+        // teardown wipe.
+        self.with_admin_io(pid, async |admin_io, _alloc| {
+            self.vault_clear(admin_io).await
+        })
+        .await?;
+        // Clear the per-tenant persistent state, preserving the partition's
+        // provisioning material. Every session slot is released outright;
+        // the identity is regenerated below rather than preserving pre-reset
+        // session context. The vault clear above already deleted the backing
+        // session-blob keys.
+        part.clear_state(PartResetKind::Migrate);
+        if let Ok(mut sessions) = SessionStore::partition(pid) {
+            sessions.clear_all();
+        }
+        // The `vault.clear()` above also deleted the identity private key.
+        // Zero the identity fields (id, `id_key_id`, cached public key)
+        // *before* awaiting so no concurrent reader can observe `id_key_id`
+        // dangling at a deleted vault key while a fresh identity is being
+        // provisioned across the await points below.
+        part.clear_identity();
+        // Regenerate a fresh partition identity (new keypair + id blob) and
+        // the enable-time establish-credential / session-encryption keys,
+        // then leave the partition Enabled and re-provisionable. Applying
+        // this uniformly (not just to the previously-Enabled case) means a
+        // migrate always yields a clean, usable partition. A subsequent
+        // `part_enable` is an idempotent no-op on an already-Enabled slot.
+        self.provision_identity(pid).await?;
+        self.provision_enabled_keys(pid).await?;
+        part.set_state(PartState::Enabled);
+        Ok(())
     }
 
     /// Materialise the partition's RSA-2048 unwrapping key into the vault on
@@ -574,8 +735,12 @@ impl UnoHsmPal {
             .with_internal(true)
             .with_local(true)
             .with_unwrap(true);
-        let admin_io = UnoHsmIo::admin(pid);
-        let kid = crate::vault::vault(&admin_io).create_sync(
+        // The caller's IO selects the partition's vault. `create_sync` copies
+        // straight from the `&'static` GSRAM slot into vault storage, so no
+        // scratch is allocated. The shared admin slot is deliberately not
+        // used: rewriting its `IO_META` here would retarget an admin session
+        // suspended on another partition's provisioning.
+        let kid = crate::vault::vault(io).create_sync(
             u8::from(pid),
             bk,
             HsmVaultKeyKind::Rsa2kPrivate,

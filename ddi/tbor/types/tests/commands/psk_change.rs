@@ -25,30 +25,27 @@
 //!   trips the `#[tbor(buffer, len = 100)]` check on both emu and
 //!   hw; the FW response preserves the exact structural fault via
 //!   the `HsmError::Tbor*` → `HsmErr::Tbor*` mapping.
-//! * Hw-only: rotation to a well-known default PSK is rejected with
-//!   `TborStatus::InvalidArg`.
+//! * Rotation to a well-known default PSK is rejected with
+//!   `TborStatus::InvalidArg` (the core `PskChange` handler enforces
+//!   this, so it holds on both emu and hw).
 
 use azihsm_crypto::aead_envelope;
 use azihsm_crypto::aead_envelope::AeadAlg;
 use azihsm_crypto::AesKey;
 use azihsm_crypto::Rng;
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::build_psk_change_aad;
+use azihsm_ddi_tbor_test_harness::encrypt_psk_envelope;
+use azihsm_ddi_tbor_test_harness::SessionOpenInitOptions;
+use azihsm_ddi_tbor_test_harness::TborPskChangeReq;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborStatus;
-#[cfg(not(feature = "emu"))]
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CO;
 use azihsm_ddi_tbor_types::DEFAULT_PSK_CU;
 use azihsm_ddi_tbor_types::PSK_LEN;
-
-#[cfg(not(feature = "emu"))]
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::build_psk_change_aad;
-use crate::harness::encrypt_psk_envelope;
-use crate::harness::SessionOpenInitOptions;
-use crate::harness::TborPskChangeReq;
-use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
 
 /// Distinct, non-default 32-byte PSK used by the happy-path tests.
 const ROTATED_PSK: [u8; PSK_LEN] = [
@@ -160,7 +157,10 @@ fn psk_change_second_attempt_same_session_fails() {
     let err = ctx
         .psk_change(session.handshake(), &DEFAULT_PSK_CU)
         .expect_err("second psk_change on same session must fail");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::InvalidPermissions);
+    azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+        &err,
+        TborStatus::InvalidPermissions,
+    );
 }
 
 // ===========================================================================
@@ -204,7 +204,10 @@ fn psk_change_envelope_tampered() {
         let err = ctx
             .tbor(&req)
             .expect_err(&format!("tamper case must be rejected: {label}"));
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+            &err,
+            TborStatus::AeadEnvelopeAuthFailed,
+        );
     }
 }
 
@@ -283,7 +286,10 @@ fn psk_change_envelope_from_other_session() {
     let err = ctx_b
         .tbor(&req)
         .expect_err("PskChange envelope from session A must be rejected on session B");
-    crate::harness::assertions::assert_fw_rejects(&err, TborStatus::AeadEnvelopeAuthFailed);
+    azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+        &err,
+        TborStatus::AeadEnvelopeAuthFailed,
+    );
 
     // Both sessions close on drop via their SessionGuards.
 }
@@ -314,7 +320,10 @@ fn psk_change_wrong_plaintext_length() {
         let err = ctx.tbor(&req).expect_err(&format!(
             "plaintext length {len} (≠ PSK_LEN={PSK_LEN}) must be rejected",
         ));
-        crate::harness::assertions::assert_fw_rejects(&err, TborStatus::TborInvalidFixedLength);
+        azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects(
+            &err,
+            TborStatus::TborInvalidFixedLength,
+        );
     }
 }
 
@@ -355,7 +364,6 @@ fn psk_change_wrong_aad_length() {
 // in-tree Rust FW that emu runs. Emu accepts the rotation.
 // ===========================================================================
 
-#[cfg(not(feature = "emu"))]
 fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8; PSK_LEN]) {
     let ctx = TestCtx::new();
     let session = ctx
@@ -367,25 +375,21 @@ fn run_psk_change_to_default_rejected(role: u8, sty: SessionType, new_psk: &[u8;
     assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_cu_to_default_cu_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CU);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_cu_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CU, SessionType::PlainText, &DEFAULT_PSK_CO);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_co_to_default_co_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CO);
 }
 
-#[cfg(not(feature = "emu"))]
 #[test]
 fn psk_change_co_to_default_cu_rejected() {
     run_psk_change_to_default_rejected(CO, SessionType::Authenticated, &DEFAULT_PSK_CU);

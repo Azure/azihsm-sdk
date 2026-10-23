@@ -440,7 +440,7 @@ fn test_aes_xts_128_encrypt_decrypt() {
     let mut aes_xts =
         AesXtsAlgo::new(&tweak, plaintext.len()).expect("Failed to create AES-XTS algo");
     let mut ciphertext = vec![0u8; plaintext.len()];
-    println!("original tweak: {:02x?}", &tweak);
+    println!("original tweak: {:02x?}", tweak);
     let encrypted_len = aes_xts
         .encrypt(&aes_xts_key, &plaintext, Some(&mut ciphertext))
         .expect("AES-XTS encryption failed");

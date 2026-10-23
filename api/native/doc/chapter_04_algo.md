@@ -439,6 +439,11 @@ The algorithm can wrap and unwrap a target asymmetric key of any length and type
 - A temporary AES key is used for wrapping the target key using AZIHSM_ALGO_ID_AES_KEY_WRAP_KWP mechanism.
 - The temporary AES key is wrapped with the wrapping RSA key using AZIHSM_ALGO_ID_RSA_PKCS_OAEP mechanism.
 
+EX sessions support SHA-1, SHA-256, SHA-384, and SHA-512 for the OAEP and
+MGF1 hashes, which must match. SHA-1 requires firmware with TBOR OAEP-SHA1
+support and is intended for legacy compatibility; prefer SHA-2 for new
+applications. This does not change legacy-session behavior.
+
 |                            |                                                                             |
 | -------------------------- | --------------------------------------------------------------------------- |
 | **Algorithm ID**           | `AZIHSM_ALGO_ID_RSA_AES_KEY_WRAP`                                            |
@@ -510,6 +515,11 @@ struct azihsm_algo algo = {
 ## ECDSA Sign & Verify
 
 ECDSA without hashing is an algorithm for single-part signatures and verification for ECDSA.
+
+EX sessions support SHA-256, SHA-384, and SHA-512 digests on P-256, P-384,
+and P-521. When the digest is longer than the curve's order, signing retains
+the most significant bits as required by ECDSA; for example, P-256 with
+SHA-512 uses the first 256 bits of the big-endian digest.
 
 |                            |                                                           |
 | -------------------------- | --------------------------------------------------------- |
@@ -1177,6 +1187,11 @@ struct azihsm_algo algo = {
 ## HKDF Derive
 
 HKDF derivation implements the KDF as specified in [RFC 5869](https://datatracker.ietf.org/doc/html/rfc5869).
+
+The `hmac_algo_id` selects SHA-1, SHA-256, SHA-384, or SHA-512 as the HKDF
+PRF, independently of the derived key type. SHA-1 is supported with both
+legacy and EX sessions; EX requires firmware with TBOR HKDF-SHA1 support.
+Prefer SHA-2 for new applications and use SHA-1 only for legacy compatibility.
 
 |                            |                                                                |
 | -------------------------- | -------------------------------------------------------------- |

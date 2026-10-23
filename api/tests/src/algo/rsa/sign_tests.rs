@@ -24,6 +24,48 @@ fn import_rsa_key(
 // test case section
 // ============================================================
 
+/// Verify labeled, session-scoped RSA keys through PKCS#1 signing for every key size.
+/// The mock backend does not preserve caller-supplied key labels.
+#[cfg(not(feature = "mock"))]
+#[session_test]
+fn test_rsa_sign_verify_labeled_session_keys(session: HsmSession) {
+    for (bits, modulus_bytes, hash_algo) in [
+        (2048, 256, HsmHashAlgo::Sha256),
+        (3072, 384, HsmHashAlgo::Sha384),
+        (4096, 512, HsmHashAlgo::Sha512),
+    ] {
+        let label = b"rsa-sign-key";
+        let host_key =
+            crypto::RsaPrivateKey::generate(modulus_bytes).expect("Failed to generate RSA Key");
+        let der = host_key.to_vec().expect("Failed to export RSA Key");
+        let (priv_key, pub_key) = try_import_rsa_key_pair_with_kind(
+            &session,
+            &der,
+            bits,
+            HsmKeyKind::Rsa,
+            label,
+            ImportedRsaKeyUsage::SignVerify,
+            true,
+        )
+        .expect("Failed to import RSA sign/verify key pair");
+        assert_eq!(priv_key.label(), label.to_vec());
+        assert_eq!(pub_key.label(), label.to_vec());
+
+        let mut hasher = hash_algo;
+        let hash = HsmHasher::hash_vec(&session, &mut hasher, b"RSA sign/verify")
+            .expect("Failed to hash message");
+        let mut algo = HsmRsaSignAlgo::with_pkcs1_padding(hash_algo);
+        let signature =
+            HsmSigner::sign_vec(&mut algo, &priv_key, &hash).expect("Failed to sign data");
+
+        assert!(
+            HsmVerifier::verify(&mut algo, &pub_key, &hash, &signature)
+                .expect("Failed to verify signature"),
+            "Signature verification failed for {bits}-bit key",
+        );
+    }
+}
+
 /// Ensure RSA-2048 PKCS#1 sign/verify succeeds using pre-hashed input
 #[session_test]
 fn test_rsa_2048_pkcs1_sign_verify(session: HsmSession) {

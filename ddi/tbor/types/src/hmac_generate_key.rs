@@ -23,13 +23,13 @@ use crate::tbor;
 pub const TBOR_OP_HMAC_GENERATE_KEY: u8 = 0x11;
 
 /// Minimum masked HMAC-key envelope length (SHA-256, 32-byte key): an
-/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖
+/// AEAD-GCM-256 masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖
 /// pt(32) ‖ tag(16)`.
-pub const MASKED_HMAC_KEY_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const MASKED_HMAC_KEY_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 
 /// Maximum masked HMAC-key envelope length (128-byte key): an AEAD-GCM-256
-/// masked-key envelope `header(8) ‖ iv(12) ‖ aad(96) ‖ pt(128) ‖ tag(16)`.
-pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+/// masked-key envelope `header(8) ‖ iv(12) ‖ aad(192) ‖ pt(128) ‖ tag(16)`.
+pub const MASKED_HMAC_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// `HashAlgo` discriminant for HMAC-SHA-256 (mirror of the firmware
 /// `HsmHashAlgo` / TBOR `HashAlgo` value).
@@ -41,7 +41,7 @@ pub const HMAC_HASH_SHA512: u8 = 3;
 
 /// Host-facing TBOR `HmacGenerateKey` request.
 #[tbor(opcode = TBOR_OP_HMAC_GENERATE_KEY, session_ctrl = in_session)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborHmacGenerateKeyReq {
     /// Session id this request is bound to.  Cross-checked against the
     /// SQE-carried session id by the dispatcher.
@@ -61,6 +61,11 @@ pub struct TborHmacGenerateKeyReq {
     /// SHA-384: 48–128, SHA-512: 64–128), else the device returns
     /// `InvalidKeyLength`.
     pub key_length: u8,
+
+    /// Caller-supplied key label recorded in the masked blob's metadata,
+    /// up to 128 bytes.  Empty for an unlabeled key.
+    #[tbor(max_len = 128)]
+    pub key_label: Vec<u8>,
 }
 
 /// Host-facing TBOR `HmacGenerateKey` response.
@@ -68,9 +73,9 @@ pub struct TborHmacGenerateKeyReq {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TborHmacGenerateKeyResp {
     /// The freshly generated HMAC key, masked (AEAD-GCM-256) under the
-    /// requested scope's masking key.  `132 + key_length` B (164 … 260 B
+    /// requested scope's masking key.  `228 + key_length` B (260 … 356 B
     /// for a 32 … 128-byte key); not stored on-device.
-    #[tbor(max_len = 260)]
+    #[tbor(max_len = 356)]
     pub masked_key: Vec<u8>,
 }
 
@@ -88,6 +93,7 @@ mod tests {
             scope: 0b001,
             hash_algo: HMAC_HASH_SHA384,
             key_length: 96,
+            key_label: b"hmac-key".to_vec(),
         };
 
         let mut buf = [0u8; 256];

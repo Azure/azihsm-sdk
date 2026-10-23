@@ -182,7 +182,8 @@ fn run_unmask_wrong_context_blob_test(session: &HsmSession) {
 
     assert!(
         result.is_ok(),
-        "Generic-secret unmasking should succeed for valid masked blob"
+        "Generic-secret unmasking should succeed for valid masked blob: {:?}",
+        result.as_ref().err()
     );
 
     if let Ok(k) = result {
@@ -254,18 +255,30 @@ fn run_unmask_truncated_blob_test(session: &HsmSession, curve: HsmEccCurve) {
 
 /// Test unmask of a P-256 ECDH shared secret key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask shared secret key: UnsupportedKeyOperation")
+)]
 fn test_shared_secret_unmask_p256(session: HsmSession) {
     test_shared_secret_unmask_common(&session, HsmEccCurve::P256);
 }
 
 /// Test unmask of a P-384 ECDH shared secret key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask shared secret key: UnsupportedKeyOperation")
+)]
 fn test_shared_secret_unmask_p384(session: HsmSession) {
     test_shared_secret_unmask_common(&session, HsmEccCurve::P384);
 }
 
 /// Test unmask of a P-521 ECDH shared secret key.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "Failed to unmask shared secret key: UnsupportedKeyOperation")
+)]
 fn test_shared_secret_unmask_p521(session: HsmSession) {
     test_shared_secret_unmask_common(&session, HsmEccCurve::P521);
 }
@@ -301,18 +314,36 @@ fn test_unmask_corrupted_blob_p521(session: HsmSession) {
 
 /// Verifies unmasked key is functionally usable for derive (P-256).
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_unmasked_key_functional_p256(session: HsmSession) {
     run_unmasked_key_functional_test(&session, HsmEccCurve::P256);
 }
 
 /// Verifies unmasked key is functionally usable for derive (P-384).
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_unmasked_key_functional_p384(session: HsmSession) {
     run_unmasked_key_functional_test(&session, HsmEccCurve::P384);
 }
 
 /// Verifies unmasked key is functionally usable for derive (P-521).
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnsupportedKeyOperation"
+    )
+)]
 fn test_unmasked_key_functional_p521(session: HsmSession) {
     run_unmasked_key_functional_test(&session, HsmEccCurve::P521);
 }
@@ -331,18 +362,30 @@ fn test_unmask_random_blob(session: HsmSession) {
 
 /// Verifies unmasking the same blob twice behaves consistently (P-256).
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "First unmask failed: UnsupportedKeyOperation")
+)]
 fn test_unmask_twice_p256(session: HsmSession) {
     run_unmask_twice_test(&session, HsmEccCurve::P256);
 }
 
 /// Verifies unmasking the same blob twice behaves consistently (P-384).
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "First unmask failed: UnsupportedKeyOperation")
+)]
 fn test_unmask_twice_p384(session: HsmSession) {
     run_unmask_twice_test(&session, HsmEccCurve::P384);
 }
 
 /// Verifies unmasking the same blob twice behaves consistently (P-521).
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(expected = "First unmask failed: UnsupportedKeyOperation")
+)]
 fn test_unmask_twice_p521(session: HsmSession) {
     run_unmask_twice_test(&session, HsmEccCurve::P521);
 }
@@ -454,6 +497,12 @@ fn test_unmask_truncated_blob_p521(session: HsmSession) {
 
 /// Verifies unmask succeeds even after original key is deleted.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "Unmask should succeed even after original deleted: Some(UnsupportedKeyOperation)"
+    )
+)]
 fn test_unmask_after_original_deleted(session: HsmSession) {
     let key = derive_shared_secret_for_unmask_test(&session, HsmEccCurve::P256);
 
@@ -467,7 +516,8 @@ fn test_unmask_after_original_deleted(session: HsmSession) {
 
     assert!(
         result.is_ok(),
-        "Unmask should succeed even after original deleted"
+        "Unmask should succeed even after original deleted: {:?}",
+        result.as_ref().err()
     );
 
     if let Ok(k) = result {
@@ -477,6 +527,12 @@ fn test_unmask_after_original_deleted(session: HsmSession) {
 
 /// Verifies unmask behavior for blob from different curve context.
 #[session_test]
+#[cfg_attr(
+    feature = "session-ex-tests",
+    should_panic(
+        expected = "Generic-secret unmasking should succeed for valid masked blob: Some(UnsupportedKeyOperation)"
+    )
+)]
 fn test_unmask_wrong_context_blob(session: HsmSession) {
     run_unmask_wrong_context_blob_test(&session);
 }

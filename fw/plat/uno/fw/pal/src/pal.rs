@@ -30,9 +30,13 @@
 
 use core::cell::Cell;
 
+use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmCustomDispatch;
 use azihsm_fw_hsm_pal_traits::HsmError;
+use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmPartId;
+use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_static_init::static_init;
 use azihsm_fw_uno_drivers_aes::AesDriver;
 use azihsm_fw_uno_drivers_boot_status as boot_status;
@@ -52,7 +56,9 @@ use azihsm_fw_uno_drivers_oic::ChannelConfig as OicChannelConfig;
 use azihsm_fw_uno_drivers_oic::OicDriver;
 use azihsm_fw_uno_drivers_rng::RngDriver;
 use azihsm_fw_uno_drivers_sha::ShaDriver;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_drivers_systick as systick_driver;
+use azihsm_fw_uno_drivers_tcon::Tcon;
 use azihsm_fw_uno_drivers_upka::UpkaDriver;
 use azihsm_fw_uno_pac::Interrupt;
 use azihsm_fw_uno_reg_soc::io_gsram::GDMA_CQ_OFFSET;
@@ -72,13 +78,32 @@ use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_RX_RING_STRIDE;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_CI_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_PI_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::IPC_ADMIN_HSM_TX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_RX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::io_gsram::IPC_HSM_ADMIN_TX_RING_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::ISQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OCQ_TAIL_SHADOW_OFFSET;
 use azihsm_fw_uno_reg_soc::io_gsram::OSQ_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_RX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_RX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_RX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_CI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_PI_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_COUNT;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_OFFSET;
+use azihsm_fw_uno_reg_soc::psram::HSM_TO_FP_IPC_TX_RING_STRIDE;
+use azihsm_fw_uno_reg_soc::psram::PSRAM_BASE;
 use azihsm_fw_uno_trace::tracing::*;
 use embassy_futures::select::Either;
 use embassy_futures::select::select;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 
 use crate::alloc::IO_ALLOC_INIT;
 use crate::alloc::IoAllocTable;
@@ -107,7 +132,7 @@ pub enum BootPhase {
 const IO_QUEUE_DEPTH: usize = 32;
 
 /// Number of IPC pairs configured for the firmware.
-const IPC_PAIRS: usize = 2;
+const IPC_PAIRS: usize = 4;
 
 /// IPC channel identifiers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -117,6 +142,10 @@ pub enum IpcChannel {
     AdminMessage = 0,
     /// Admin → HSM event notifications.
     AdminEvent = 1,
+    /// HSM → FP bulk-key requests (with response).
+    FpMessage = 2,
+    /// HSM → Admin requests (HSM is the requestor, Admin the responder).
+    AdminRequest = 3,
 }
 
 // ── NVIC wake dispatch ─────────────────────────────────────────
@@ -279,11 +308,31 @@ pub struct UnoHsmPal {
 
     /// Per-IO bump allocator state (watermarks for Local + Global heaps).
     pub(crate) io_alloc: IoAllocTable,
+
+    /// Per-IO *peak* (high-water) allocator state, same shape as
+    /// [`io_alloc`](Self::io_alloc). `io_alloc` rewinds on every scope exit,
+    /// so this is what bounds the region the teardown scrub must wipe.
+    ///
+    /// Starts at zero, so each slot's first scrub after boot covers only what
+    /// this boot wrote. That relies on the IO heaps arriving clean: on a warm
+    /// boot 1SP wipes GSRAM apart from the regions it must preserve to restore
+    /// the IO queues and the persistent store, neither of which overlaps these
+    /// heaps. A 1SP change that stopped clearing them would leave the previous
+    /// incarnation's scratch unwiped until an allocation happened to reach past
+    /// it; initialise this table saturated (any value `>= ` capacity) to make
+    /// the first scrub cover the whole slot instead.
+    pub(crate) io_peak: IoAllocTable,
+
+    /// Serializes bulk-key registration with the fast-path engine against
+    /// bulk-key deletion and session teardown, so a key for a session that is
+    /// being torn down can't be registered with the engine after the
+    /// session's engine-side delete (see `vault.rs`).
+    pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
 // executor on a single-core Cortex-M7 with no preemptive ISRs.  The
-// interior-mutable field (Cell<BootPhase>) is never accessed from
+// interior-mutable fields (e.g. Cell<BootPhase>) are never accessed from
 // interrupt context, so concurrent access is impossible despite the
 // asserted Sync.
 unsafe impl Sync for UnoHsmPal {}
@@ -352,6 +401,40 @@ impl Default for UnoHsmPal {
                     depth: 0,
                     msg_len: 0,
                 },
+                // Pair 2: send bulk-key requests to the bulk-crypto
+                // backend and await the response (desc 15 out, 16 in)
+                // over the PSRAM HSM↔backend IPC rings.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: 16,
+                    outbound_desc: 15,
+                    tx_ring_base: PSRAM_BASE + HSM_TO_FP_IPC_TX_RING_OFFSET,
+                    tx_pi: PSRAM_BASE + HSM_TO_FP_IPC_TX_PI_OFFSET,
+                    tx_ci: PSRAM_BASE + HSM_TO_FP_IPC_TX_CI_OFFSET,
+                    rx_ring_base: PSRAM_BASE + HSM_TO_FP_IPC_RX_RING_OFFSET,
+                    rx_pi: PSRAM_BASE + HSM_TO_FP_IPC_RX_PI_OFFSET,
+                    rx_ci: PSRAM_BASE + HSM_TO_FP_IPC_RX_CI_OFFSET,
+                    depth: HSM_TO_FP_IPC_TX_RING_COUNT as u16,
+                    msg_len: (HSM_TO_FP_IPC_TX_RING_STRIDE / 4) as u16,
+                },
+                // Pair 3: send requests to Admin (desc 13 in, 12 out).
+                //
+                // Descriptor numbers and ring addresses mirror the reference
+                // `hsm_to_admin_ipc_channel_config` — the Admin core runs the
+                // reference firmware, so both ends must agree exactly.
+                IpcPairConfig {
+                    kind: IpcPairKind::SendMessage,
+                    inbound_desc: 13,
+                    outbound_desc: 12,
+                    tx_ring_base: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_RING_OFFSET,
+                    tx_pi: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET,
+                    tx_ci: IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET,
+                    rx_ring_base: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_RING_OFFSET,
+                    rx_pi: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_PI_OFFSET,
+                    rx_ci: IO_GSRAM_BASE + IPC_HSM_ADMIN_RX_CI_OFFSET,
+                    depth: IPC_HSM_ADMIN_RX_RING_COUNT as u16,
+                    msg_len: (IPC_HSM_ADMIN_RX_RING_STRIDE / 4) as u16,
+                },
             ],
         };
 
@@ -366,6 +449,8 @@ impl Default for UnoHsmPal {
             ipc: unsafe { static_init!(Ipc, Ipc::new(ipc_config)) },
             boot_phase: Cell::new(BootPhase::WaitNormalBoot),
             io_alloc: IO_ALLOC_INIT,
+            io_peak: IO_ALLOC_INIT,
+            fp_bulk_lock: Mutex::new(()),
         }
     }
 }
@@ -491,6 +576,14 @@ impl UnoHsmPal {
         self.boot_phase.set(BootPhase::Running);
         boot_status::set(BootStatus::Run);
 
+        // Enable the TCON wakeup1 receiver now that the Admin bootstrap
+        // handshake is complete. This IRQ is the cross-core crash-notification
+        // trigger: a faulting peer core arms it, and the NVIC-vectored
+        // trampoline in `azihsm_fw_uno_fault` then collects this core's dump.
+        // Enabling it earlier risks a wakeup during partial init.
+        Nvic::unpend(Interrupt::TCON_WAKEUP1);
+        Nvic::enable(Interrupt::TCON_WAKEUP1);
+
         #[cfg(feature = "semihosting")]
         azihsm_fw_uno_drivers_semihosting::sys_ready();
 
@@ -602,19 +695,21 @@ impl UnoHsmPal {
             return false;
         };
 
-        // Map the admin's PcieFunction to the partition's axi_id, rejecting
-        // PFNs that map outside the partition-store range deterministically
-        // here rather than relying on a generic error from a deeper layer.
-        let axi_id = pfn_to_axi_id(msg.info.pfn);
-        if axi_id as usize >= crate::part::NUM_PARTITIONS {
+        // Partitions are indexed by the dense PcieFunction id, so the admin's
+        // pfn is the partition id. Reject a pfn outside the partition-store
+        // range here rather than relying on a generic error from a deeper
+        // layer. Widening to the sparse axi_id first would reject every VF
+        // from 33 up, whose ids run past the partition count.
+        let pfn = msg.info.pfn;
+        if pfn as usize >= crate::part::NUM_PARTITIONS {
             let reply = encode_pfn_enable_disable_ack(buf, IpcMessageStatusCode::InvalidField);
             self.ipc.reply(channel as u8, &reply);
             return true;
         }
-        let pid = HsmPartId::from(axi_id);
+        let pid = HsmPartId::from(pfn);
         // PF (PcieFunction::Pf == 64) is enabled before its resources are
         // assigned; a VF is enabled after. `part_enable` needs to know which.
-        let is_pf = msg.info.pfn == 64;
+        let is_pf = msg.info.pfn == PF_PCIE_FN;
         // Map the IPC action onto a partition-lifecycle primitive. `Migrate`
         // drives an NSSR reset (handled by `part_migrate` below); only an
         // unknown action is rejected as unsupported. No partition lock: a
@@ -655,18 +750,18 @@ impl UnoHsmPal {
             return false;
         };
 
-        // Map the admin's PcieFunction to the partition's axi_id, rejecting
-        // out-of-range PFNs deterministically before touching the partition.
-        let axi_id = pfn_to_axi_id(msg.info.pfn);
-        if axi_id as usize >= crate::part::NUM_PARTITIONS {
+        // Partitions are indexed by the dense PcieFunction id; reject an
+        // out-of-range pfn deterministically before touching the partition.
+        let pfn = msg.info.pfn;
+        if pfn as usize >= crate::part::NUM_PARTITIONS {
             let reply = encode_set_resource_ack(buf, IpcMessageStatusCode::InvalidField, 0);
             self.ipc.reply(channel as u8, &reply);
             return true;
         }
-        let pid = HsmPartId::from(axi_id);
+        let pid = HsmPartId::from(pfn);
         // PF (PcieFunction::Pf == 64) assigns resources after it is enabled;
         // a VF before. `part_alloc` provisions the enabled keys for the PF.
-        let is_pf = msg.info.pfn == 64;
+        let is_pf = msg.info.pfn == PF_PCIE_FN;
         let mask = msg.info.mask_u128();
         // The system has only `NUM_PARTITIONS` key-vault tables; any bit at
         // or above that index references a non-existent table and would
@@ -719,6 +814,32 @@ impl UnoHsmPal {
     }
 }
 
+/// Platform hook for test-only commands.
+///
+/// With either validation feature this routes its MBOR commands to
+/// `crate::test_hooks`; without both, and for TBOR in all cases, uno
+/// claims nothing.
+impl HsmCustomDispatch for UnoHsmPal {
+    #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
+    async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        crate::test_hooks::mbor_dispatch(self, io, req).await
+    }
+
+    #[cfg(not(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks")))]
+    async fn mbor_dispatch(&self, _io: &impl HsmIo, _req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
+    }
+
+    async fn tbor_dispatch(
+        &self,
+        _io: &impl HsmIo,
+        _opcode: u8,
+        _req: &DmaBuf,
+    ) -> HsmResult<&DmaBuf> {
+        Err(HsmError::UnsupportedCmd)
+    }
+}
+
 impl HsmPal for UnoHsmPal {
     /// Initialises the Uno platform (phase 1 only).
     ///
@@ -744,9 +865,50 @@ impl HsmPal for UnoHsmPal {
         systick_driver::init();
         self.rng.init();
         self.ipc.init();
+        // Zero the indices of the HSM→Admin queue this core produces into.
+        // Mirrors the reference `hsm_to_admin_ipc_channel_config`, which
+        // zeroes the tx queue's ci/pi because the HSM owns that queue; the
+        // Admin core zeroes the reply queue from its own side. Without this,
+        // stale indices left in GSRAM by a previous boot desynchronize the
+        // ring. Must run before the channel is enabled.
+        unsafe {
+            core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET) as *mut u32, 0);
+            core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET) as *mut u32, 0);
+        }
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
-        azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+        self.ipc.enable(IpcChannel::FpMessage as u8);
+        // The HSM owns initialization of the HSM↔backend ring indices (the
+        // reference firmware zeroes them at channel setup).  Clear all
+        // four so the send/recv PI/CI comparisons start from a known
+        // state regardless of prior PSRAM contents.
+        // SAFETY: these are the fixed HSM↔backend PSRAM index words; writing
+        // 0 is the documented reset value and no aliasing borrow exists.
+        unsafe {
+            ((PSRAM_BASE + HSM_TO_FP_IPC_TX_PI_OFFSET) as *mut u32).write_volatile(0);
+            ((PSRAM_BASE + HSM_TO_FP_IPC_TX_CI_OFFSET) as *mut u32).write_volatile(0);
+            ((PSRAM_BASE + HSM_TO_FP_IPC_RX_PI_OFFSET) as *mut u32).write_volatile(0);
+            ((PSRAM_BASE + HSM_TO_FP_IPC_RX_CI_OFFSET) as *mut u32).write_volatile(0);
+        }
+
+        self.ipc.enable(IpcChannel::AdminRequest as u8);
+        // Start the crash-notify wakeup timer disarmed. `on_boot_complete`
+        // enables the NVIC receiver after the Admin handshake; the timer
+        // itself is armed only when sending a crash notification.
+        Tcon::disable_wakeup_timer1();
+        // Recovery boot: only a cold (power-on) boot wipes the partition
+        // store. On a warm / fw-update reset the GSRAM-resident store survived,
+        // so preserve every partition's persisted state (res_mask, keys, creds,
+        // sessions) and only re-arm Gate 1. Mirrors the reference `HsmEnv::new`
+        // constructor selection on `SocInfo::reset_type` (`env.rs`).
+        match azihsm_fw_uno_drivers_soc::reset_type() {
+            SocResetType::Por => {
+                azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+            }
+            SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
+                azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
+            }
+        }
         boot_status::set(BootStatus::Done);
     }
 
@@ -789,18 +951,90 @@ impl HsmPal for UnoHsmPal {
     fn deinit(&self) {}
 }
 
-/// Convert the admin's PcieFunction id to the PCIe memory-location id (axi_id)
-/// that IIC `recv` reports for host IO, so a provisioned/enabled partition
-/// matches `io.pid()` (which reports the axi_id, mirroring cp/azihsm).
-/// PF 64 -> 0x10, VFn n -> 0x20 + n.
+/// PCIe function id of the physical function.
+pub(crate) const PF_PCIE_FN: u8 = 64;
+
+/// PCIe memory-location id (axi_id) of the physical function.
+const PF_AXI_ID: u8 = 0x10;
+
+/// PCIe memory-location id (axi_id) of virtual function 0.
+const VF_AXI_ID_START: u8 = 0x20;
+
+/// Number of virtual functions the device exposes.
+const NUM_VFS: u8 = 64;
+
+/// PCIe memory-location id (axi_id) of the last virtual function.
+const VF_AXI_ID_END: u8 = VF_AXI_ID_START + NUM_VFS - 1;
+
+/// Partition id standing for "no partition".
+///
+/// Out of range for the partition store, so a lookup rejects it with
+/// `InvalidArg` rather than aliasing a real slot.
+pub(crate) const NO_PARTITION: u8 = u8::MAX;
+
+/// Convert a PcieFunction id to the PCIe memory-location id (axi_id) naming
+/// that function's address space: PF 64 -> 0x10, VF n -> 0x20 + n.
+///
+/// Partitions are indexed by the dense PcieFunction numbering, so this is the
+/// only widening to the sparse hardware ids. The GDMA host-interface select
+/// consumes the result, since it names the AXI port owning the buffer.
+///
+/// Returns `None` for an id naming no PCIe function, so an out-of-range
+/// partition id cannot be widened into a plausible-looking port.
 #[inline]
-fn pfn_to_axi_id(pfn: u8) -> u8 {
-    const PF_PCIE_FN: u8 = 64;
-    const PF_AXI_ID: u8 = 0x10;
-    const VF_AXI_ID_START: u8 = 0x20;
-    if pfn == PF_PCIE_FN {
-        PF_AXI_ID
-    } else {
-        VF_AXI_ID_START.wrapping_add(pfn)
+pub(crate) const fn pfn_to_axi_id(pfn: u8) -> Option<u8> {
+    match pfn {
+        PF_PCIE_FN => Some(PF_AXI_ID),
+        vf if vf < NUM_VFS => Some(VF_AXI_ID_START + vf),
+        _ => None,
+    }
+}
+
+/// Compile-time boundary checks for the id conversions above.
+///
+/// These run on every build, including the firmware target, where the crate's
+/// unit tests cannot (`test = false`). They pin the edges that decide whether
+/// an id reaches hardware: the PF, the first and last VF, the first id past
+/// the VF range, and the wrap-around values an out-of-range id would take.
+const _: () = {
+    // Valid ids widen to their memory-location id.
+    assert!(matches!(pfn_to_axi_id(PF_PCIE_FN), Some(PF_AXI_ID)));
+    assert!(matches!(pfn_to_axi_id(0), Some(VF_AXI_ID_START)));
+    assert!(matches!(pfn_to_axi_id(NUM_VFS - 1), Some(VF_AXI_ID_END)));
+
+    // Ids naming no function are rejected, never widened. Without the range
+    // check these wrapped onto live ports — 240 onto the PF's own `0x10`.
+    assert!(pfn_to_axi_id(PF_PCIE_FN + 1).is_none());
+    assert!(pfn_to_axi_id(224).is_none());
+    assert!(pfn_to_axi_id(225).is_none());
+    assert!(pfn_to_axi_id(240).is_none());
+    assert!(pfn_to_axi_id(NO_PARTITION).is_none());
+
+    // The inverse accepts exactly the ids the hardware can report.
+    assert!(matches!(axi_id_to_pfn(PF_AXI_ID), Some(PF_PCIE_FN)));
+    assert!(matches!(axi_id_to_pfn(VF_AXI_ID_START), Some(0)));
+    assert!(matches!(axi_id_to_pfn(VF_AXI_ID_END), Some(63)));
+    assert!(axi_id_to_pfn(0).is_none());
+    assert!(axi_id_to_pfn(PF_AXI_ID - 1).is_none());
+    assert!(axi_id_to_pfn(VF_AXI_ID_START - 1).is_none());
+    assert!(axi_id_to_pfn(VF_AXI_ID_END + 1).is_none());
+    assert!(axi_id_to_pfn(NO_PARTITION).is_none());
+
+    // Round trip: a partition id survives widening and narrowing.
+    assert!(matches!(axi_id_to_pfn(PF_AXI_ID), Some(PF_PCIE_FN)));
+    assert!(matches!(axi_id_to_pfn(VF_AXI_ID_START + 33), Some(33)));
+};
+
+/// Inverse of [`pfn_to_axi_id`]: map the axi_id IIC `recv` reports for a host
+/// IO back to the dense PcieFunction id used to index partitions.
+///
+/// Returns `None` for an axi_id naming no PCIe function, so a malformed
+/// routing id fails the partition lookup instead of aliasing a valid slot.
+#[inline]
+pub(crate) const fn axi_id_to_pfn(axi_id: u8) -> Option<u8> {
+    match axi_id {
+        PF_AXI_ID => Some(PF_PCIE_FN),
+        VF_AXI_ID_START..=VF_AXI_ID_END => Some(axi_id - VF_AXI_ID_START),
+        _ => None,
     }
 }

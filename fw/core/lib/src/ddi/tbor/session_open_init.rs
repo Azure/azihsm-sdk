@@ -84,6 +84,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
     io: &impl HsmIo,
     req_buf: &DmaBuf,
     undo: &mut UndoLog<'p>,
+    cqe_sess_id: &mut Option<u16>,
 ) -> HsmResult<&'p DmaBuf> {
     let ParsedRequest {
         role,
@@ -146,6 +147,13 @@ pub(crate) async fn handle<'p, P: HsmPal>(
         // via the dispatcher's undo walk rather than leaking the slot.
         undo.push_session_destroy(slot)?;
         let session_id = u16::from(slot);
+        // Hand the freshly allocated slot to the IO layer so it lands in
+        // the CQE: the host driver registers the session against the
+        // calling file handle from that field, and without it every
+        // follow-up in-session TBOR ioctl (SessionOpenFinish, PskChange,
+        // SessionClose) is rejected with `NoExistingSession` before it
+        // ever reaches the firmware.
+        *cqe_sess_id = Some(session_id);
 
         // ── Phase-1 confirm MAC ────────────────────────────────────
         let mac_resp = compute_phase1_mac(

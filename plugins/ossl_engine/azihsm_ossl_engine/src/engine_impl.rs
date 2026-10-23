@@ -32,7 +32,7 @@ const ENGINE_NAME: &CStr = c"Azure Integrated HSM Engine";
 /// `CRYPTO_get_ex_new_index` does not dedupe, so we register at most once.
 static ENGINE_DATA_SLOT: OnceLock<EngineExData<EngineData>> = OnceLock::new();
 
-fn engine_data_slot() -> EngineResult<EngineExData<EngineData>> {
+pub(crate) fn engine_data_slot() -> EngineResult<EngineExData<EngineData>> {
     if let Some(slot) = ENGINE_DATA_SLOT.get() {
         return Ok(*slot);
     }
@@ -67,16 +67,32 @@ impl LoadPrivKeyHandler for AzihsmLoadPrivKey {
 
 struct AzihsmDestroy;
 impl DestroyHandler for AzihsmDestroy {
+    #[allow(unsafe_code)]
     fn destroy(engine: &mut Engine) -> EngineResult<()> {
         // The ex_data slot has no auto-free callback (see exdata.rs module
         // docs); the destroy handler drops the Box. Use the already-cached
         // slot: if it was never registered there is nothing to clear, and
-        // registering one here would just leak an index.
-        if let Some(slot) = ENGINE_DATA_SLOT.get() {
-            tracing::info!(target: "azihsm", "azihsm engine destroy: dropping EngineData");
-            slot.take(engine)?;
-        }
-        Ok(())
+        // registering one here would just leak an index. A failure is
+        // returned only after the releases below, which must always run.
+        let taken = match ENGINE_DATA_SLOT.get() {
+            Some(slot) => {
+                tracing::info!(target: "azihsm", "azihsm engine destroy: dropping EngineData");
+                slot.take(engine).map(drop)
+            }
+            None => Ok(()),
+        };
+        // Unconditional (no-op-safe): if bind failed after registering the
+        // methods but before parking EngineData, the table entries and the
+        // global ASN1 registration still need cleaning. The framework has
+        // already freed the methods themselves (engine_pkey_(asn1_)meths_free
+        // run before this hook); only stale pointers are dropped here.
+        azihsm_ossl_engine_core::pkey_method::release_pkey_methods(engine);
+        azihsm_ossl_engine_core::asn1_method::release_ec_asn1_method(engine);
+        // The framework never frees engine ciphers: free this ENGINE's copies.
+        // SAFETY: the destroy hook runs once the last functional reference on
+        // the ENGINE is gone, and every context using its ciphers holds one.
+        unsafe { azihsm_ossl_engine_core::cipher_method::release_aes_cbc_ciphers(engine) };
+        taken
     }
 }
 
@@ -164,6 +180,51 @@ fn bind_helper(engine: &mut Engine, id: &CStr) -> EngineResult<()> {
     unsafe {
         engine.set_ec_method(crate::sign::ecdsa_method()?)?;
     }
+    // Bind RSA to the engine so RSA_new_method produces engine-bound keys that
+    // hold a functional engine reference (keeping EngineData alive while a
+    // loaded key lives) and carry ex_data. The method keeps the software public
+    // operations (verify/encrypt/decrypt) but routes PKCS#1 v1.5 signing for
+    // HSM-backed keys to the HSM (see crate::rsasign).
+    // SAFETY: rsa_sign_method() is process-global and never freed, so it
+    // outlives the engine.
+    #[allow(unsafe_code)]
+    unsafe {
+        engine.set_rsa_method(crate::rsasign::rsa_sign_method()?)?;
+    }
+    // Advertise the engine's EC EVP_PKEY_METHOD: HSM keygen for armed
+    // contexts, HSM ECDH derive for HSM-backed keys; everything else
+    // delegates to the built-ins (see azihsm_ossl_engine_core::pkey_method).
+    azihsm_ossl_engine_core::pkey_method::register_ec_pkey_method::<
+        crate::keygen::AzihsmEcKeygen,
+        crate::derive::AzihsmEcDerive,
+    >(engine)?;
+    // HKDF over masked secrets (armed contexts only; software HKDF delegates
+    // to the built-in — see azihsm_ossl_engine_core::hkdf_method).
+    azihsm_ossl_engine_core::hkdf_method::register_hkdf_pkey_method::<crate::hkdf::AzihsmHkdf>(
+        engine,
+    )?;
+    // RSA import: genpkey -algorithm RSA wraps/unwraps an external key into the
+    // HSM (the HSM cannot generate RSA natively); unarmed contexts delegate to
+    // software keygen (see azihsm_ossl_engine_core::rsa_pkey_method).
+    azihsm_ossl_engine_core::rsa_pkey_method::register_rsa_pkey_method::<
+        crate::rsaimport::AzihsmRsaImport,
+        crate::rsasign::AzihsmRsaPssSign,
+        crate::rsadecrypt::AzihsmRsaDecrypt,
+    >(engine)?;
+    // Provider-parity serialization for HSM-backed keys (-text info block,
+    // clean export refusal); software EC keys keep the built-in behavior via
+    // the ported fallbacks (see azihsm_ossl_engine_core::asn1_method).
+    // The global registration holds an engine reference until ENGINE_cleanup,
+    // so a dynamic engine loads at most once per process.
+    azihsm_ossl_engine_core::asn1_method::register_ec_asn1_method::<crate::asn1::AzihsmEcAsn1>(
+        engine,
+    )?;
+    // AES-CBC with HSM keys attached via AZIHSM_CTRL_SET_KEY_URI; contexts with
+    // a raw key run the built-in software AES (see
+    // azihsm_ossl_engine_core::cipher_method).
+    azihsm_ossl_engine_core::cipher_method::register_aes_cbc_ciphers::<crate::aes::AzihsmAesCbc>(
+        engine,
+    )?;
 
     // Park an empty EngineData. Its HSM session is opened on demand via
     // EngineData::open_hsm_from_env; AzihsmDestroy::destroy takes() and

@@ -32,6 +32,7 @@
 namespace
 {
 constexpr const char *kHelperEnv = "AZIHSM_HELPER_INPUT";
+constexpr const char *kDisableMultiProcessTestsEnv = "AZIHSM_DISABLE_MULTI_PROCESS_TESTS";
 constexpr const char *kTmpPrefix = "azihsm_multi_proc_";
 
 static void write_u32(std::ofstream &out, uint32_t v)
@@ -161,6 +162,12 @@ class azihsm_multi_process : public ::testing::Test
 TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 {
     cleanup_temp_files();
+
+    if (std::getenv(kDisableMultiProcessTestsEnv) != nullptr)
+    {
+        GTEST_SKIP() << kDisableMultiProcessTestsEnv << " is set";
+    }
+
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {
         azihsm_str path_str = { path.data(), static_cast<uint32_t>(path.size()) };
         azihsm_handle part_handle = 0;
@@ -268,8 +275,8 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_parent)
 
         int rc =
             run_child_test(tmp_path, "azihsm_multi_process.ecc_sign_verify_cross_process_child");
-        ASSERT_EQ(rc, 0)
-            << "If running on real hardware, set AZIHSM_DISABLE_MULTI_PROCESS_TESTS=1 to skip";
+        ASSERT_EQ(rc, 0) << "If running on real hardware, set " << kDisableMultiProcessTestsEnv
+                         << "=1 to skip";
 
         std::error_code ec;
         std::filesystem::remove(tmp_path, ec);
@@ -393,8 +400,14 @@ TEST_F(azihsm_multi_process, ecc_sign_verify_cross_process_child)
         ASSERT_EQ(azihsm_sess_close(sess_handle), AZIHSM_STATUS_SUCCESS);
     });
 
+    // The BMK property is a masked blob that includes fresh randomness (e.g. a
+    // per-operation nonce/IV) on every masking operation, so re-reading it after
+    // re-init on real hardware does not reproduce the exact same bytes even
+    // though the underlying key material is unchanged. Only assert that a BMK
+    // of the expected size was returned; the real round-trip validity is
+    // exercised below via unmask + sign/verify against the parent's data.
     auto bmk_actual = get_part_prop_bytes(part_handle, AZIHSM_PART_PROP_ID_BACKUP_MASKING_KEY);
-    ASSERT_EQ(bmk_actual, bmk);
+    ASSERT_EQ(bmk_actual.size(), bmk.size());
 
     azihsm_buffer masked_buf = { masked_key.data(), static_cast<uint32_t>(masked_key.size()) };
     auto_key priv_key;

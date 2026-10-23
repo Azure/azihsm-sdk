@@ -10,6 +10,17 @@
 #include <utility>
 #include <vector>
 
+// Pinned TBOR masked-blob wire lengths, mirroring the host / firmware
+// `azihsm_ddi_tbor_types` constants (which are not exposed in the C
+// header). Each masked blob is an AEAD-GCM-256 envelope:
+// `header(8) + iv(12) + MaskedKeyMetadata aad(192) + plaintext + tag(16)`.
+inline constexpr uint32_t kMaskedSealingKeyLen = 276; ///< sealing priv scalar (48 B)
+inline constexpr uint32_t kMaskedSdLen = 276;         ///< masked BKS3 (48 B)
+inline constexpr uint32_t kPokLocalBackupLen = 276;   ///< device-local BKS3 backup (48 B)
+inline constexpr uint32_t kSdMkBackupLen = 260;       ///< masked SDMK / local_mk (32 B)
+/// Remote partition-owner-key backup: an HPKE-Auth seal (`enc(97) + ct(64)`).
+inline constexpr uint32_t kPokRemoteBackupLen = 161;
+
 // Security-domain provisioning helper for the sealing round-trip test.
 //
 // `SdSealingKeyGen` needs a partition in the `Initialized` state on a CO
@@ -91,13 +102,16 @@ SdBackingContext provision_sd_restore_target(
 /// `KeyReport` attesting it.
 struct SealingKeyMaterial
 {
-    /// Masked sealing-key blob (180 B).
+    /// Masked sealing-key blob (276 B).
     std::vector<uint8_t> masked;
+    /// Raw P-384 sealing-key public key (`X ‖ Y`, 96 B): the recipient
+    /// public key (`RcvrPub`) the remote backup is sealed to.
+    std::vector<uint8_t> pub;
     /// COSE_Sign1 `KeyReport` DER bytes.
     std::vector<uint8_t> report;
 };
 
-/// Mint an SD sealing key on `session` and return its 180-byte masked blob
+/// Mint an SD sealing key on `session` and return its 276-byte masked blob
 /// plus a `KeyReport` built over 128 zero report-data bytes. Records a
 /// gtest failure and returns empty vectors on error.
 SealingKeyMaterial sealing_key_and_report(azihsm_handle session);
@@ -127,6 +141,8 @@ class SdEvidenceHolder
         owner_leaf_ = std::move(other.owner_leaf_);
         po_root_ = std::move(other.po_root_);
         po_leaf_ = std::move(other.po_leaf_);
+        rcvr_root_ = std::move(other.rcvr_root_);
+        rcvr_leaf_ = std::move(other.rcvr_leaf_);
         report_ = std::move(other.report_);
         wire();
         return *this;
@@ -138,9 +154,18 @@ class SdEvidenceHolder
         return ev_;
     }
 
+    /// The receiver key certificate chain (spec `RcvrCertChain`); anchored
+    /// to the policy SATA key, its leaf certifies `RcvrPub`. Valid for this
+    /// holder's lifetime.
+    const azihsm_sd_cert_chain &receiver_chain() const
+    {
+        return rcvr_chain_;
+    }
+
   private:
     friend SdEvidenceHolder build_receiver_evidence(
         const SdBackingContext &ctx,
+        const std::vector<uint8_t> &rcvr_pub,
         const std::vector<uint8_t> &report
     );
 
@@ -154,22 +179,30 @@ class SdEvidenceHolder
     std::vector<uint8_t> owner_leaf_;
     std::vector<uint8_t> po_root_;
     std::vector<uint8_t> po_leaf_;
+    std::vector<uint8_t> rcvr_root_;
+    std::vector<uint8_t> rcvr_leaf_;
     std::vector<uint8_t> report_;
     azihsm_buffer mfgr_bufs_[2]{};
     azihsm_buffer owner_bufs_[2]{};
     azihsm_buffer po_bufs_[2]{};
+    azihsm_buffer rcvr_bufs_[2]{};
     azihsm_buffer report_buf_{};
     azihsm_sd_evidence ev_{};
+    azihsm_sd_cert_chain rcvr_chain_{};
 };
 
-/// Build the receiver's three-chain SD attestation evidence for
-/// `ctx.pid_pub`: the manufacturer and owner chains are rooted at fresh
-/// CAs, and the partition-owner chain is rooted at `ctx.sata_key`. Every
-/// leaf certifies `ctx.pid_pub` (the report signer); `report` is the
-/// attestation report. Records a gtest failure and returns an empty holder
-/// on error.
+/// Build the receiver's three-chain SD attestation evidence and the
+/// receiver key certificate chain for a security-domain backup. The
+/// manufacturer and owner chains are rooted at fresh CAs and the
+/// partition-owner chain at `ctx.sata_key`; every evidence leaf certifies
+/// `ctx.pid_pub` (the report signer). The receiver key certificate chain
+/// (spec `RcvrCertChain`) is rooted at the same `ctx.sata_key`, and its
+/// leaf certifies `rcvr_pub` — the receiver sealing key `RcvrPub` the
+/// remote backup is sealed to, and the key the report attests. Records a
+/// gtest failure and returns an empty holder on error.
 SdEvidenceHolder build_receiver_evidence(
     const SdBackingContext &ctx,
+    const std::vector<uint8_t> &rcvr_pub,
     const std::vector<uint8_t> &report
 );
 

@@ -3,7 +3,7 @@
 
 //! TBOR `SdCreateRemoteBackup` handler.
 //!
-//! Creates a security domain on the partition (manticore `CreateSD`): it
+//! Creates a security domain on the partition: it
 //! mints a fresh 48-byte BKS3 and a random 32-byte security-domain
 //! masking key (`SDMK`), provisions `SDMK` in the vault as the partition's
 //! [`SecurityDomain`](HsmKeyScope::SecurityDomain)-scope masking key, and
@@ -21,12 +21,14 @@
 //!    verify it names this partition as the backing partition
 //!    (`backup_part_id == PID`, `backup_part_pub_key == PID pubkey`;
 //!    the caller populated both from `PartInfo` before `PartInit`).
-//! 3. Copy the receiver's `KeyReport` and its supporting certificate
-//!    chains from the out-of-band SGL page and validate the attestation
-//!    **evidence** via [`verify_evidence`]: the three cert chains
-//!    (manufacturer / owner / partition-owner) are verified and the
-//!    partition-owner chain is anchored to the policy SATA key; the
-//!    attested COSE_Key is then recovered as `RcvrPub`.
+//! 3. Recover the recipient `RcvrPub` from the out-of-band receiver
+//!    material.  The receiver certificate chain (spec `RcvrCertChain`) is
+//!    always validated and anchored to the policy **SATA** key via
+//!    [`verify_receiver_cert_chain`]; its leaf is `RcvrPub`.  Only when the
+//!    policy sets `require_trusted_sa_key` is the three-chain attestation
+//!    **evidence** additionally validated via [`verify_evidence`] with the
+//!    partition-owner chain anchored to the policy **SAPOTA** key, and the
+//!    report required to attest that same `RcvrPub`.
 //! 4. Unmask the sender's `masked_sealing_key` to recover `SndrPriv`
 //!    (must be an [`SdSealing`](HsmVaultKeyKind::SdSealing) key) and
 //!    derive `SndrPub` on-device.
@@ -35,8 +37,8 @@
 //!    `pok_remote_backup = enc ‖ ct` (161 B).
 //! 6. Derive `SDBMK = KBKDF(BKS3, mfgr_seed[svn] ‖ owner_seed[owner] ‖
 //!    policy_hash)`, mint a random `SDMK`, and mask `SDMK` under `SDBMK`
-//!    into `sd_mk_backup` (164 B).  Mask BKS3 under the partition-local
-//!    masking key (`PartLocalMK`) into `pok_local_backup` (180 B).
+//!    into `sd_mk_backup` (260 B).  Mask BKS3 under the partition-local
+//!    masking key (`PartLocalMK`) into `pok_local_backup` (276 B).
 //! 7. **Commit** (undo-guarded): claim the one-shot `SD_INITIALIZED`
 //!    gate, `vault_key_create` the `SDMK` (SecurityDomain scope), and
 //!    record its id in `SD_MK_KEY_ID`.  BKS3, `SDMK`, `SDBMK`, and
@@ -57,6 +59,7 @@ use azihsm_fw_core_crypto_hpke::HpkeSuite;
 use azihsm_fw_core_crypto_key_masking::aead::peek_metadata;
 use azihsm_fw_core_crypto_key_masking::aead::unmask;
 use azihsm_fw_core_evidence::verify_evidence;
+use azihsm_fw_core_evidence::verify_receiver_cert_chain;
 use azihsm_fw_core_evidence::EvidenceRefs;
 use azihsm_fw_core_evidence::TrustAnchors;
 use azihsm_fw_ddi_tbor_types::policy::PartPolicy;
@@ -160,13 +163,18 @@ fn gate_request<P: HsmPal>(pal: &P, io: &impl HsmIo, req_buf: &DmaBuf) -> HsmRes
     masking_key_id_for_scope(pal, io, scope)
 }
 
-/// Verify policy binding and receiver attestation evidence, writing the
-/// attested `RcvrPub` into `pk_r`.
+/// Verify policy binding and the receiver's key material, writing the
+/// recipient `RcvrPub` into `pk_r`.
 ///
 /// Decodes the shared view of `req_buf`, verifies the re-supplied policy
-/// against the hash bound at `PartInit`, confirms this partition is named
-/// as the backing partition, validates the three certificate chains and the
-/// COSE_Sign1 attestation report, and recovers the attested public key.
+/// against the hash bound at `PartInit`, and confirms this partition is
+/// named as the backing partition.  Then validates the receiver
+/// certificate chain against the policy **SATA** anchor to recover
+/// `RcvrPub` (spec `RcvrCertChain`); and, **only when the policy sets
+/// `require_trusted_sa_key`**, additionally validates the three-chain
+/// attestation evidence with the partition-owner chain anchored to the
+/// policy **SAPOTA** key and requires the report to attest that same
+/// `RcvrPub` (spec `Option<RcvrEvidence>`).
 async fn verify_policy_and_receiver_evidence<P: HsmPal>(
     pal: &P,
     io: &impl HsmIo,
@@ -180,7 +188,7 @@ async fn verify_policy_and_receiver_evidence<P: HsmPal>(
     verify_policy_hash(pal, io, alloc, policy).await?;
     let part_policy = super::policy::from_bytes(policy)?;
 
-    // SD-policy identity binding (manticore `CreateSD` step a): the
+    // SD-policy identity binding: the
     // policy names this partition as the backing partition.  The
     // caller populated `backup_part_id` / `backup_part_pub_key`
     // from `PartInfo` (available in `Initializing`, before
@@ -188,30 +196,62 @@ async fn verify_policy_and_receiver_evidence<P: HsmPal>(
     // public key.
     verify_backing_partition(pal, io, part_policy)?;
 
-    // Validate all three certificate chains, bind the partition-owner
-    // chain to the policy SATA anchor, and recover the attested `RcvrPub`.
+    // Receiver key authorization: validate
+    // the receiver certificate chain, anchor it to the policy SATA key,
+    // and recover the recipient public key (`RcvrPub`) into `pk_r`.  This
+    // is the sole source of the seal recipient, always required.
     let sata = &part_policy.sata_pub_key;
     if sata.kind() != PolicyKeyKind::Ecc384 || sata.len() != POLICY_MAX_KEY_LEN {
         return Err(HsmError::InvalidArg);
     }
-    let evidence = req.receiver_evidence();
-    verify_evidence(
+    verify_receiver_cert_chain(
         pal,
         io,
         oob,
-        &EvidenceRefs {
-            mfgr_chain: evidence.mfgr_cert_chain(),
-            owner_chain: evidence.owner_cert_chain(),
-            part_owner_chain: evidence.part_owner_cert_chain(),
-            report: evidence.evidence(),
-        },
-        &TrustAnchors {
-            sata: &sata.data[..POLICY_MAX_KEY_LEN],
-        },
+        req.receiver_cert_chain(),
+        &sata.data[..POLICY_MAX_KEY_LEN],
         pk_r,
-        None,
     )
-    .await
+    .await?;
+
+    // Receiver attestation: required only
+    // when the policy demands a trusted Sealing Authority key.  Validate
+    // the three-chain evidence, anchor the partition-owner chain to the
+    // policy SAPOTA key, and require the report to attest the same
+    // `RcvrPub` recovered above.  When the flag is clear the evidence
+    // group is ignored (spec `Option<RcvrEvidence>` absent).
+    if part_policy.flags.require_trusted_sa_key() {
+        let sapota = &part_policy.sapota_pub_key;
+        if sapota.kind() != PolicyKeyKind::Ecc384 || sapota.len() != POLICY_MAX_KEY_LEN {
+            return Err(HsmError::InvalidArg);
+        }
+        let evidence = req.receiver_evidence();
+        let report_pk = alloc.dma_alloc(pk_r.len())?;
+        verify_evidence(
+            pal,
+            io,
+            oob,
+            &EvidenceRefs {
+                mfgr_chain: evidence.mfgr_cert_chain(),
+                owner_chain: evidence.owner_cert_chain(),
+                part_owner_chain: evidence.part_owner_cert_chain(),
+                report: evidence.evidence(),
+            },
+            &TrustAnchors {
+                part_owner_anchor: &sapota.data[..POLICY_MAX_KEY_LEN],
+            },
+            report_pk,
+            None,
+        )
+        .await?;
+
+        // The attested key must be the receiver key the seal targets.
+        if *report_pk != *pk_r {
+            return Err(HsmError::InvalidArg);
+        }
+    }
+
+    Ok(())
 }
 
 /// Handle a TBOR `SdCreateRemoteBackup` request.
@@ -341,8 +381,8 @@ pub(crate) async fn handle<'p, P: HsmPal>(
 /// Provision the security domain from a freshly minted `bks3`.
 ///
 /// Mints a random `SDMK`, derives `SDBMK`, and writes the two backups —
-/// `sd_mk_out` (`SDMK` masked under `SDBMK`, 164 B) and `pok_local_out`
-/// (`bks3` masked under `PartLocalMK`, 180 B) — then commits the SD to the
+/// `sd_mk_out` (`SDMK` masked under `SDBMK`, 260 B) and `pok_local_out`
+/// (`bks3` masked under `PartLocalMK`, 276 B) — then commits the SD to the
 /// vault (see [`sd_backup::commit_sd_to_vault`]).  The minted `SDMK` /
 /// derived `SDBMK` scratch is zeroized on all paths (the caller wipes
 /// `bks3`).

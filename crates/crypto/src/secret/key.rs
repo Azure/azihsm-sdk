@@ -7,6 +7,8 @@
 //! can be used for various cryptographic operations. The key supports standard
 //! operations including generation, import, and export.
 
+use zeroize::Zeroize;
+
 use super::*;
 
 /// A generic secret key for symmetric cryptographic operations.
@@ -25,12 +27,19 @@ use super::*;
 ///
 /// # Security Considerations
 ///
-/// - Key material is stored in a `Vec<u8>` and should be zeroized when dropped
+/// - Key material is stored in a `Vec<u8>` and is zeroized on drop
 /// - Keys should be generated using cryptographically secure random sources
 /// - Exported keys should be handled carefully and encrypted before storage
 /// - Access to key material should be restricted and audited
 pub struct GenericSecretKey {
     key_data: Vec<u8>,
+}
+
+/// Zeroizes the key material on drop so it does not linger in freed memory.
+impl Drop for GenericSecretKey {
+    fn drop(&mut self) {
+        self.key_data.zeroize();
+    }
 }
 
 /// Marks this type as a cryptographic key.

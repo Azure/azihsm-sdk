@@ -26,11 +26,11 @@ pub const TBOR_OP_CONCAT_KDF_DERIVE: u8 = 0x1D;
 /// Maximum info (`SharedInfo` / `OtherInfo`) length (bytes).
 pub const CONCAT_INFO_MAX_LEN: usize = 256;
 /// Minimum masked ECDH-secret IKM envelope length (P-256).
-pub const CONCAT_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 96 + 32 + 16;
+pub const CONCAT_MASKED_SECRET_MIN_LEN: usize = 8 + 12 + 192 + 32 + 16;
 /// Maximum masked ECDH-secret IKM envelope length (P-521).
-pub const CONCAT_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 96 + 66 + 16;
+pub const CONCAT_MASKED_SECRET_MAX_LEN: usize = 8 + 12 + 192 + 66 + 16;
 /// Maximum masked derived-key envelope length (128-byte var HMAC key).
-pub const CONCAT_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 96 + 128 + 16;
+pub const CONCAT_MASKED_KEY_MAX_LEN: usize = 8 + 12 + 192 + 128 + 16;
 
 /// `ConcatKdfAlg` discriminant for the ANSI X9.63 single-step KDF.
 pub const CONCAT_KDF_ALG_X963: u8 = 1;
@@ -63,7 +63,7 @@ pub struct TborConcatKdfDeriveReq {
     pub key_length: u8,
 
     /// The masked ECDH shared secret IKM (from `EcdhDerive`).
-    #[tbor(min_len = 164, max_len = 198)]
+    #[tbor(min_len = 260, max_len = 294)]
     pub masked_secret: Vec<u8>,
 
     /// Optional `SharedInfo` / `OtherInfo`; an **empty** buffer means none.
@@ -77,7 +77,7 @@ pub struct TborConcatKdfDeriveReq {
 pub struct TborConcatKdfDeriveResp {
     /// The derived key, masked (AEAD-GCM-256) under the scope's masking
     /// key.
-    #[tbor(max_len = 260)]
+    #[tbor(max_len = 356)]
     pub masked_key: Vec<u8>,
 }
 

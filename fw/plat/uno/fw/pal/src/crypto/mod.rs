@@ -51,3 +51,28 @@ use azihsm_fw_hsm_pal_traits::HsmCrypto;
 use crate::UnoHsmPal;
 
 impl HsmCrypto for UnoHsmPal {}
+
+/// Copies `src` into `dst[..src.len()]` in reverse byte order.
+///
+/// The crypto drivers cross two endian conventions constantly: PKA operands
+/// and the vault layout are little-endian, while DER/SEC1 integers and the
+/// RFC 6979 DRBG work big-endian. Converting between them is always "copy
+/// these bytes backwards", so the loop lives here once instead of being
+/// rewritten per call site.
+///
+/// `src` and `dst` must not overlap; use `copy_within` plus an in-place
+/// `reverse` when they can. Bytes of `dst` beyond `src.len()` are left
+/// untouched, so a caller needing a fixed-width zero-padded field must clear
+/// them itself.
+///
+/// # Panics
+///
+/// Debug builds assert that `dst` is at least as long as `src`; a shorter
+/// `dst` silently truncates, which is a caller bug.
+#[inline]
+pub(crate) fn reverse_copy(dst: &mut [u8], src: &[u8]) {
+    debug_assert!(dst.len() >= src.len());
+    for (d, s) in dst.iter_mut().zip(src.iter().rev()) {
+        *d = *s;
+    }
+}

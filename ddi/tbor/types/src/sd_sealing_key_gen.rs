@@ -22,14 +22,17 @@ use crate::tbor;
 /// TBOR opcode for `SdSealingKeyGen`.
 pub const TBOR_OP_SD_SEALING_KEY_GEN: u8 = 0x09;
 
+/// Vault kind of an SD sealing key in masked-key metadata.
+pub const KEY_KIND_SD_SEALING: u8 = 41;
+
 /// Wire length of the returned sealing public key: a raw P-384 point
 /// (`x ‖ y`, 48 + 48 bytes).
 pub const SD_SEALING_PUB_KEY_LEN: usize = 96;
 
 /// Wire length of the masked sealing private key: an AEAD-GCM-256
-/// masked-key envelope (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖
+/// masked-key envelope (`header(8) ‖ iv(12) ‖ aad(192) ‖ pt(48) ‖
 /// tag(16)`) over the 48-byte raw P-384 private scalar.
-pub const MASKED_SEALING_KEY_LEN: usize = 8 + 12 + 96 + 48 + 16;
+pub const MASKED_SEALING_KEY_LEN: usize = 8 + 12 + 192 + 48 + 16;
 
 /// Host-facing TBOR `SdSealingKeyGen` request.
 #[tbor(opcode = TBOR_OP_SD_SEALING_KEY_GEN, session_ctrl = in_session)]
@@ -51,7 +54,7 @@ pub struct TborSdSealingKeyGenReq {
 pub struct TborSdSealingKeyGenResp {
     /// The new sealing key's ECC-P384 private half, masked
     /// (AEAD-GCM-256) under the requested scope's masking key.  Always
-    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B); not stored on-device.
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (276 B); not stored on-device.
     pub masked_key: [u8; MASKED_SEALING_KEY_LEN],
 
     /// Raw P-384 public key (`x ‖ y` affine coordinates, 96 bytes,

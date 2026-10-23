@@ -18,7 +18,7 @@
 //!   in-session commands).
 //! * `masked_sealing_key` — the **receiver's** masked SD-sealing key (from
 //!   [`SdSealingKeyGen`](crate::sd_sealing_key_gen)), exactly
-//!   [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to recover the
+//!   [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to recover the
 //!   receiver's private HPKE key (`RcvrPriv`) that opens the backup; never
 //!   a vault handle.
 //! * `policy` — the unified [`PartPolicy`] describing the security domain
@@ -32,14 +32,14 @@
 //!   of BKS3, exactly [`POK_REMOTE_BACKUP_LEN`] (161 B).
 //! * `prev_sd_mk_backup` — the previous security-domain masking-key backup
 //!   (SDMK masked under the derived SDBMK), exactly
-//!   [`SD_MK_BACKUP_LEN`] (164 B), from which `SDMK` is recovered.
+//!   [`SD_MK_BACKUP_LEN`] (260 B), from which `SDMK` is recovered.
 //!
 //! Output:
 //!
 //! * `pok_local_backup` — the local partition-owner-key backup (BKS3 masked
-//!   under `PartLocalMK`), exactly [`MASKED_SD_LEN`] (180 B).
+//!   under `PartLocalMK`), exactly [`MASKED_SD_LEN`] (276 B).
 //! * `sd_mk_backup` — the refreshed security-domain masking-key backup
-//!   envelope, exactly [`SD_MK_BACKUP_LEN`] (164 B).
+//!   envelope, exactly [`SD_MK_BACKUP_LEN`] (260 B).
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
@@ -59,9 +59,9 @@ pub const TBOR_OP_SD_RESTORE_REMOTE_BACKUP: u8 = 0x0C;
 const _: () = assert!(PART_POLICY_LEN == 484);
 
 // `masked_sealing_key` is a masked SD-sealing key; the derive needs an
-// integer literal on the field, so the length is spelled out as `180` and
+// integer literal on the field, so the length is spelled out as `276` and
 // pinned against the canonical `MASKED_SEALING_KEY_LEN` here.
-const _: () = assert!(MASKED_SEALING_KEY_LEN == 180);
+const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 
 // `src_remote_backup` is an HPKE-Auth seal; the derive needs an integer
 // literal on the field, so the length is spelled out as `161` and pinned
@@ -69,15 +69,15 @@ const _: () = assert!(MASKED_SEALING_KEY_LEN == 180);
 const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
 
 // `pok_local_backup` is a masked BKS3 envelope; the derive needs an integer
-// literal on the field, so the length is spelled out as `180` and pinned
+// literal on the field, so the length is spelled out as `276` and pinned
 // against the canonical value here.
-const _: () = assert!(MASKED_SD_LEN == 180);
+const _: () = assert!(MASKED_SD_LEN == 276);
 
 // `prev_sd_mk_backup` / `sd_mk_backup` are `local_mk`-style backup
 // envelopes; the derive needs an integer literal on the field, so the
 // length is spelled out as `164` and pinned against the canonical value
 // here.
-const _: () = assert!(SD_MK_BACKUP_LEN == 164);
+const _: () = assert!(SD_MK_BACKUP_LEN == 260);
 
 /// `SdRestoreRemoteBackup` request schema.
 #[tbor(opcode = 0x0C)]
@@ -89,9 +89,9 @@ pub struct TborSdRestoreRemoteBackupReq<'a> {
     pub session_id: SessionId,
 
     /// The receiver's masked SD-sealing key (from `SdSealingKeyGen`),
-    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to
     /// recover the receiver's private HPKE key (`RcvrPriv`).
-    #[tbor(buffer, len = 180)]
+    #[tbor(buffer, len = 276)]
     pub masked_sealing_key: &'a [u8],
 
     /// Caller-asserted unified [`PartPolicy`] describing the security
@@ -102,11 +102,26 @@ pub struct TborSdRestoreRemoteBackupReq<'a> {
     #[tbor(buffer, len = 484)]
     pub policy: &'a [u8],
 
+    /// Sender key certificate-chain descriptors (root→leaf), carried out
+    /// of band.  **Always present** (spec `SndrCertChain`): the chain is
+    /// validated and anchored to the policy **SATA** key, and its leaf
+    /// public key is the sender public key (`SndrPub`) that sealed
+    /// `src_remote_backup` and HPKE-Auth-opens it.
+    #[tbor(buffer, max_len = 24)]
+    pub sender_cert_chain: &'a [CertDescriptor],
+
     /// Sender side-band attestation evidence (manufacturer / owner /
     /// partition-owner certificate chains plus the attestation report).
     /// Spliced in as the [`Evidence`](crate::evidence::Evidence) field
-    /// group's four TOC entries; its attested key is the sender public key
-    /// that sealed `src_remote_backup`.
+    /// group's four TOC entries.
+    ///
+    /// **Optional** (spec `Option<SndrEvidence>`): required and verified
+    /// only when the policy sets `require_trusted_sa_key`.  When the flag
+    /// is clear, send the group empty (empty cert chains and a
+    /// zero-length report descriptor); the handler ignores it.  When the
+    /// flag is set, the partition-owner chain is anchored to the policy
+    /// **SAPOTA** key and the report must attest the same `SndrPub`
+    /// recovered from `sender_cert_chain`.
     #[tbor(include)]
     pub sender_evidence: Evidence<'a>,
 
@@ -116,8 +131,8 @@ pub struct TborSdRestoreRemoteBackupReq<'a> {
     pub src_remote_backup: &'a [u8],
 
     /// Previous security-domain masking-key backup (SDMK masked under the
-    /// derived SDBMK).  Always exactly [`SD_MK_BACKUP_LEN`] (164 B).
-    #[tbor(buffer, len = 164)]
+    /// derived SDBMK).  Always exactly [`SD_MK_BACKUP_LEN`] (260 B).
+    #[tbor(buffer, len = 260)]
     pub prev_sd_mk_backup: &'a [u8],
 }
 
@@ -125,13 +140,13 @@ pub struct TborSdRestoreRemoteBackupReq<'a> {
 #[tbor(response)]
 pub struct TborSdRestoreRemoteBackupResp<'a> {
     /// Partition-owner-key backup re-wrapped under the device-local key.
-    /// Always exactly [`MASKED_SD_LEN`] (180 B).
-    #[tbor(buffer, len = 180)]
+    /// Always exactly [`MASKED_SD_LEN`] (276 B).
+    #[tbor(buffer, len = 276)]
     pub pok_local_backup: &'a [u8],
 
     /// Security-domain masking-key backup envelope.  Always exactly
-    /// [`SD_MK_BACKUP_LEN`] (164 B).
-    #[tbor(buffer, len = 164)]
+    /// [`SD_MK_BACKUP_LEN`] (260 B).
+    #[tbor(buffer, len = 260)]
     pub sd_mk_backup: &'a [u8],
 }
 
@@ -167,6 +182,8 @@ mod tests {
             .unwrap()
             .policy(&policy)
             .unwrap()
+            .sender_cert_chain(&chain)
+            .unwrap()
             .sender_evidence(|e| {
                 e.mfgr_cert_chain(&chain)?
                     .owner_cert_chain(&chain)?
@@ -189,7 +206,7 @@ mod tests {
     fn response_round_trips_backups() {
         let pok_local = [0xABu8; MASKED_SD_LEN];
         let sd_mk = [0xCDu8; SD_MK_BACKUP_LEN];
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 1024];
         let frame = TborSdRestoreRemoteBackupResp::encode(&mut buf, 0, true)
             .unwrap()
             .pok_local_backup(&pok_local)

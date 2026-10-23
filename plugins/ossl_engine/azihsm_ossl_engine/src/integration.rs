@@ -19,11 +19,11 @@ use azihsm_ossl_engine_core::error::EngineResult;
 use crate::context::EngineData;
 
 /// Open the HSM from the ambient `AZIHSM_*` environment, generate a persistent
-/// EC P-384 key, and return its masked blob — the form the loader consumes.
-/// Reuses the engine's real open path so a generated blob and a later
+/// EC key on `curve`, and return its masked blob — the form the loader
+/// consumes. Reuses the engine's real open path so a generated blob and a later
 /// `ENGINE_load_private_key` share the same masking (via the persisted BMK under
 /// the shared resiliency storage dir).
-pub fn generate_masked_ec_p384_from_env() -> EngineResult<Vec<u8>> {
+pub fn generate_masked_ec_from_env(curve: HsmEccCurve) -> EngineResult<Vec<u8>> {
     let data = EngineData::new();
     data.open_hsm_from_env()?;
     data.with_session(|session| {
@@ -31,7 +31,7 @@ pub fn generate_masked_ec_p384_from_env() -> EngineResult<Vec<u8>> {
             HsmKeyPropsBuilder::default()
                 .class(class)
                 .key_kind(HsmKeyKind::Ecc)
-                .ecc_curve(HsmEccCurve::P384)
+                .ecc_curve(curve)
                 .is_session(false)
                 .can_sign(sign)
                 .can_verify(!sign)
@@ -44,8 +44,12 @@ pub fn generate_masked_ec_p384_from_env() -> EngineResult<Vec<u8>> {
         let (priv_key, _pub) =
             HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
                 .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
-        priv_key
+        // The masked blob stays valid after the source handle is gone; delete it
+        // so device-resident keys do not accumulate across suite runs.
+        let masked = priv_key
             .masked_key_vec()
-            .map_err(|e| EngineError::wrap("export masked key", e))
+            .map_err(|e| EngineError::wrap("export masked key", e));
+        crate::context::delete_hsm_key(priv_key, "integration generator key");
+        masked
     })
 }

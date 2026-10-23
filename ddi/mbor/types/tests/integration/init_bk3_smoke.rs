@@ -57,7 +57,7 @@ fn test_init_bk3_smoke() {
         // metadata field set.
         let masked_len = resp.data.masked_bk3.len();
         assert!(
-            (200..=300).contains(&masked_len),
+            (MIN_MASKED_BK3_LEN..=MAX_MASKED_BK3_LEN).contains(&masked_len),
             "masked_bk3 length {masked_len} is outside the expected range"
         );
         assert_eq!(resp.data.vm_launch_guid.len(), 16);

@@ -4,7 +4,7 @@
 //! TBOR `Hash` wire schema.
 //!
 //! `Hash` is an in-session command that computes a cryptographic hash
-//! (SHA-256 / 384 / 512) of a host-supplied message and returns the
+//! (SHA-1 / 256 / 384 / 512) of a host-supplied message and returns the
 //! digest.  It carries no key and touches no partition state — it is a
 //! pure hashing utility, the TBOR analogue of MBOR `ShaDigest`.
 //!
@@ -17,7 +17,7 @@
 //! Outputs:
 //!
 //! * `digest` — the natural (big-endian) digest, exactly the algorithm's
-//!   length (32 / 48 / 64 B for SHA-256 / 384 / 512).
+//!   length (20 / 32 / 48 / 64 B for SHA-1 / 256 / 384 / 512).
 
 use azihsm_fw_ddi_tbor_api::tbor;
 
@@ -60,7 +60,7 @@ pub struct TborHashReq<'a> {
 #[tbor(response)]
 pub struct TborHashResp<'a> {
     /// The natural (big-endian) digest, exactly the algorithm's length
-    /// (32 / 48 / 64 B for SHA-256 / 384 / 512).
+    /// (20 / 32 / 48 / 64 B for SHA-1 / 256 / 384 / 512).
     #[tbor(buffer, max_len = 64, mutable)]
     pub digest: &'a [u8],
 }
@@ -75,19 +75,26 @@ mod tests {
 
     #[test]
     fn request_round_trips_fields() {
-        let mut buf = [0u8; 512];
-        let msg = [0x61u8; 64];
-        let frame = TborHashReq::encode(&mut buf)
-            .unwrap()
-            .session_id(SessionId(9))
-            .unwrap()
-            .algo(HashAlgo::Sha384)
-            .unwrap()
-            .msg(&msg)
-            .unwrap()
-            .finish();
-        assert_eq!(frame.algo(), HashAlgo::Sha384);
-        assert_eq!(frame.msg(), &msg[..]);
+        for algo in [
+            HashAlgo::Sha1,
+            HashAlgo::Sha256,
+            HashAlgo::Sha384,
+            HashAlgo::Sha512,
+        ] {
+            let mut buf = [0u8; 512];
+            let msg = [0x61u8; 64];
+            let frame = TborHashReq::encode(&mut buf)
+                .unwrap()
+                .session_id(SessionId(9))
+                .unwrap()
+                .algo(algo)
+                .unwrap()
+                .msg(&msg)
+                .unwrap()
+                .finish();
+            assert_eq!(frame.algo(), algo);
+            assert_eq!(frame.msg(), &msg[..]);
+        }
     }
 
     #[test]

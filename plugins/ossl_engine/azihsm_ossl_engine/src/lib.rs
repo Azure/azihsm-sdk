@@ -30,10 +30,37 @@ mod logging;
 mod uri;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod aes;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod keyload;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsaload;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsaimport;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsasign;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod rsadecrypt;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod sign;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod keygen;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod derive;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod hkdf;
+
+#[cfg(all(target_os = "linux", feature = "engine"))]
+mod asn1;
 
 #[cfg(all(target_os = "linux", feature = "engine"))]
 mod engine_impl;

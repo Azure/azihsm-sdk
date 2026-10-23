@@ -10,10 +10,14 @@ Licensed under the MIT License.
 
 ## Description
 
-Computes a cryptographic hash (SHA-256 / 384 / 512) of a host-supplied
+Computes a cryptographic hash (SHA-1 / 256 / 384 / 512) of a host-supplied
 message and returns the digest.  A pure hashing utility — it carries no
 key, no scope, and touches no partition state.  This is the TBOR analogue
 of MBOR `ShaDigest`.
+
+SHA-1 is available for legacy compatibility, not collision-resistant uses
+such as digital signatures. Firmware without SHA-1 support rejects selector
+`0` with `InvalidArg`; existing SHA-2 selectors and wire layouts are unchanged.
 
 The handler uses the reserve-then-fill pattern: the response frame is
 encoded with the digest slot reserved, then the PAL hashes straight into
@@ -29,7 +33,7 @@ Available to **both Crypto-Officer and Crypto-User** sessions.
 | Offset | Field | Type | Description |
 |---|---|---|---|
 | 4 | `session_id` | `session_id` (inline) | Session this request is bound to; cross-checked against the SQE-carried session id. |
-| — | `algo` | `u8` (inline) | Digest algorithm ([`HashAlgo`]): `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
+| — | `algo` | `u8` (inline) | Digest algorithm ([`HashAlgo`]): `0` = SHA-1, `1` = SHA-256, `2` = SHA-384, `3` = SHA-512. |
 | — | `msg` | `buffer` (≤ 2048 B) | The message to hash. |
 
 ### Data section
@@ -42,7 +46,7 @@ Carries the message bytes.
 
 | Offset | Field | Type | Description |
 |---|---|---|---|
-| 8 | `digest` | `buffer` (32 / 48 / 64 B) | The natural (big-endian) digest, exactly the algorithm's length. |
+| 8 | `digest` | `buffer` (20 / 32 / 48 / 64 B) | The natural (big-endian) digest, exactly the algorithm's length. |
 
 ### Data section
 

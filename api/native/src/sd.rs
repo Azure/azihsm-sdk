@@ -37,13 +37,19 @@ pub struct AzihsmSdEvidence {
 /// Input buffers for [`azihsm_sd_create_remote_backup`].
 #[repr(C)]
 pub struct AzihsmSdCreateRemoteBackupParams {
-    /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
-    /// `MASKED_SEALING_KEY_LEN` (180 B).
-    pub masked_sealing_key: *const AzihsmBuffer,
-    /// Receiver attestation evidence.
-    pub receiver_evidence: *const AzihsmSdEvidence,
     /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
+    pub part_policy: *const AzihsmBuffer,
+    /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
+    /// `MASKED_SEALING_KEY_LEN` (276 B).
+    pub masked_sealing_key: *const AzihsmBuffer,
+    /// Receiver key certificate chain (spec `RcvrCertChain`): validated
+    /// and anchored to the policy SATA key, its leaf is the recipient key
+    /// the remote backup is sealed to.  Always required.
+    pub receiver_cert_chain: AzihsmSdCertChain,
+    /// Receiver attestation evidence.  Verified only when the policy sets
+    /// `require_trusted_sa_key`; pass empty chains and an empty report
+    /// otherwise.
+    pub receiver_evidence: *const AzihsmSdEvidence,
 }
 
 /// Borrows one C [`AzihsmSdCertChain`] into a `Vec<HsmCert>`, rejecting an
@@ -68,6 +74,20 @@ fn unpack_cert_chain(chain: &AzihsmSdCertChain) -> Result<Vec<api::HsmCert<'_>>,
     Ok(certs)
 }
 
+/// Borrows one C [`AzihsmSdCertChain`] into a `Vec<HsmCert>`, permitting a
+/// fully-empty chain (`len == 0` yields an empty vec).  Used only for the
+/// optional `receiver_evidence`, whose chains may be absent when the policy
+/// does not set `require_trusted_sa_key`; the host layer gates the
+/// non-empty validation on that flag.
+fn unpack_cert_chain_allow_empty(
+    chain: &AzihsmSdCertChain,
+) -> Result<Vec<api::HsmCert<'_>>, AzihsmStatus> {
+    if chain.len == 0 {
+        return Ok(Vec::new());
+    }
+    unpack_cert_chain(chain)
+}
+
 /// Owned, validated decode of one C [`AzihsmSdEvidence`]: the three cert
 /// chains materialized as `HsmCert` vectors plus the report slice (the DER
 /// bytes stay borrowed from the caller's buffers). Convert a reference
@@ -80,6 +100,31 @@ struct SdEvidence<'a> {
     owner: Vec<api::HsmCert<'a>>,
     part_owner: Vec<api::HsmCert<'a>>,
     report: &'a [u8],
+}
+
+impl<'a> SdEvidence<'a> {
+    /// Decode allowing a fully-empty evidence party: empty cert chains and
+    /// a null or zero-length report.
+    ///
+    /// Used for the optional `receiver_evidence` of
+    /// `SdCreateRemoteBackup`.  The firmware verifies that evidence only
+    /// when the policy sets `require_trusted_sa_key`, and the host
+    /// `sd_create_remote_backup` gates its packing on the same flag, so an
+    /// empty party is valid when the flag is clear (and is rejected by the
+    /// host packer when it is set).
+    fn try_from_optional(ev: &'a AzihsmSdEvidence) -> Result<Self, AzihsmStatus> {
+        let report = if ev.report.is_null() {
+            &[][..]
+        } else {
+            deref_ptr(ev.report)?.try_into()?
+        };
+        Ok(Self {
+            mfgr: unpack_cert_chain_allow_empty(&ev.mfgr_cert_chain)?,
+            owner: unpack_cert_chain_allow_empty(&ev.owner_cert_chain)?,
+            part_owner: unpack_cert_chain_allow_empty(&ev.part_owner_cert_chain)?,
+            report,
+        })
+    }
 }
 
 impl<'a> TryFrom<&'a AzihsmSdEvidence> for SdEvidence<'a> {
@@ -109,18 +154,21 @@ impl<'a: 'b, 'b> From<&'b SdEvidence<'a>> for api::HsmSdEvidence<'b> {
 /// @brief Create a new security domain and its remote backup
 ///
 /// Creates a security domain under the calling session's partition from
-/// `params.policy`, using the sender's masked sealing key and the
-/// receiver's attestation evidence, and returns the three backups the
-/// firmware produces.
+/// `params.part_policy`, using the sender's masked sealing key. The
+/// recipient key is recovered from the authoritative
+/// `params.receiver_cert_chain` (always required, anchored to the policy
+/// SATA key); the `params.receiver_evidence` is optional and verified only
+/// when the policy sets `require_trusted_sa_key`. Returns the three backups
+/// the firmware produces.
 ///
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Create-backup input buffers
 /// @param[in,out] pok_remote_backup Output buffer for the remote
 ///                partition-owner-key backup (161 B).
 /// @param[in,out] pok_local_backup Output buffer for the local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the security-domain
-///                masking-key backup (164 B).
+///                masking-key backup (260 B).
 ///
 /// All three output buffers follow the probe/fill convention and are
 /// validated **before** the domain is created, so the one-shot command is
@@ -149,10 +197,17 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
 
+        let receiver_cert_chain = unpack_cert_chain(&params.receiver_cert_chain)?;
+
+        // `receiver_evidence` is optional: the firmware verifies it only
+        // when the policy sets `require_trusted_sa_key`, and the host layer
+        // gates its packing on that flag.  Accept an empty party here so a
+        // C caller can honor the documented flag-clear contract; the host
+        // packer still rejects empty evidence when the flag is set.
         let receiver = deref_ptr(params.receiver_evidence)?;
-        let receiver = SdEvidence::try_from(receiver)?;
+        let receiver = SdEvidence::try_from_optional(receiver)?;
         let receiver = api::HsmSdEvidence::from(&receiver);
 
         // Validate all outputs up-front (aliasing on raw pointers, then
@@ -167,7 +222,14 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
-        let result = session.sd_create_remote_backup(masked_sealing_key, &receiver, policy)?;
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+        let result = session.sd_create_remote_backup(
+            part_policy,
+            masked_sealing_key,
+            &receiver_cert_chain,
+            &receiver,
+        )?;
 
         copy_to_buffer(pok_remote_backup, &result.pok_remote_backup)?;
         copy_to_buffer(pok_local_backup, &result.pok_local_backup)?;
@@ -180,15 +242,15 @@ pub unsafe extern "C" fn azihsm_sd_create_remote_backup(
 /// Input buffers for [`azihsm_sd_reseal_remote_backup`].
 #[repr(C)]
 pub struct AzihsmSdResealRemoteBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
-    /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    /// unseals the source backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Source (sender) attestation evidence.
     pub src_evidence: *const AzihsmSdEvidence,
     /// Destination (receiver) attestation evidence.
     pub dest_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
     /// Source remote backup to reseal, exactly `POK_REMOTE_BACKUP_LEN`
     /// (161 B).
     pub src_remote_backup: *const AzihsmBuffer,
@@ -230,7 +292,7 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let src_remote_backup: &[u8] = deref_ptr(params.src_remote_backup)?.try_into()?;
 
         let src_evidence = deref_ptr(params.src_evidence)?;
@@ -245,11 +307,13 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
         let dst_remote_backup = deref_mut_ptr(dst_remote_backup)?;
         validate_output_buffer(dst_remote_backup, api::POK_REMOTE_BACKUP_LEN)?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_reseal_remote_backup(
+            part_policy,
             masked_sealing_key,
             &src_evidence,
             &dest_evidence,
-            policy,
             src_remote_backup,
         )?;
 
@@ -262,33 +326,40 @@ pub unsafe extern "C" fn azihsm_sd_reseal_remote_backup(
 /// Input buffers for [`azihsm_sd_restore_remote_backup`].
 #[repr(C)]
 pub struct AzihsmSdRestoreRemoteBackupParams {
-    /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
-    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
-    pub masked_sealing_key: *const AzihsmBuffer,
-    /// Sender attestation evidence.
-    pub sender_evidence: *const AzihsmSdEvidence,
     /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
+    pub part_policy: *const AzihsmBuffer,
+    /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
+    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
+    pub masked_sealing_key: *const AzihsmBuffer,
+    /// Sender key certificate chain (spec `SndrCertChain`): validated and
+    /// anchored to the policy SATA key, its leaf is the sender key that
+    /// sealed the remote backup.  Always required.
+    pub sender_cert_chain: AzihsmSdCertChain,
+    /// Sender attestation evidence.  Verified only when the policy sets
+    /// `require_trusted_sa_key`; pass empty chains and an empty report
+    /// otherwise.
+    pub sender_evidence: *const AzihsmSdEvidence,
     /// Remote backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
     pub src_remote_backup: *const AzihsmBuffer,
     /// Previous security-domain masking-key backup, exactly
-    /// `SD_MK_BACKUP_LEN` (164 B).
+    /// `SD_MK_BACKUP_LEN` (260 B).
     pub prev_sd_mk_backup: *const AzihsmBuffer,
 }
 
 /// @brief Restore a security domain from a remote backup
 ///
 /// HPKE-opens `params.src_remote_backup` with the receiver's masked sealing
-/// key (authenticated by the sender in `params.sender_evidence`), recovers
-/// the security-domain masking key from `params.prev_sd_mk_backup`, and
-/// returns the refreshed device-local backups.
+/// key (authenticated by the sender key recovered from
+/// `params.sender_cert_chain`), recovers the security-domain masking key
+/// from `params.prev_sd_mk_backup`, and returns the refreshed device-local
+/// backups.
 ///
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Restore-backup input buffers
 /// @param[in,out] pok_local_backup Output buffer for the local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the security-domain
-///                masking-key backup (164 B).
+///                masking-key backup (260 B).
 ///
 /// Both output buffers follow the probe/fill convention and are validated
 /// **before** the restore is performed.
@@ -315,12 +386,19 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let src_remote_backup: &[u8] = deref_ptr(params.src_remote_backup)?.try_into()?;
         let prev_sd_mk_backup: &[u8] = deref_ptr(params.prev_sd_mk_backup)?.try_into()?;
 
+        let sender_cert_chain = unpack_cert_chain(&params.sender_cert_chain)?;
+
+        // `sender_evidence` is optional: the firmware verifies it only when
+        // the policy sets `require_trusted_sa_key`, and the host layer gates
+        // its packing on that flag.  Accept an empty party here so a C
+        // caller can honor the documented flag-clear contract; the host
+        // packer still rejects empty evidence when the flag is set.
         let sender = deref_ptr(params.sender_evidence)?;
-        let sender = SdEvidence::try_from(sender)?;
+        let sender = SdEvidence::try_from_optional(sender)?;
         let sender = api::HsmSdEvidence::from(&sender);
 
         // Validate all outputs up-front (aliasing on raw pointers, then
@@ -333,10 +411,13 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_restore_remote_backup(
+            part_policy,
             masked_sealing_key,
+            &sender_cert_chain,
             &sender,
-            policy,
             src_remote_backup,
             prev_sd_mk_backup,
         )?;
@@ -351,14 +432,14 @@ pub unsafe extern "C" fn azihsm_sd_restore_remote_backup(
 /// Input buffers for [`azihsm_sd_create_peer_backup`].
 #[repr(C)]
 pub struct AzihsmSdCreatePeerBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Sender's masked SD-sealing key (from `azihsm_key_gen`), exactly
-    /// `MASKED_SEALING_KEY_LEN` (180 B).
+    /// `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Destination (peer) attestation evidence.
     pub dst_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
-    /// Device-local partition-owner-key backup (180 B) from which BKS3 is
+    /// Device-local partition-owner-key backup (276 B) from which BKS3 is
     /// recovered.
     pub pok_local_backup: *const AzihsmBuffer,
 }
@@ -399,7 +480,7 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let pok_local_backup: &[u8] = deref_ptr(params.pok_local_backup)?.try_into()?;
 
         let dst = deref_ptr(params.dst_evidence)?;
@@ -411,8 +492,14 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
         let pok_peer_backup = deref_mut_ptr(pok_peer_backup)?;
         validate_output_buffer(pok_peer_backup, api::POK_REMOTE_BACKUP_LEN)?;
 
-        let result =
-            session.sd_create_peer_backup(masked_sealing_key, &dst, policy, pok_local_backup)?;
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
+        let result = session.sd_create_peer_backup(
+            part_policy,
+            masked_sealing_key,
+            &dst,
+            pok_local_backup,
+        )?;
 
         copy_to_buffer(pok_peer_backup, &result)?;
 
@@ -423,17 +510,17 @@ pub unsafe extern "C" fn azihsm_sd_create_peer_backup(
 /// Input buffers for [`azihsm_sd_restore_peer_backup`].
 #[repr(C)]
 pub struct AzihsmSdRestorePeerBackupParams {
+    /// Unified partition-policy image (484 B) describing the domain.
+    pub part_policy: *const AzihsmBuffer,
     /// Receiver's masked SD-sealing key (from `azihsm_key_gen`) that
-    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (180 B).
+    /// unseals the backup, exactly `MASKED_SEALING_KEY_LEN` (276 B).
     pub masked_sealing_key: *const AzihsmBuffer,
     /// Source (peer) attestation evidence.
     pub src_evidence: *const AzihsmSdEvidence,
-    /// Unified partition-policy image (484 B) describing the domain.
-    pub policy: *const AzihsmBuffer,
     /// Peer backup to restore, exactly `POK_REMOTE_BACKUP_LEN` (161 B).
     pub pok_peer_backup: *const AzihsmBuffer,
     /// Previous security-domain masking-key backup, exactly
-    /// `SD_MK_BACKUP_LEN` (164 B).
+    /// `SD_MK_BACKUP_LEN` (260 B).
     pub prev_sd_mk_backup: *const AzihsmBuffer,
 }
 
@@ -447,9 +534,9 @@ pub struct AzihsmSdRestorePeerBackupParams {
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Restore-backup input buffers
 /// @param[in,out] pok_local_backup Output buffer for the local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the security-domain
-///                masking-key backup (164 B).
+///                masking-key backup (260 B).
 ///
 /// Both output buffers follow the probe/fill convention and are validated
 /// **before** the restore is performed.
@@ -476,7 +563,7 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
         let params = deref_ptr(params)?;
 
         let masked_sealing_key: &[u8] = deref_ptr(params.masked_sealing_key)?.try_into()?;
-        let policy: &[u8] = deref_ptr(params.policy)?.try_into()?;
+        let part_policy: &[u8] = deref_ptr(params.part_policy)?.try_into()?;
         let pok_peer_backup: &[u8] = deref_ptr(params.pok_peer_backup)?.try_into()?;
         let prev_sd_mk_backup: &[u8] = deref_ptr(params.prev_sd_mk_backup)?.try_into()?;
 
@@ -494,10 +581,12 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
             (&mut *sd_mk_backup, api::SD_MK_BACKUP_LEN),
         ])?;
 
+        let part_policy =
+            api::PartPolicy::ref_from_wire(part_policy).ok_or(AzihsmStatus::InvalidArgument)?;
         let result = session.sd_restore_peer_backup(
+            part_policy,
             masked_sealing_key,
             &src,
-            policy,
             pok_peer_backup,
             prev_sd_mk_backup,
         )?;
@@ -513,10 +602,10 @@ pub unsafe extern "C" fn azihsm_sd_restore_peer_backup(
 #[repr(C)]
 pub struct AzihsmSdRestoreLocalBackupParams {
     /// Device-local partition-owner-key backup to restore, exactly
-    /// `MASKED_SD_LEN` (180 B).
+    /// `MASKED_SD_LEN` (276 B).
     pub pok_local_backup: *const AzihsmBuffer,
     /// Security-domain masking-key backup, exactly `SD_MK_BACKUP_LEN`
-    /// (164 B).
+    /// (260 B).
     pub sd_mk_backup: *const AzihsmBuffer,
 }
 
@@ -529,9 +618,9 @@ pub struct AzihsmSdRestoreLocalBackupParams {
 /// @param[in] sess_handle Handle to the security-domain session
 /// @param[in] params Restore-backup input buffers
 /// @param[in,out] pok_local_backup Output buffer for the refreshed local
-///                partition-owner-key backup (180 B).
+///                partition-owner-key backup (276 B).
 /// @param[in,out] sd_mk_backup Output buffer for the refreshed
-///                security-domain masking-key backup (164 B).
+///                security-domain masking-key backup (260 B).
 ///
 /// Both output buffers follow the probe/fill convention and are validated
 /// **before** the restore is performed.

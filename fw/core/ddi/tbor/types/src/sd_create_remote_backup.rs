@@ -16,14 +16,20 @@
 //! * `masked_sealing_key` — the sender's masked SD-sealing key (the
 //!   `masked_key` returned by
 //!   [`SdSealingKeyGen`](crate::sd_sealing_key_gen)), exactly
-//!   [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to recover
+//!   [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to recover
 //!   the sender's private ECDH key (`SndrPriv`); never a vault handle.
-//! * `receiver_evidence` — receiver side-band attestation evidence
-//!   ([`Evidence`](crate::evidence::Evidence) field group: manufacturer /
-//!   owner / partition-owner certificate-chain descriptors plus the
-//!   attestation-report descriptor).  The report descriptor indexes the
-//!   receiver's `KeyReport` in the out-of-band SGL page; its COSE_Key
-//!   supplies the recipient public key (`RcvrPub`).
+//! * `receiver_cert_chain` — the receiver key certificate chain (spec
+//!   `RcvrCertChain`), carried out of band.  Always present; validated
+//!   and anchored to the policy **SATA** key, its leaf public key is the
+//!   recipient public key (`RcvrPub`) the remote backup is sealed to.
+//! * `receiver_evidence` — **optional** receiver side-band attestation
+//!   evidence ([`Evidence`](crate::evidence::Evidence) field group:
+//!   manufacturer / owner / partition-owner certificate-chain descriptors
+//!   plus the attestation-report descriptor).  Required and verified only
+//!   when the policy sets `require_trusted_sa_key`: the partition-owner
+//!   chain is then anchored to the policy **SAPOTA** key and the report
+//!   must attest the same `RcvrPub` recovered from `receiver_cert_chain`.
+//!   When the flag is clear the group is sent empty and ignored.
 //! * `policy` — the unified [`PartPolicy`] describing the security domain
 //!   to create.  Length pinned to [`PART_POLICY_LEN`] (484 B).
 //!
@@ -36,11 +42,11 @@
 //!   `DHKemP384Sha384AesGcm256` suite.
 //! * `pok_local_backup` — the local partition-owner-key backup: the same
 //!   fresh BKS3 masked under the partition-local masking key
-//!   (`PartLocalMK`), exactly [`MASKED_SD_LEN`] (180 B).  Persisted by
+//!   (`PartLocalMK`), exactly [`MASKED_SD_LEN`] (276 B).  Persisted by
 //!   the host and replayed to recover the security domain locally.
 //! * `sd_mk_backup` — the security-domain masking-key backup: the freshly
 //!   minted `SDMK` masked under the derived `SDBMK`, exactly
-//!   [`LOCAL_MK_BACKUP_LEN`] (164 B).  Persisted by the host and replayed
+//!   [`LOCAL_MK_BACKUP_LEN`] (260 B).  Persisted by the host and replayed
 //!   on restore.
 
 use azihsm_fw_ddi_tbor_api::tbor;
@@ -58,23 +64,23 @@ pub const TBOR_OP_SD_CREATE_REMOTE_BACKUP: u8 = 0x0A;
 // against the canonical value here.
 const _: () = assert!(PART_POLICY_LEN == 484);
 
-// `masked_sealing_key` is spelled out as `180` on the field (the derive
+// `masked_sealing_key` is spelled out as `276` on the field (the derive
 // needs an integer literal) and pinned against the canonical
 // `MASKED_SEALING_KEY_LEN` here.
-const _: () = assert!(MASKED_SEALING_KEY_LEN == 180);
+const _: () = assert!(MASKED_SEALING_KEY_LEN == 276);
 
 /// Exact on-the-wire length of a **masked** security-domain blob (a
 /// masked BKS3): an AEAD-GCM-256 masked-key envelope
-/// (`header(8) ‖ iv(12) ‖ aad(96) ‖ pt(48) ‖ tag(16)`) whose plaintext
-/// is the 48-byte BKS3 and whose AAD is the 96-byte `MaskedKeyMetadata`.
+/// (`header(8) ‖ iv(12) ‖ aad(192) ‖ pt(48) ‖ tag(16)`) whose plaintext
+/// is the 48-byte BKS3 and whose AAD is the 192-byte `MaskedKeyMetadata`.
 ///
 /// Retained here as the shared length authority for the rest of the
 /// Security-Domain backup family (`SdReseal`, `SdRestore*`,
 /// `SdCreatePeerBackup`), which re-export it.  **This command's**
 /// response is an HPKE-Auth seal sized by [`POK_REMOTE_BACKUP_LEN`], not
 /// a masked blob.
-pub const MASKED_SD_LEN: usize = 8 + 12 + 96 + 48 + 16;
-const _: () = assert!(MASKED_SD_LEN == 180);
+pub const MASKED_SD_LEN: usize = 8 + 12 + 192 + 48 + 16;
+const _: () = assert!(MASKED_SD_LEN == 276);
 
 /// Exact on-the-wire length of the remote partition-owner-key backup.
 ///
@@ -93,7 +99,7 @@ const _: () = assert!(POK_REMOTE_BACKUP_LEN == 161);
 /// rest of the SD backup family — so the intent is explicit at each sizing
 /// site and the two can diverge without silent copy/paste breakage.
 pub const SD_MK_BACKUP_LEN: usize = LOCAL_MK_BACKUP_LEN;
-const _: () = assert!(SD_MK_BACKUP_LEN == 164);
+const _: () = assert!(SD_MK_BACKUP_LEN == 260);
 
 /// `SdCreateRemoteBackup` request schema.
 #[tbor(opcode = 0x0A)]
@@ -105,7 +111,7 @@ pub struct TborSdCreateRemoteBackupReq<'a> {
     pub session_id: SessionId,
 
     /// The sender's masked SD-sealing key (from `SdSealingKeyGen`),
-    /// exactly [`MASKED_SEALING_KEY_LEN`] (180 B).  Unmasked on-device to
+    /// exactly [`MASKED_SEALING_KEY_LEN`] (276 B).  Unmasked on-device to
     /// recover `SndrPriv`.
     ///
     /// Marked `#[tbor(mutable)]` so the FW handler can AEAD-open (unmask)
@@ -115,14 +121,30 @@ pub struct TborSdCreateRemoteBackupReq<'a> {
     /// omitted from the generated `ViewMut` (its accessors remain on the
     /// shared [`decode`](TborSdCreateRemoteBackupReq::decode) view), so the
     /// handler reads evidence via `decode` and unmasks via `decode_mut`.
-    #[tbor(buffer, len = 180, mutable)]
+    #[tbor(buffer, len = 276, mutable)]
     pub masked_sealing_key: &'a [u8],
+
+    /// Receiver key certificate-chain descriptors (root→leaf), carried
+    /// out of band.  **Always present** (spec `RcvrCertChain`): the chain
+    /// is validated and anchored to the policy **SATA** key, and its leaf
+    /// public key is the receiver public key (`RcvrPub`) the remote backup
+    /// is HPKE-sealed to.
+    #[tbor(buffer, max_len = 24)]
+    pub receiver_cert_chain: &'a [CertDescriptor],
 
     /// Side-band attestation evidence (manufacturer / owner /
     /// partition-owner certificate-chain descriptors plus the attestation
     /// report descriptor).  Spliced in as the
     /// [`Evidence`](crate::evidence::Evidence) field group's four TOC
     /// entries.
+    ///
+    /// **Optional** (spec `Option<RcvrEvidence>`): required and verified
+    /// only when the policy sets `require_trusted_sa_key`.  When the flag
+    /// is clear, send the group empty (empty cert chains and a
+    /// zero-length report descriptor); the handler ignores it.  When the
+    /// flag is set, the partition-owner chain is anchored to the policy
+    /// **SAPOTA** key and the report must attest the same `RcvrPub`
+    /// recovered from `receiver_cert_chain`.
     #[tbor(include)]
     pub receiver_evidence: Evidence<'a>,
 
@@ -145,15 +167,15 @@ pub struct TborSdCreateRemoteBackupResp<'a> {
     /// Local partition-owner-key backup: the fresh BKS3 masked under the
     /// partition-local masking key (`PartLocalMK`), to be persisted by
     /// the host and replayed to recover the security domain locally.
-    /// Always exactly [`MASKED_SD_LEN`] (180 B).
-    #[tbor(buffer, len = 180)]
+    /// Always exactly [`MASKED_SD_LEN`] (276 B).
+    #[tbor(buffer, len = 276)]
     pub pok_local_backup: &'a [u8],
 
     /// Security-domain masking-key backup: the freshly minted `SDMK`
     /// masked under the derived `SDBMK`, to be persisted by the host and
     /// replayed on restore.  Always exactly [`LOCAL_MK_BACKUP_LEN`]
-    /// (164 B).
-    #[tbor(buffer, len = 164)]
+    /// (260 B).
+    #[tbor(buffer, len = 260)]
     pub sd_mk_backup: &'a [u8],
 }
 
@@ -191,6 +213,8 @@ mod tests {
             .session_id(SessionId(7))
             .unwrap()
             .masked_sealing_key(&masked)
+            .unwrap()
+            .receiver_cert_chain(&chain)
             .unwrap()
             .receiver_evidence(|e| {
                 e.mfgr_cert_chain(&chain)?

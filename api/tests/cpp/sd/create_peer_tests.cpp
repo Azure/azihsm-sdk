@@ -30,20 +30,15 @@
 
 namespace
 {
-// Pinned wire lengths. Mirror the `azihsm_ddi_tbor_types` constants
-// (`MASKED_SEALING_KEY_LEN`, `MASKED_SD_LEN`, `POK_REMOTE_BACKUP_LEN`),
-// which are not exposed in the C header.
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-constexpr uint32_t kMaskedSdLen = 180;
-constexpr uint32_t kPokRemoteBackupLen = 161;
-
-// Create the security domain and capture the 180-byte device-local backup
+// Create the security domain and capture the 276-byte device-local backup
 // that CreatePeerBackup recovers BKS3 from. Sizes the three output buffers
 // via the probe/fill convention. Records a gtest failure and returns false
 // on error.
 bool create_sd_local_backup(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
+
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_local
@@ -53,9 +48,10 @@ bool create_sd_local_backup(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
-        &masked_buf,
-        &receiver,
         &policy_buf,
+        &masked_buf,
+        receiver_chain,
+        &receiver,
     };
 
     std::vector<uint8_t> remote;
@@ -148,7 +144,7 @@ class azihsm_sd_create_peer_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, session_ex_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
@@ -192,13 +188,14 @@ TEST_F(azihsm_sd_create_peer_backup_test, create_peer_backup_roundtrip)
         ASSERT_FALSE(key.report.empty());
 
         // Self-peer backup: the same attested key is sender and destination.
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         // Create the security domain to obtain the device-local backup.
         std::vector<uint8_t> local_backup;
         ASSERT_TRUE(create_sd_local_backup(
             ctx.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             ctx.policy,
             local_backup
@@ -210,9 +207,9 @@ TEST_F(azihsm_sd_create_peer_backup_test, create_peer_backup_roundtrip)
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_buffer local_buf{ local_backup.data(), static_cast<uint32_t>(local_backup.size()) };
         azihsm_sd_create_peer_backup_params params{
+            &policy_buf,
             &masked_buf,
             &evidence.get(),
-            &policy_buf,
             &local_buf,
         };
 

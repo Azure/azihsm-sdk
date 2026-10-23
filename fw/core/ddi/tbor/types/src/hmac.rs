@@ -53,13 +53,13 @@ pub struct TborHmacReq<'a> {
     pub session_id: SessionId,
 
     /// The masked HMAC key (from `HmacGenerateKey` / unwrap), an
-    /// AEAD-GCM-256 envelope of 164..=260 B.  Unmasked on-device to
+    /// AEAD-GCM-256 envelope of 260..=356 B.  Unmasked on-device to
     /// recover the key, its kind (SHA variant), and its `sign` attribute.
     ///
     /// Marked `#[tbor(mutable)]` so the handler can `unmask` it **in place**
     /// in the request buffer (via `decode_mut`) — no scratch copy of the
     /// blob, and the recovered key is used straight from `target_key`.
-    #[tbor(buffer, min_len = 164, max_len = 260, mutable)]
+    #[tbor(buffer, min_len = 260, max_len = 356, mutable)]
     pub masked_key: &'a [u8],
 
     /// The message to MAC, up to [`HMAC_MSG_MAX_LEN`] (1024) bytes.
@@ -120,8 +120,8 @@ mod tests {
         // literals; pin them against the exported consts.
         const _: () = assert!(1024 == HMAC_MSG_MAX_LEN);
         const _: () = assert!(64 == HMAC_TAG_MAX_LEN);
-        const _: () = assert!(164 == MASKED_HMAC_KEY_MIN_LEN);
-        const _: () = assert!(260 == MASKED_HMAC_KEY_MAX_LEN);
+        const _: () = assert!(260 == MASKED_HMAC_KEY_MIN_LEN);
+        const _: () = assert!(356 == MASKED_HMAC_KEY_MAX_LEN);
         assert_eq!(HMAC_MSG_MAX_LEN, 1024);
         assert_eq!(HMAC_TAG_MAX_LEN, 64);
     }

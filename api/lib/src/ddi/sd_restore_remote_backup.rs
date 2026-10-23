@@ -32,8 +32,9 @@ impl From<TborSdRestoreRemoteBackupResp> for HsmSdRestoreResult {
 /// Issue `SdRestoreRemoteBackup` (opcode `0x0C`) on the active session.
 ///
 /// HPKE-opens `src_remote_backup` with the receiver's `masked_sealing_key`
-/// (authenticated by the sender key in `sender_evidence`), recovers `SDMK`
-/// from `prev_sd_mk_backup`, and returns the refreshed device-local backups.
+/// (authenticated by the sender key recovered from `sender_cert_chain`),
+/// recovers `SDMK` from `prev_sd_mk_backup`, and returns the refreshed
+/// device-local backups.
 ///
 /// # Arguments
 ///
@@ -42,8 +43,12 @@ impl From<TborSdRestoreRemoteBackupResp> for HsmSdRestoreResult {
 /// * `masked_sealing_key` - The receiver's masked SD-sealing key (from
 ///   `SdSealingKeyGen`) that unseals the backup, exactly
 ///   [`MASKED_SEALING_KEY_LEN`] bytes.
+/// * `sender_cert_chain` - The sender key certificate chain (spec
+///   `SndrCertChain`): always required, anchored to the policy SATA key,
+///   its leaf is the sender public key. Transmitted out of band.
 /// * `sender_evidence` - Sender attestation evidence (cert chains and
-///   report), transmitted out of band.
+///   report), transmitted out of band. Verified only when the policy sets
+///   `require_trusted_sa_key`; otherwise ignored.
 /// * `policy` - Unified [`PartPolicy`] image ([`PART_POLICY_LEN`] bytes).
 /// * `src_remote_backup` - The remote backup to restore, exactly
 ///   [`POK_REMOTE_BACKUP_LEN`] bytes.
@@ -59,6 +64,7 @@ pub(crate) fn sd_restore_remote_backup_ex(
     partition: &HsmPartition,
     session_id: u16,
     masked_sealing_key: &[u8],
+    sender_cert_chain: &[HsmCert<'_>],
     sender_evidence: &HsmSdEvidence<'_>,
     policy: &[u8],
     src_remote_backup: &[u8],
@@ -75,14 +81,28 @@ pub(crate) fn sd_restore_remote_backup_ex(
         .map_err(|_| HsmError::InvalidArgument)?;
     let policy = decode_policy(policy)?;
 
-    // Flatten the sender evidence into descriptors + shared OOB items.
+    // Flatten the sender cert chain and evidence into descriptors + shared
+    // OOB items.  The sender chain is pushed first so its descriptor
+    // indices precede the evidence items.
     let mut oob: Vec<&[u8]> = Vec::new();
-    let sender = push_evidence(sender_evidence, &mut oob)?;
+    let sender_chain = push_cert_chain(sender_cert_chain, &mut oob, EVIDENCE_CHAIN_MAX_CERTS)?;
+
+    // The three-chain attestation evidence is verified by the firmware only
+    // when the policy sets `require_trusted_sa_key`; otherwise it is
+    // ignored.  Pack (and validate) it only in that case, and pack empty
+    // descriptors — shipping no DER bytes — when the flag is clear, so the
+    // documented flag-clear contract (empty evidence) is expressible.
+    let sender = if policy.flags.require_trusted_sa_key() {
+        push_evidence(sender_evidence, &mut oob)?
+    } else {
+        EvidenceDescriptors::empty()
+    };
 
     let req = TborSdRestoreRemoteBackupReq {
         session_id,
         masked_sealing_key,
         policy,
+        sender_cert_chain: sender_chain,
         sender_mfgr_cert_chain: sender.mfgr,
         sender_owner_cert_chain: sender.owner,
         sender_part_owner_cert_chain: sender.part_owner,

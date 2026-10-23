@@ -6,29 +6,25 @@
 //!
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`]. Happy-path sessions are owned
-//! by a [`SessionGuard`](crate::harness::SessionGuard) that closes on
+//! by a [`SessionGuard`](azihsm_ddi_tbor_test_harness::SessionGuard) that closes on
 //! `Drop`; negative paths drive `session_open_init` /
 //! `session_open_finish` on `TestCtx` directly.
 
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::build_mac_fin;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID as CO;
+use azihsm_ddi_tbor_test_harness::CU_PSK_ID as CU;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborSessionOpenFinishReq;
 use azihsm_ddi_tbor_types::TborSessionOpenInitReq;
 use azihsm_ddi_tbor_types::TborStatus;
+use azihsm_ddi_tbor_types::MAC_FIN_LEN;
 use azihsm_ddi_tbor_types::PK_INIT_LEN;
 use azihsm_ddi_tbor_types::SEED_ENVELOPE_LEN;
 use azihsm_ddi_tbor_types::SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256;
 
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::build_mac_fin;
-use crate::harness::TestCtx;
-
-const CO: u8 = 0;
-const CU: u8 = 1;
-
-// ---------------------------------------------------------------------------
-// Happy paths
-// ---------------------------------------------------------------------------
-
+/// Opens a CO authenticated session and verifies handshake metadata and MAC keys.
 #[test]
 fn open_session_co_authenticated_happy() {
     let ctx = TestCtx::new();
@@ -43,14 +39,15 @@ fn open_session_co_authenticated_happy() {
         "FW must return a non-empty bmk_session envelope",
     );
     // Authenticated sessions: host can re-derive MAC keys from
-    // `exported`; both should be 48 bytes.
+    // `exported`; both should be 48(ie MAC_FIN_LEN) bytes .
     let tx = h.derive_mac_tx_key().expect("derive mac tx key");
     let rx = h.derive_mac_rx_key().expect("derive mac rx key");
-    assert_eq!(tx.len(), 48);
-    assert_eq!(rx.len(), 48);
-    assert_ne!(tx, rx, "mac tx and rx keys must differ");
+    assert_eq!(tx.len(), MAC_FIN_LEN);
+    assert_eq!(rx.len(), MAC_FIN_LEN);
+    assert!(tx != rx, "mac tx and rx keys must differ");
 }
 
+/// Opens a CU plaintext session and verifies its handshake role and type.
 #[test]
 fn open_session_cu_plaintext_happy() {
     let ctx = TestCtx::new();
@@ -62,10 +59,7 @@ fn open_session_cu_plaintext_happy() {
     assert!(!h.session_type.is_authenticated());
 }
 
-// ---------------------------------------------------------------------------
-// Role / type mismatches
-// ---------------------------------------------------------------------------
-
+/// Rejects the unsupported CO plaintext session pairing.
 #[test]
 fn open_session_co_plaintext_rejected() {
     let ctx = TestCtx::new();
@@ -75,6 +69,7 @@ fn open_session_co_plaintext_rejected() {
     assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
 
+/// Rejects the unsupported CU authenticated session pairing.
 #[test]
 fn open_session_cu_authenticated_rejected() {
     let ctx = TestCtx::new();
@@ -84,10 +79,7 @@ fn open_session_cu_authenticated_rejected() {
     assert_fw_rejects(&err, TborStatus::InvalidSessionType);
 }
 
-// ---------------------------------------------------------------------------
-// Parse-stage rejections
-// ---------------------------------------------------------------------------
-
+/// Rejects out-of-range PSK IDs before opening a session.
 #[test]
 fn open_session_invalid_psk_id() {
     // Only `0` (CO) and `1` (CU) are valid `psk_id` values. Spot-check
@@ -104,6 +96,7 @@ fn open_session_invalid_psk_id() {
     }
 }
 
+/// Rejects an invalid raw session-type byte.
 #[test]
 fn open_session_invalid_session_type_byte() {
     // Bypass the typed `SessionType` enum to ship an out-of-range
@@ -118,10 +111,7 @@ fn open_session_invalid_session_type_byte() {
     ctx.expect_fw_reject(&req, TborStatus::InvalidSessionType);
 }
 
-// ---------------------------------------------------------------------------
-// Unsupported suite_id (negative test)
-// ---------------------------------------------------------------------------
-
+/// Rejects unsupported session-suite identifiers.
 #[test]
 fn open_session_unsupported_suite_id() {
     // Any byte other than 0x01 must be rejected by `SessionSuite::from_u8`
@@ -140,29 +130,33 @@ fn open_session_unsupported_suite_id() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Phase-2 MAC tampering
-// ---------------------------------------------------------------------------
-
+/// Rejects MAC tampering at multiple positions during Phase-2.
 #[test]
 fn session_open_finish_mac_tampered() {
-    let ctx = TestCtx::new();
-    let pending = ctx
-        .session_open_init(CU, SessionType::PlainText)
-        .expect("phase 1 must succeed");
-    let mut mac_fin = build_mac_fin(&pending).expect("build phase-2 mac");
-    mac_fin[0] ^= 0x01;
-    let err = ctx
-        .session_open_finish_with_mac(pending, mac_fin)
-        .expect_err("tampered mac_fin must be rejected by the FW");
-    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
-    // FW destroys the pending slot on MAC mismatch.
+    let base = TestCtx::new();
+    let path = base.path().to_owned();
+
+    for index in [0, MAC_FIN_LEN / 2, MAC_FIN_LEN - 1] {
+        let ctx = TestCtx::new_with_path(&path);
+
+        let pending = ctx
+            .session_open_init(CU, SessionType::PlainText)
+            .unwrap_or_else(|e| panic!("phase 1 must succeed for MAC tamper index {index}: {e:?}"));
+
+        let mut mac_fin = build_mac_fin(&pending)
+            .unwrap_or_else(|e| panic!("build MAC for index {index}: {e:?}"));
+
+        mac_fin[index] ^= 0x01;
+
+        let err = ctx
+            .session_open_finish_with_mac(pending, mac_fin)
+            .expect_err(&format!("tampered MAC at index {index} must be rejected"));
+
+        assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Finish-side error paths
-// ---------------------------------------------------------------------------
-
+/// Rejects a Phase-2 finish request for an unknown session.
 #[test]
 fn session_open_finish_unknown_session_id() {
     // Pick a session id that cannot possibly correspond to a live
@@ -170,7 +164,7 @@ fn session_open_finish_unknown_session_id() {
     let ctx = TestCtx::new();
     let req = TborSessionOpenFinishReq {
         session_id: 0xFFFF,
-        mac_fin: [0u8; 48],
+        mac_fin: [0u8; MAC_FIN_LEN],
         seed_envelope: [0u8; SEED_ENVELOPE_LEN],
     };
     let err = ctx
@@ -179,6 +173,7 @@ fn session_open_finish_unknown_session_id() {
     assert_fw_rejects(&err, TborStatus::SessionNotFound);
 }
 
+/// Rejects a second finish request for an already active session.
 #[test]
 fn open_session_double_finish() {
     let ctx = TestCtx::new();
@@ -188,7 +183,7 @@ fn open_session_double_finish() {
     // Replay the finish: pending slot is gone, FW must refuse.
     let req = TborSessionOpenFinishReq {
         session_id: session.session_id(),
-        mac_fin: [0u8; 48],
+        mac_fin: [0u8; MAC_FIN_LEN],
         seed_envelope: [0u8; SEED_ENVELOPE_LEN],
     };
     let err = ctx
@@ -197,10 +192,7 @@ fn open_session_double_finish() {
     assert_fw_rejects(&err, TborStatus::SessionNotPending);
 }
 
-// ---------------------------------------------------------------------------
-// Phase-2 seed_envelope tampering
-// ---------------------------------------------------------------------------
-
+/// Rejects a malformed authenticated seed envelope during Phase-2.
 #[test]
 fn session_open_finish_seed_envelope_tampered() {
     // Build a finish request by hand so we can corrupt the seed_envelope
@@ -227,10 +219,7 @@ fn session_open_finish_seed_envelope_tampered() {
     ctx.expect_fw_reject(&req, TborStatus::SessionAuthFailure);
 }
 
-// ---------------------------------------------------------------------------
-// Multiple concurrent sessions
-// ---------------------------------------------------------------------------
-
+/// Opens concurrent CU sessions with distinct session IDs on separate handles.
 #[test]
 fn open_session_multiple_concurrent() {
     let ctx_a = TestCtx::new();
@@ -256,23 +245,7 @@ fn open_session_multiple_concurrent() {
     // Both sessions close on drop via their SessionGuards.
 }
 
-// ---------------------------------------------------------------------------
-// Per-fd session limit (hw-only)
-// ---------------------------------------------------------------------------
-
-/// Guards against a regression to the old "two `open_session` on the
-/// same ctx succeed" behavior. On hw the kernel driver enforces
-/// `AZIHSM_MAX_SESSIONS_PER_FD = 1`, so a second open on the fd that
-/// already owns a live session must be rejected before FW is
-/// dispatched. `exec_op_tbor`'s `map_ioctl_status_tbor` remaps that
-/// driver-layer rejection to a `TborStatus`, so the caller sees a
-/// TBOR-typed error for a TBOR command.
-///
-/// Not applicable on emu: emu's `exec_op_tbor` does not run the
-/// per-fd `validate_session_request` shim, so overlapping opens on a
-/// single Dev succeed there — this is precisely the discrepancy that
-/// motivated the multi-fd rewrite of the other overlap tests.
-#[cfg(not(feature = "emu"))]
+/// Enforces the per-file-descriptor limit of one active session.
 #[test]
 fn open_session_second_on_same_fd_rejected() {
     let ctx = TestCtx::new();
@@ -285,9 +258,6 @@ fn open_session_second_on_same_fd_rejected() {
     assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
 }
 
-// ---------------------------------------------------------------------------
-// FW session-table capacity
-//
 // FW allocates a single 8-slot session table: slot 0 is reserved for
 // CryptoOfficer (only 1 concurrent CO session), slots 1..=7 for
 // CryptoUser (`CU_SESSION_LIMIT = 7` concurrent CU sessions). Limits
@@ -295,23 +265,10 @@ fn open_session_second_on_same_fd_rejected() {
 // `MAX_SESSIONS = 8` in
 // `fw/plat/uno/fw/drivers/session_store/src/session_store.rs` and
 // `fw/plat/std/pal/src/drivers/session.rs`.
-// ---------------------------------------------------------------------------
 
 const CU_SESSION_LIMIT: usize = 7;
 
-// ---------------------------------------------------------------------------
-// CU session-table exhaustion + recovery
-//
-// Opens exactly `CU_SESSION_LIMIT` CU sessions (all must succeed), then
-// probes one more (must be rejected with `TborStatus`), then drops every
-// extra fd and confirms one fresh open on the primary ctx succeeds —
-// the pending/active slot cleanup path must fully reclaim capacity.
-// Relying on fd-drop (rather than an explicit close loop) for the
-// recovery is deliberate: the invariant we care about is
-// `fd-drop == slot-reclaim`; if that isn't true, it's a product bug
-// worth surfacing here.
-// ---------------------------------------------------------------------------
-
+/// Verifies CU table exhaustion and slot recovery after a session closes.
 #[test]
 fn open_session_fills_cu_table_then_recovers() {
     let ctx = TestCtx::new();
@@ -356,14 +313,7 @@ fn open_session_fills_cu_table_then_recovers() {
     // `_recovered` closes on drop at end of scope.
 }
 
-// ---------------------------------------------------------------------------
-// CO session-slot exhaustion + recovery
-//
-// CO has a single slot. Opening the first CO session must succeed,
-// a second concurrent CO open must be rejected, and dropping the
-// first fd must restore capacity.
-// ---------------------------------------------------------------------------
-
+/// Verifies CO slot exhaustion and recovery after its session closes.
 #[test]
 fn open_session_fills_co_slot_then_recovers() {
     let ctx = TestCtx::new();
@@ -389,26 +339,7 @@ fn open_session_fills_co_slot_then_recovers() {
     // `_recovered` closes on drop at end of scope.
 }
 
-// ---------------------------------------------------------------------------
-// Full session-table exhaustion (CO + CU together) + recovery
-//
-// The FW session table is a single 8-slot table shared across roles
-// (1 CO slot + 7 CU slots). CO and CU exhaustion are exercised
-// separately above, but this test drives both roles together to
-// confirm the whole table can be filled in one go and that neither
-// role's rejection path interferes with the other's.
-//
-// Sequence:
-//  1. Open 1 CO + `CU_SESSION_LIMIT` CU sessions — every slot must
-//     succeed.
-//  2. One more CO open is rejected (CO slot occupied).
-//  3. One more CU open is rejected (all CU slots occupied).
-//  4. Drop a single CU guard; a fresh CU open must succeed while
-//     the CO slot stays full — proves per-role slot accounting.
-//  5. Drop the CO guard + fd; a fresh CO open must succeed —
-//     proves the CO slot reclaims independently.
-// ---------------------------------------------------------------------------
-
+/// Verifies independent CO and CU slot limits and recovery in a full table.
 #[test]
 fn open_session_fills_full_table_then_recovers() {
     let ctx = TestCtx::new();
@@ -472,13 +403,7 @@ fn open_session_fills_full_table_then_recovers() {
     // Remaining guards close on drop at end of scope.
 }
 
-// ---------------------------------------------------------------------------
-// Open, close, open new session
-// ---------------------------------------------------------------------------
-
-/// Open a session, close it, then open a new one. The second open
-/// must succeed — guards against a stale slot or leaked FSM state
-/// that would otherwise wedge the second attempt.
+/// Confirms a new session opens successfully after a prior session closes.
 #[test]
 fn open_close_then_open_new_session() {
     let ctx = TestCtx::new();
@@ -493,16 +418,7 @@ fn open_close_then_open_new_session() {
     second.close().expect("second SessionClose must succeed");
 }
 
-// ---------------------------------------------------------------------------
-// Per-session key uniqueness
-// ---------------------------------------------------------------------------
-
-/// Two independent CO+Authenticated handshakes must derive distinct
-/// exported material — which surfaces as distinct per-direction MAC
-/// keys. Runs sequentially (open, snapshot, close, open again)
-/// because hw silicon refuses to hold two Authenticated sessions
-/// concurrently (`VaultSessionLimitReached`); the ephemeral-per-
-/// handshake invariant this test guards is unchanged by that.
+/// Verifies independent CO handshakes derive distinct secret and MAC-key material.
 #[test]
 fn co_authenticated_derives_unique_keys_per_session() {
     let ctx = TestCtx::new();
@@ -524,26 +440,17 @@ fn co_authenticated_derives_unique_keys_per_session() {
     // Close before asserting so a failing assertion never leaks.
     b.close().expect("close second session must succeed");
 
-    assert_ne!(
-        a_exported, b_exported,
-        "two handshakes must derive distinct HPKE exported material",
+    assert!(
+        a_exported != b_exported,
+        "two handshakes must derive distinct HPKE exported material"
     );
-    assert_ne!(a_tx, b_tx, "per-session mac tx keys must differ");
-    assert_ne!(a_rx, b_rx, "per-session mac rx keys must differ");
-    // Sanity: within a single session, tx and rx are distinct.
-    assert_ne!(a_tx, a_rx);
-    assert_ne!(b_tx, b_rx);
+    assert!(a_tx != b_tx, "per-session mac tx keys must differ");
+    assert!(a_rx != b_rx, "per-session mac rx keys must differ");
+    assert!(a_tx != a_rx, "session A TX and RX keys must differ");
+    assert!(b_tx != b_rx, "session B TX and RX keys must differ");
 }
 
-// ---------------------------------------------------------------------------
-// Partition identity public key stability
-// ---------------------------------------------------------------------------
-
-/// `pk_hsm` (the partition identity pub key surfaced on Phase-1
-/// `PendingHandshake`) must be stable across handshakes — it identifies
-/// the partition, not the ephemeral session. Two sequential Phase-1s
-/// must observe byte-identical `pk_hsm`; a rotation between handshakes
-/// would break long-term binding assumed by higher-layer protocols.
+/// Verifies the partition identity public key is stable across handshakes.
 #[test]
 fn partition_pk_hsm_stable_across_handshakes() {
     let ctx = TestCtx::new();
@@ -576,19 +483,7 @@ fn partition_pk_hsm_stable_across_handshakes() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Point-validation negatives
-//
-// FW `EccPublicKeyValidation` checks that `pk_init` is a valid,
-// non-identity point on the P-384 curve.
-//
-// Assert a generic FW-side rejection rather than pinning
-// `EccPointValidationFailed` in case a future FW change collapses
-// validation errors into a broader category (e.g. `InvalidArg`).
-// ---------------------------------------------------------------------------
-
-/// `pk_init` all zeros is trivially off-curve (and encodes the point
-/// at infinity in some conventions) — FW must reject.
+/// Rejects an all-zero P-384 initialization public key.
 #[test]
 fn pk_init_all_zero_rejected() {
     let ctx = TestCtx::new();
@@ -604,9 +499,7 @@ fn pk_init_all_zero_rejected() {
     assert_fw_rejects(&err, TborStatus::InvalidArg);
 }
 
-/// `pk_init` with the SEC1 uncompressed prefix (`0x04`) but garbage
-/// coordinates that do not satisfy the P-384 curve equation. FW's
-/// on-curve validation must reject.
+/// Rejects an initialization public key whose coordinates are off-curve.
 #[test]
 fn pk_init_not_on_curve_rejected() {
     let ctx = TestCtx::new();
@@ -624,14 +517,10 @@ fn pk_init_not_on_curve_rejected() {
     assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
-// ---------------------------------------------------------------------------
-// P-384 point-validation vectors: coordinate == field prime `p`
-//
 // Verbatim from MBOR `TEST_ECC_384_PUBLIC_KEY_X_AS_PRIME` /
 // `TEST_ECC_384_PUBLIC_KEY_Y_AS_PRIME`. A coordinate equal to the
 // field prime is a valid field element but off-curve — targeted
 // regression for the on-curve validation stage.
-// ---------------------------------------------------------------------------
 
 /// P-384 field prime `p`, big-endian.
 const P384_PRIME_BE: [u8; 48] = [
@@ -655,7 +544,7 @@ const P384_INVALID_X_FOR_Y_AS_PRIME_BE: [u8; 48] = [
 ];
 
 /// Pack (X, Y) as SEC1 uncompressed: `0x04 || X_be || Y_be`.
-fn pack_sec1_uncompressed(x_be: &[u8; 48], y_be: &[u8; 48]) -> [u8; PK_INIT_LEN] {
+fn pack_sec1_uncompressed(x_be: &[u8; MAC_FIN_LEN], y_be: &[u8; MAC_FIN_LEN]) -> [u8; PK_INIT_LEN] {
     let mut out = [0u8; PK_INIT_LEN];
     out[0] = 0x04;
     out[1..49].copy_from_slice(x_be);
@@ -663,8 +552,7 @@ fn pack_sec1_uncompressed(x_be: &[u8; 48], y_be: &[u8; 48]) -> [u8; PK_INIT_LEN]
     out
 }
 
-/// `pk_init` with X = P-384 prime `p`: valid field element, off-curve;
-/// FW must reject.
+/// Rejects a P-384 initialization public key with X equal to the field prime.
 #[test]
 fn pk_init_x_as_prime_rejected() {
     let ctx = TestCtx::new();
@@ -681,8 +569,7 @@ fn pk_init_x_as_prime_rejected() {
     assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
-/// Symmetric to `pk_init_x_as_prime_rejected` — guards against
-/// X-only validation bugs.
+/// Rejects a P-384 initialization public key with Y equal to the field prime.
 #[test]
 fn pk_init_y_as_prime_rejected() {
     let ctx = TestCtx::new();
@@ -699,13 +586,7 @@ fn pk_init_y_as_prime_rejected() {
     assert_fw_rejects(&err, TborStatus::EccPublicKeyValidationFailed);
 }
 
-// ---------------------------------------------------------------------------
-// Single-byte bit-flip on a valid ephemeral pk_init
-//
-// Generate a legitimate P-384 ephemeral, flip one bit in X, ship it.
-// FW's on-curve validation must reject.
-// ---------------------------------------------------------------------------
-
+/// Rejects a bit-flipped P-384 ephemeral initialization public key.
 #[test]
 fn pk_init_single_byte_tampered_rejected() {
     let ctx = TestCtx::new();
@@ -726,22 +607,7 @@ fn pk_init_single_byte_tampered_rejected() {
     assert_fw_rejects(&err, TborStatus::EccPointValidationFailed);
 }
 
-// ---------------------------------------------------------------------------
-// Concurrency: multi-threaded races on the ctx (hw-only)
-//
-// Emu's `Arc<StdHsm>` is a process-global singleton and its TBOR
-// handler chain is not reentrant across the two-phase handshake:
-// concurrent inits clobber shared state mid-flight and surface as
-// `SessionAuthFailure` / `SessionNotFound` at finish instead of the
-// clean table-full / winner-takes-slot behaviour real FW produces.
-// The property under test only holds on the native OS backend.
-// ---------------------------------------------------------------------------
-
-/// Race exactly `CU_SESSION_LIMIT` concurrent CU opens; all must
-/// succeed with distinct session ids and no rejections. Each racing
-/// thread owns its own [`TestCtx`] fd — hw requires one fd per
-/// concurrent session (`AZIHSM_MAX_SESSIONS_PER_FD = 1`), so the
-/// primary `ctx` itself is not touched by the racers.
+/// Verifies concurrent native-backend CU opens all succeed with unique IDs.
 #[cfg(not(feature = "emu"))]
 #[test]
 fn open_session_multi_threaded_all_should_open() {
@@ -791,4 +657,303 @@ fn open_session_multi_threaded_all_should_open() {
         unique_wins, CU_SESSION_LIMIT,
         "concurrent winners must have distinct session ids: {winner_ids:?}",
     );
+}
+
+/// Verifies a rejected role/type pairing leaves the handle reusable.
+#[test]
+fn rejected_role_type_does_not_poison_fd() {
+    let ctx = TestCtx::new();
+
+    let err = ctx
+        .session_open_init(CU, SessionType::Authenticated)
+        .expect_err("CU + Authenticated must be rejected");
+    assert_fw_rejects(&err, TborStatus::InvalidSessionType);
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("valid session must succeed after rejected Phase-1");
+
+    session
+        .close()
+        .expect("session close after recovery must succeed");
+}
+
+/// Verifies an unsupported suite rejection does not consume CU capacity.
+#[test]
+fn rejected_suite_does_not_consume_session_slot() {
+    let ctx = TestCtx::new();
+
+    let req = TborSessionOpenInitReq {
+        psk_id: CU,
+        session_type: SessionType::PlainText.to_u8(),
+        suite_id: 0xff,
+        pk_init: [0x04u8; PK_INIT_LEN],
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::UnsupportedSessionSuite);
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("valid session must succeed after unsupported suite");
+
+    session
+        .close()
+        .expect("session close after recovery must succeed");
+    // Verify the rejected suite did not leak any CU session slots.
+    let other_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(ctx.path()))
+        .collect();
+
+    let _other_sessions: Vec<_> = other_ctxs
+        .iter()
+        .map(|other_ctx| {
+            other_ctx
+                .open_session(CU, SessionType::PlainText)
+                .expect("CU session must succeed after unsupported suite rejection")
+        })
+        .collect();
+    // All CU slots are occupied; one additional open must be rejected.
+    let overflow_ctx = TestCtx::new_with_path(ctx.path());
+    let err = overflow_ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect_err("eighth CU session must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::VaultSessionLimitReached);
+}
+
+/// Verifies an invalid public key rejection does not consume CU capacity.
+#[test]
+fn rejected_pk_init_does_not_consume_session_slot() {
+    let ctx = TestCtx::new();
+
+    let req = TborSessionOpenInitReq {
+        psk_id: CU,
+        session_type: SessionType::PlainText.to_u8(),
+        suite_id: SESSION_SUITE_P384_HKDF_SHA384_AES_GCM_256,
+        pk_init: [0u8; PK_INIT_LEN],
+    };
+
+    ctx.expect_fw_reject(&req, TborStatus::InvalidArg);
+
+    let session = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect("valid session must succeed after invalid pk_init");
+
+    session
+        .close()
+        .expect("session close after recovery must succeed");
+
+    // Verify the rejected public key did not leak any CU session slots.
+    let other_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(ctx.path()))
+        .collect();
+
+    let _other_sessions: Vec<_> = other_ctxs
+        .iter()
+        .map(|other_ctx| {
+            other_ctx
+                .open_session(CU, SessionType::PlainText)
+                .expect("CU session must succeed after invalid pk_init rejection")
+        })
+        .collect();
+    // All CU slots are occupied; one additional open must be rejected.
+    let overflow_ctx = TestCtx::new_with_path(ctx.path());
+    let err = overflow_ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect_err("eighth CU session must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::VaultSessionLimitReached);
+}
+
+/// Verifies a pending Phase-1 session blocks another open on the same handle.
+#[test]
+fn pending_session_blocks_second_open_on_same_fd() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("first Phase-1 must succeed");
+
+    let err = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect_err("second Phase-1 on the same fd must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
+
+    let handshake = ctx
+        .session_open_finish(pending)
+        .expect("original pending session must still finish successfully");
+
+    ctx.session_close(handshake.session_id)
+        .expect("finished session must close successfully");
+}
+
+/// Verifies failed Phase-2 MAC authentication reclaims its pending CU slot.
+#[test]
+fn failed_finish_mac_reclaims_session_state() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("Phase-1 must succeed");
+
+    let session_id = pending.session_id;
+
+    let mut mac_fin = build_mac_fin(&pending).expect("build Phase-2 mac");
+    mac_fin[0] ^= 0x01;
+
+    let err = ctx
+        .session_open_finish_with_mac(pending, mac_fin)
+        .expect_err("tampered mac_fin must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+
+    // Confirm the failed authentication destroyed the FW pending slot.
+    let replay = TborSessionOpenFinishReq {
+        session_id,
+        mac_fin: [0u8; MAC_FIN_LEN],
+        seed_envelope: [0u8; SEED_ENVELOPE_LEN],
+    };
+
+    let err = ctx
+        .tbor(&replay)
+        .expect_err("failed authentication must destroy the pending slot");
+
+    assert_fw_rejects(&err, TborStatus::SessionNotFound);
+
+    // The original fd may remain session-bound after failed Phase-2.
+    // Open the full CU capacity on fresh fds. If the failed pending slot
+    // leaked, only CU_SESSION_LIMIT - 1 of these opens would succeed.
+    let path = ctx.path().to_owned();
+
+    let recovery_ctxs: Vec<_> = (0..CU_SESSION_LIMIT)
+        .map(|_| TestCtx::new_with_path(&path))
+        .collect();
+
+    let _recovery_guards: Vec<_> = recovery_ctxs
+        .iter()
+        .map(|recovery_ctx| {
+            recovery_ctx
+                .open_session(CU, SessionType::PlainText)
+                .expect("CU recovery session must succeed after failed Phase-2")
+        })
+        .collect();
+}
+
+/// Rejects cross-session MAC substitution without damaging the source session.
+#[test]
+fn session_open_finish_rejects_mac_from_another_session() {
+    let ctx_a = TestCtx::new();
+
+    let pending_a = ctx_a
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 for session A must succeed");
+
+    let ctx_b = TestCtx::new_with_path(ctx_a.path());
+
+    let pending_b = ctx_b
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 for session B must succeed");
+
+    assert_ne!(
+        pending_a.session_id, pending_b.session_id,
+        "pending sessions must have distinct ids",
+    );
+
+    let mac_a = build_mac_fin(&pending_a).expect("build MAC for session A");
+
+    let err = ctx_b
+        .session_open_finish_with_mac(pending_b, mac_a)
+        .expect_err("session A's MAC must not authenticate session B");
+
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+
+    // Failure against B must not damage A.
+    let mac_a = build_mac_fin(&pending_a).expect("rebuild MAC for session A");
+
+    let handshake_a = ctx_a
+        .session_open_finish_with_mac(pending_a, mac_a)
+        .expect("session A must remain finishable");
+
+    ctx_a
+        .session_close(handshake_a.session_id)
+        .expect("session A must close successfully");
+}
+
+/// Verifies an unknown finish request preserves an unrelated pending session.
+#[test]
+fn unknown_finish_does_not_destroy_pending_session() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("phase 1 must succeed");
+
+    let mac_fin = build_mac_fin(&pending).expect("build valid phase-2 MAC");
+
+    let unknown = TborSessionOpenFinishReq {
+        session_id: 0xFFFF,
+        mac_fin: [0u8; MAC_FIN_LEN],
+        seed_envelope: [0u8; SEED_ENVELOPE_LEN],
+    };
+
+    let err = ctx
+        .tbor(&unknown)
+        .expect_err("unknown session id must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionIdDoesNotMatch);
+
+    let handshake = ctx
+        .session_open_finish_with_mac(pending, mac_fin)
+        .expect("valid pending session must remain finishable");
+
+    ctx.session_close(handshake.session_id)
+        .expect("session must close successfully");
+}
+
+/// Verifies repeated TX/RX MAC-key derivation is stable and direction-specific.
+#[test]
+fn authenticated_session_mac_key_derivation_is_stable() {
+    let ctx = TestCtx::new();
+
+    let session = ctx
+        .open_session(CO, SessionType::Authenticated)
+        .expect("CO authenticated session must succeed");
+
+    let h = session.handshake();
+
+    let tx_first = h.derive_mac_tx_key().expect("derive first TX key");
+    let tx_second = h.derive_mac_tx_key().expect("derive second TX key");
+
+    let rx_first = h.derive_mac_rx_key().expect("derive first RX key");
+    let rx_second = h.derive_mac_rx_key().expect("derive second RX key");
+
+    assert!(tx_first == tx_second, "TX derivation must be stable");
+    assert!(rx_first == rx_second, "RX derivation must be stable");
+    assert!(tx_first != rx_first, "TX and RX keys must remain distinct");
+}
+
+/// Verifies failed Phase-2 authentication leaves the original handle session-bound.
+#[test]
+fn failed_finish_mac_keeps_original_fd_session_bound() {
+    let ctx = TestCtx::new();
+
+    let pending = ctx
+        .session_open_init(CU, SessionType::PlainText)
+        .expect("Phase-1 must succeed");
+
+    let mut mac_fin = build_mac_fin(&pending).expect("build Phase-2 mac");
+    mac_fin[0] ^= 0x01;
+
+    let err = ctx
+        .session_open_finish_with_mac(pending, mac_fin)
+        .expect_err("tampered mac_fin must be rejected");
+
+    assert_fw_rejects(&err, TborStatus::SessionAuthFailure);
+
+    let err = ctx
+        .open_session(CU, SessionType::PlainText)
+        .expect_err("original fd must remain session-bound");
+
+    assert_fw_rejects(&err, TborStatus::FileHandleSessionLimitReached);
 }

@@ -23,7 +23,7 @@
 //!   format used for session BMK wrapping; carries vault primitives
 //!   ([`HsmVaultKeyKind`](azihsm_fw_hsm_pal_traits::HsmVaultKeyKind),
 //!   [`HsmVaultKeyAttrs`](azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs))
-//!   in a fixed 96 B AAD record.
+//!   in a fixed 192 B AAD record.
 //!
 //! The two formats are not byte-compatible and serve different
 //! audiences: v1 for cross-domain blobs that the host SDK must

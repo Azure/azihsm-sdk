@@ -183,6 +183,48 @@ impl Engine {
         }
         Ok(ec)
     }
+
+    /// Set the engine's `RSA_METHOD`, the RSA analogue of
+    /// [`set_ec_method`](Self::set_ec_method). Required before
+    /// [`new_rsa_key`](Self::new_rsa_key): `RSA_new_method` adopts the engine's
+    /// RSA method, and installing it engine-wide (not per key via
+    /// `RSA_set_method`, which drops the engine's functional reference) keeps
+    /// the engine alive while a bound key lives.
+    ///
+    /// # Safety
+    /// `method` must point to a valid `RSA_METHOD` that stays valid for the
+    /// engine's lifetime (in practice: the process lifetime).
+    #[allow(unsafe_code)]
+    pub unsafe fn set_rsa_method(&self, method: *const ffi::RSA_METHOD) -> EngineResult<()> {
+        if method.is_null() {
+            return Err(EngineError::NullParam("method"));
+        }
+        // SAFETY: self.ptr is valid (from NonNull); method is non-null (checked)
+        // and, per this fn's contract, outlives the engine. ENGINE_set_RSA
+        // records the pointer on the engine.
+        ossl_check(
+            unsafe { ffi::ENGINE_set_RSA(self.ptr, method) },
+            EngineError::Other("ENGINE_set_RSA failed".into()),
+        )
+    }
+
+    /// Create an `RSA` bound to this engine via `RSA_new_method`, the RSA
+    /// analogue of [`new_ec_key`](Self::new_ec_key): it up-refs the engine
+    /// (released on `RSA_free`), so OpenSSL keeps the engine and its destroy
+    /// state alive for as long as the returned key (and any `EVP_PKEY` built
+    /// from it) lives. Requires an RSA method on the engine (see
+    /// [`set_rsa_method`](Self::set_rsa_method)). The returned key has no
+    /// modulus or exponent set yet.
+    #[allow(unsafe_code)]
+    pub fn new_rsa_key(&self) -> EngineResult<*mut ffi::RSA> {
+        // SAFETY: self.ptr is a valid ENGINE; RSA_new_method up-refs it and
+        // returns a fresh owned RSA (NULL on allocation failure).
+        let rsa = unsafe { ffi::RSA_new_method(self.ptr) };
+        if rsa.is_null() {
+            return Err(EngineError::Other("RSA_new_method failed".into()));
+        }
+        Ok(rsa)
+    }
 }
 
 /// Caller-supplied destroy logic, invoked by OpenSSL when an `ENGINE` is

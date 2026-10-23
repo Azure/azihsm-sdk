@@ -30,15 +30,6 @@
 
 namespace
 {
-// Pinned wire lengths of the create-backup outputs. Mirror the
-// `azihsm_ddi_tbor_types` constants (`POK_REMOTE_BACKUP_LEN`,
-// `MASKED_SD_LEN`, `SD_MK_BACKUP_LEN`, `MASKED_SEALING_KEY_LEN`), which are
-// not exposed in the C header.
-constexpr uint32_t kPokRemoteBackupLen = 161;
-constexpr uint32_t kPokLocalBackupLen = 180;
-constexpr uint32_t kSdMkBackupLen = 164;
-constexpr uint32_t kMaskedSealingKeyLen = 180;
-
 // Run the create-backup call, sizing the three output buffers via the
 // probe/fill convention. The FFI validates each output buffer in sequence
 // and reports the first that is too small, so a single len=0 probe only
@@ -108,7 +99,7 @@ class azihsm_sd_create_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, session_ex_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
@@ -173,15 +164,16 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_roundtrip)
         ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(sealing.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
 
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
-            &masked_buf,
-            &evidence.get(),
             &policy_buf,
+            &masked_buf,
+            evidence.receiver_chain(),
+            &evidence.get(),
         };
 
         std::vector<uint8_t> pok_remote;
@@ -194,13 +186,80 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_roundtrip)
         ASSERT_EQ(pok_remote.size(), kPokRemoteBackupLen);
         ASSERT_TRUE(any_nonzero(pok_remote)) << "pok_remote_backup must not be all-zero";
 
-        // Local backup: BKS3 masked under the partition-local key, 180 B,
+        // Local backup: BKS3 masked under the partition-local key, 276 B,
         // non-zero.
         ASSERT_EQ(pok_local.size(), kPokLocalBackupLen);
         ASSERT_TRUE(any_nonzero(pok_local)) << "pok_local_backup must not be all-zero";
 
-        // Masking-key backup: SDMK masked under the derived SDBMK, 164 B,
+        // Masking-key backup: SDMK masked under the derived SDBMK, 260 B,
         // non-zero.
+        ASSERT_EQ(sd_mk.size(), kSdMkBackupLen);
+        ASSERT_TRUE(any_nonzero(sd_mk)) << "sd_mk_backup must not be all-zero";
+    });
+}
+
+// Flag-clear / FFI allow-empty path: when the policy does not set
+// `require_trusted_sa_key`, the receiver attestation evidence is optional.
+// Supplying only the mandatory receiver certificate chain together with a
+// fully-empty `azihsm_sd_evidence` (zero-length cert chains and a null
+// report) must still create the security domain. This drives the C decode
+// (`SdEvidence::try_from_optional` / `unpack_cert_chain_allow_empty`) that
+// the host-level Rust test `sd_create_remote_backup_roundtrip_empty_evidence`
+// cannot reach because it calls the session method directly.
+TEST_F(azihsm_sd_create_backup_test, create_backup_empty_evidence_ffi)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        // Default backing policy leaves `require_trusted_sa_key` clear, so
+        // the firmware ignores attestation evidence entirely.
+        SdBackingContext ctx = provision_sd_backing_co_session(part_handle);
+        if (ctx.session == 0)
+        {
+            return; // provisioning recorded its own failure
+        }
+        auto sess_guard = scope_guard::make_scope_exit([&ctx] { azihsm_sess_close(ctx.session); });
+
+        SealingKeyMaterial sealing = sealing_key_and_report(ctx.session);
+        ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
+        ASSERT_FALSE(sealing.report.empty());
+
+        // Build the holder only to mint the mandatory receiver certificate
+        // chain (SATA-anchored, leaf = `RcvrPub`); its three attestation
+        // chains and report are deliberately left unused.
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
+
+        // Fully-empty evidence: zero-initialization yields
+        // {certs=nullptr, len=0} for every chain and report=nullptr, which
+        // the FFI decodes through the allow-empty path.
+        azihsm_sd_evidence empty_evidence{};
+
+        azihsm_buffer masked_buf{ sealing.masked.data(),
+                                  static_cast<uint32_t>(sealing.masked.size()) };
+        azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
+        azihsm_sd_create_remote_backup_params params{
+            &policy_buf,
+            &masked_buf,
+            evidence.receiver_chain(),
+            &empty_evidence,
+        };
+
+        std::vector<uint8_t> pok_remote;
+        std::vector<uint8_t> pok_local;
+        std::vector<uint8_t> sd_mk;
+        auto err = create_backup_fill(ctx.session, &params, pok_remote, pok_local, sd_mk);
+        ASSERT_EQ(err, AZIHSM_STATUS_SUCCESS);
+
+        ASSERT_EQ(pok_remote.size(), kPokRemoteBackupLen);
+        ASSERT_TRUE(any_nonzero(pok_remote)) << "pok_remote_backup must not be all-zero";
+        ASSERT_EQ(pok_local.size(), kPokLocalBackupLen);
+        ASSERT_TRUE(any_nonzero(pok_local)) << "pok_local_backup must not be all-zero";
         ASSERT_EQ(sd_mk.size(), kSdMkBackupLen);
         ASSERT_TRUE(any_nonzero(sd_mk)) << "sd_mk_backup must not be all-zero";
     });
@@ -231,15 +290,16 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_is_one_shot)
         ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(sealing.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
 
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
-            &masked_buf,
-            &evidence.get(),
             &policy_buf,
+            &masked_buf,
+            evidence.receiver_chain(),
+            &evidence.get(),
         };
 
         // First create succeeds and sizes the output vectors.
@@ -316,15 +376,16 @@ TEST_F(azihsm_sd_create_backup_test, create_backup_rejects_aliased_output_buffer
         ASSERT_EQ(sealing.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(sealing.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, sealing.pub, sealing.report);
 
         azihsm_buffer masked_buf{ sealing.masked.data(),
                                   static_cast<uint32_t>(sealing.masked.size()) };
         azihsm_buffer policy_buf{ ctx.policy.data(), static_cast<uint32_t>(ctx.policy.size()) };
         azihsm_sd_create_remote_backup_params params{
-            &masked_buf,
-            &evidence.get(),
             &policy_buf,
+            &masked_buf,
+            evidence.receiver_chain(),
+            &evidence.get(),
         };
 
         // Pass the same output buffer for the remote and local backups.

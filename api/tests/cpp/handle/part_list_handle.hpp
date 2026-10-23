@@ -164,8 +164,11 @@ class PartitionListHandle
     /**
      * @brief Iterates over each partition and provides a session handle to the callback.
      *
-     * This method creates a partition handle and session for each partition,
-     * then invokes the provided function with the session handle.
+     * This method creates an `open_session` handle by default or an
+     * `open_session_ex` handle when `SESSION_EX_TESTS` is enabled, then invokes
+     * the provided function with the session handle.
+     * EX setup resets and finalizes each partition, including on hardware;
+     * use only dedicated test partitions.
      *
      * @param func The function to call for each session. It receives:
      *             - session: The session handle for the partition

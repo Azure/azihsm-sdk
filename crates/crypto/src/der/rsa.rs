@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![allow(
+    clippy::result_large_err,
+    reason = "Asn1Read generates parser closures that return asn1::ParseError"
+)]
+
 //! RSA DER encoding and decoding utilities.
 //!
 //! This module provides functionality for encoding and decoding RSA public and private
