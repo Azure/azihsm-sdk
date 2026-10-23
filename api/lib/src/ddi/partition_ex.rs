@@ -285,7 +285,7 @@ pub(crate) struct HsmPartInfo {
 impl From<TborPartInfoResp> for HsmPartInfo {
     fn from(resp: TborPartInfoResp) -> Self {
         Self {
-            state: HsmPartState(u32::from(u8::from(resp.part_state))),
+            state: HsmPartState(u32::from(resp.part_state)),
             pid: resp.pid.to_vec(),
             pid_pub_key: resp.pid_pub_key.to_vec(),
         }
