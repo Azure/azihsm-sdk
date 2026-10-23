@@ -6,6 +6,8 @@ use core::task::Poll;
 
 use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_ref::StaticRef;
+use azihsm_fw_uno_drivers_soc::reset_type;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_reg_soc::iic::regs::IicRegs;
 use azihsm_fw_uno_reg_soc::iic::IIC_BASE;
 use azihsm_fw_uno_reg_soc::iic::*;
@@ -145,13 +147,70 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         let regs = self.regs;
         let ch = config.channel as usize;
 
-        // Detect if channel was already programmed by another core
+        // An impactless (fw-update) warm reset resumes the queues the previous
+        // firmware left running; every other reset type fully programs them.
+        // The reset reason is read here rather than taken as a parameter, so
+        // the queue-init API stays unchanged for callers.
+        let fw_update = reset_type() == SocResetType::FwUpdateWarmReset;
+
+        // Read the current enable state of both queues once. It also drives
+        // the fw-update attach decision below.
         let icq_ctrl = regs.icq_ch[ch].ctrl.get();
         let isq_ctrl = regs.isq_ch[ch].ctrl.get();
+        let already_enabled = (icq_ctrl & 0x1 != 0) && (isq_ctrl & 0x1 != 0);
+        // The queue must also already be programmed exactly as this firmware
+        // would program it: same ring bases, depths, tail-shadow address/mode
+        // and buffer length. A fw-update from a different image (or firmware
+        // family) can leave the channel enabled with foreign or differently
+        // sized rings; attaching to that would read/write the wrong memory or
+        // wrap the indices at the wrong depth, so require a full match before
+        // adopting the hardware state.
+        let icq = &regs.icq_ch[ch];
+        let isq = &regs.isq_ch[ch];
+        let ours = icq.base_lo.get() == config.icq_base
+            && icq.base_hi.get() == 0
+            && icq.tail_shadow_lo.get() == config.icq_tail_shadow
+            && icq.tail_shadow_hi.get() == 0
+            && icq.ctrl.is_set(ICQ_CHANNEL_CTRL::SHADOW_EN)
+            && icq.ctrl.read(ICQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && isq.base_lo.get() == config.isq_base
+            && isq.base_hi.get() == 0
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::BUF_LEN) == config.io_size >> 4;
+
+        // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
+        // On a FwUpdateWarmReset the queues were programmed and enabled by the
+        // previous firmware and must survive the update, so the host's
+        // in-flight position is preserved. Resetting the ring indices,
+        // re-prefilling the ISQ, or re-enabling would desync the host and lose
+        // in-flight IO. Instead resume: adopt the hardware's current ICQ
+        // consumer index into the driver's software state so `recv` continues
+        // from the right completion slot. Mirrors the reference firmware's
+        // `open_channel` (attach) path on fw-update (`hsm/src/env.rs`).
+        //
+        // Attach only when the queue is genuinely running AND programmed by
+        // this firmware. Any other fw-update case (fresh flash, foreign image,
+        // partially-initialised queue) falls through to the full program, so
+        // attach can never adopt foreign or uninitialised hardware state.
+        if should_attach(fw_update, already_enabled, ours) {
+            let hw_head = regs.icq_ch[ch].head.read(ICQ_CHANNEL_HEAD::HEAD) as u16;
+            self.state.with(|s| s.icq_head = hw_head);
+            // The completion IRQ enable does not survive the core reset even
+            // though the queue programming does; re-arm it (idempotent).
+            if config.interrupt {
+                let val = regs.irq_enable.read(IRQ_ENABLE::IRQ_EN) | (1 << config.channel);
+                regs.irq_enable.write(IRQ_ENABLE::IRQ_EN.val(val));
+            }
+            return;
+        }
+
+        // Full program path (POR / plain warm reset / fw-update with queues not
+        // enabled). Warn if a queue is unexpectedly already enabled, since the
+        // full reprogram below will reset a running queue.
         if icq_ctrl & 0x1 != 0 || isq_ctrl & 0x1 != 0 {
             warn!(
                 "iic",
-                "ch={} ALREADY ENABLED before init! icq_ctrl={:#x} isq_ctrl={:#x}",
+                "ch={} ALREADY ENABLED before full init! icq_ctrl={:#x} isq_ctrl={:#x}",
                 config.channel,
                 icq_ctrl,
                 isq_ctrl
@@ -159,8 +218,9 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
 
         // ── Step 1: Pre-fill ISQ with buffer addresses ──────────────
-        // IDFU resume is not implemented; initialize the free list together
-        // with the queue pointers below rather than partially retaining it.
+        // The free list is initialized together with the queue pointers
+        // below; it is never partially retained. A fw-update attach returns
+        // before this point and leaves the free list and its indices intact.
         for i in 0..DEPTH {
             let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
             let entry = unsafe { &mut *self.isq_ring.add(i) };
@@ -348,5 +408,32 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     #[inline]
     fn buf_index(&self, addr: u32) -> u16 {
         ((addr - self.buf_pool_base) / self.buf_size) as u16
+    }
+}
+
+/// Whether queue init should ATTACH to the running hardware instead of
+/// reprogramming it: only on a fw-update warm reset, and only when the queues
+/// are already enabled AND still programmed with this firmware's ring bases.
+/// Any other combination reprograms, so attach can never adopt foreign or
+/// uninitialised hardware state.
+#[inline]
+fn should_attach(fw_update: bool, already_enabled: bool, ours: bool) -> bool {
+    fw_update && already_enabled && ours
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_attach;
+
+    /// Attach is permitted only when all three preconditions hold; any missing
+    /// one must fall through to a full reprogram so foreign or uninitialised
+    /// queue state is never adopted across a fw-update warm reset.
+    #[test]
+    fn attach_only_on_fw_update_enabled_and_ours() {
+        assert!(should_attach(true, true, true));
+        assert!(!should_attach(false, true, true)); // not a fw-update reset
+        assert!(!should_attach(true, false, true)); // queues not running
+        assert!(!should_attach(true, true, false)); // foreign ring base
+        assert!(!should_attach(false, false, false));
     }
 }

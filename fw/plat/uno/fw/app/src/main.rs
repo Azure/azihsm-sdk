@@ -90,8 +90,9 @@ static HSM: OnceLock<Hsm<UnoHsmPal>> = OnceLock::new();
 /// - Schedules per-IO tasks onto the executor when task slots are available.
 #[embassy_executor::task]
 async fn poll_io(spawner: Spawner) -> ! {
+    let hsm = HSM.get().await;
     loop {
-        let Ok(io) = HSM.get().await.pal().poll_io().await else {
+        let Ok(io) = hsm.pal().poll_io().await else {
             continue;
         };
 
@@ -99,6 +100,12 @@ async fn poll_io(spawner: Spawner) -> ! {
             continue;
         };
 
+        // Count the accepted IO before it can run; `io_in_flight_dec` in
+        // `handle_io` balances this. The increment is synchronous (no await
+        // between here and `spawn`), so the spawned task cannot decrement
+        // before this executes. The IDFU shutdown handler reads this count to
+        // fail closed while any IO is still in flight.
+        hsm.pal().io_in_flight_inc();
         spawner.spawn(token);
     }
 }
@@ -121,7 +128,11 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// - Triggers DMA activity and CQE completion for that IO.
 #[embassy_executor::task(pool_size = 32)]
 async fn handle_io(io: UnoHsmIo) {
-    HSM.get().await.handle_io(io).await;
+    let hsm = HSM.get().await;
+    hsm.handle_io(io).await;
+    // Balance the `io_in_flight_inc` performed in `poll_io` once this IO has
+    // been fully processed and its slot returned to the ISQ.
+    hsm.pal().io_in_flight_dec();
 }
 
 /// Dedicated core-liveliness heartbeat task.
