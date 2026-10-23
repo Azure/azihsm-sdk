@@ -9,6 +9,9 @@ target = "thumbv7em-none-eabi"
 
 [target.thumbv7em-none-eabi]
 rustflags = [
+  # Select GSRAM inputs before link.x consumes the remaining .text/.rodata.
+  "-C",
+  "link-arg=-Tgsram.x",
   "-C",
   "link-arg=-Tlink.x",
   "-C",

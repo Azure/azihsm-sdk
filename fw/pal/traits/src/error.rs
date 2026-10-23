@@ -345,6 +345,7 @@ pub enum HsmError {
     /// Distinct from [`HsmError::InvalidArg`], which signals a
     /// caller bug (unknown id, kind mismatch, etc.).
     PartPropNotFound = 0x087000FF,
+
     /// Returned by [`HsmSeedStore`](crate::HsmSeedStore)
     /// (`mfgr_seed` / `owner_seed`) when no provisioned BKS seed row
     /// carries the requested selector (SVN / owner id).
@@ -436,8 +437,6 @@ pub enum HsmError {
     /// `x963_kdf` / `sp800_56a_kdf`.
     ConcatKdfError = 0x0870010B,
 
-    /// A variable-length DMA allocation callback
-    /// ([`HsmAlloc::dma_alloc_var`](crate::HsmAlloc::dma_alloc_var) /
     /// [`dma_alloc_var_with`](crate::HsmAlloc::dma_alloc_var_with)) reported
     /// having written more bytes than the buffer it was handed.  The
     /// allocator refuses to expose a slice longer than it owns, so the
@@ -450,7 +449,10 @@ pub enum HsmError {
     /// exhaustion.
     DmaAllocLenOverrun = 0x0870010C,
 
-    // Firmware-internal diagnostic codes logged by the CPU fault and panic
+    /// A cryptographic algorithm self-test (CAST) produced output that
+    /// did not match its known-answer vector.
+    SelfTestKatMismatch = 0x0870010D,
+
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
     // the DDI status range, and are emitted to the trace log only (never

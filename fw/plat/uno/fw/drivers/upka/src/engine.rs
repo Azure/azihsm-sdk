@@ -388,7 +388,10 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// # Parameters
     ///
     /// - `key_type`: RSA key type (size + format selector).
-    /// - `key`: DMA-capable private key buffer.
+    /// - `key`: DMA-capable private key buffer. For standard keys this is a
+    ///   `d ‖ n` blob at least `2 * mod_size` bytes long; for CRT keys it is a
+    ///   contiguous `param1 ‖ param2` blob (`param1` = `p ‖ q ‖ dp ‖ dq`,
+    ///   `param2` = `n ‖ n1q ‖ n2p`) at least `5 * mod_size` bytes long.
     /// - `input`: DMA-capable input block buffer.
     /// - `output`: DMA-capable output block buffer.
     ///

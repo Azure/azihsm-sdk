@@ -37,6 +37,10 @@
 
 #![no_std]
 #![no_main]
+// The `handle_io` Embassy task future is a deeply nested async state machine;
+// with `trace-uart` enabled its layout computation exceeds rustc's default
+// recursion limit of 128. Raise it to give headroom.
+#![recursion_limit = "256"]
 
 mod trampoline;
 

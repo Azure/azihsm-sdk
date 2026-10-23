@@ -35,6 +35,7 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmSqe;
 use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_GSRAM_BASE;
+use azihsm_fw_uno_reg_soc::io_gsram::IO_META_COUNT;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_META_CTLR;
 use azihsm_fw_uno_reg_soc::io_gsram::IO_META_QUEUE;
 use azihsm_fw_uno_reg_soc::io_gsram::IoCqEntry;
@@ -46,6 +47,7 @@ use tock_registers::interfaces::Writeable;
 
 use crate::UnoHsmPal;
 use crate::alloc::ADMIN_IO_INDEX;
+use crate::alloc::SELF_TEST_IO_INDEX;
 use crate::alloc::UnoScopedAlloc;
 use crate::alloc::reset_io_alloc;
 
@@ -104,7 +106,35 @@ impl UnoHsmIo {
         io
     }
 
+    /// Constructs an IO handle over the dedicated self-test slot
+    /// ([`SELF_TEST_IO_INDEX`]).
+    ///
+    /// Used by the cryptographic algorithm self-tests (CAST), which run
+    /// without a host IO. KAT operands are allocated from this slot's
+    /// `SRAM_IO_BUF` via the bump allocator. No partition context applies,
+    /// so `IO_META` is left untouched ([`pid`](HsmIo::pid) is unused by the
+    /// self-test path).
+    ///
+    /// # Restrictions
+    ///
+    /// This handle is for DMA allocation only. Its index ([`SELF_TEST_IO_INDEX`]) is outside the
+    /// host queue ranges (`IO_SQ_COUNT`/`IO_CQ_COUNT`/`IO_META_COUNT`), so
+    /// [`sqe`](HsmIo::sqe) and [`cqe`](HsmIo::cqe) have no backing entry and must not be
+    /// called on it; the host-IO dispatch that reads them never runs for the self-test.
+    ///
+    /// [`SELF_TEST_IO_INDEX`]: crate::alloc::SELF_TEST_IO_INDEX
+    pub(crate) fn self_test() -> Self {
+        Self {
+            index: SELF_TEST_IO_INDEX,
+        }
+    }
+
     /// Returns a reference to the IO_META entry for this slot.
+    ///
+    /// Only valid for host and admin slots — `IO_META` has
+    /// [`IO_META_COUNT`] entries (host `0..32` plus [`ADMIN_IO_INDEX`]).
+    /// The self-test slot ([`SELF_TEST_IO_INDEX`]) has no `IO_META` entry;
+    /// callers must guard against it (see [`pid`](HsmIo::pid)).
     #[inline]
     fn io_meta(&self) -> &IoMetaEntry {
         &IO_Q.io_meta[self.index as usize]
@@ -129,12 +159,24 @@ impl HsmIo for UnoHsmIo {
     }
 
     /// Returns the queue ID from IO_META.
+    ///
+    /// Returns `0` for the self-test slot ([`SELF_TEST_IO_INDEX`]), which has
+    /// no `IO_META` entry.
     fn queue_id(&self) -> u16 {
+        if self.index as u32 >= IO_META_COUNT {
+            return 0;
+        }
         self.io_meta().queue.read(IO_META_QUEUE::QUEUE_ID) as u16
     }
 
     /// Returns the queue index from IO_META.
+    ///
+    /// Returns `0` for the self-test slot ([`SELF_TEST_IO_INDEX`]), which has
+    /// no `IO_META` entry.
     fn queue_idx(&self) -> u16 {
+        if self.index as u32 >= IO_META_COUNT {
+            return 0;
+        }
         self.io_meta().queue.read(IO_META_QUEUE::QUEUE_INDEX) as u16
     }
 
