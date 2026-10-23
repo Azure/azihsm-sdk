@@ -144,17 +144,17 @@ fn rsa_4k_unwrap_roundtrip(crt: bool) {
 }
 
 #[test]
-fn unwrap_key_rsa_4k_emu() {
+fn unwrap_key_rsa_4k() {
     rsa_4k_unwrap_roundtrip(false);
 }
 
 #[test]
-fn unwrap_key_rsa_4k_crt_emu() {
+fn unwrap_key_rsa_4k_crt() {
     rsa_4k_unwrap_roundtrip(true);
 }
 
 #[test]
-fn unwrap_key_aes_emu() {
+fn unwrap_key_aes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -170,7 +170,7 @@ fn unwrap_key_aes_emu() {
 
 /// Verifies all OAEP hashes unwrap symmetric keys and preserve an ECC public key.
 #[test]
-fn unwrap_key_all_oaep_hashes_emu() {
+fn unwrap_key_all_oaep_hashes() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let hsm_pub = ctx
@@ -230,7 +230,7 @@ fn unwrap_key_all_oaep_hashes_emu() {
 
 /// Verifies an unknown OAEP selector is rejected even for a valid wrapped key.
 #[test]
-fn unwrap_key_unknown_oaep_hash_rejected_emu() {
+fn unwrap_key_unknown_oaep_hash_rejected() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
     let hsm_pub = ctx
@@ -255,13 +255,13 @@ fn unwrap_key_unknown_oaep_hash_rejected_emu() {
 }
 
 #[test]
-fn unwrap_key_ecc_p256_emu() {
+fn unwrap_key_ecc_p256() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
     // Import a host-generated P-256 key (PKCS#8 DER) and check the decode +
     // public-key re-derivation path.
-    let key = EccPrivateKey::generate(32).expect("generate P-256 key");
+    let key = EccPrivateKey::from_curve(EccCurve::P256).expect("generate P-256 key");
     let der = key.to_vec().expect("ECC PKCS#8 DER export");
     let resp = unwrap(&ctx, session.session_id, KEY_CLASS_ECC, &der);
 
@@ -278,7 +278,7 @@ fn unwrap_key_ecc_p256_emu() {
 }
 
 #[test]
-fn unwrap_key_hmac_emu() {
+fn unwrap_key_hmac() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
@@ -301,7 +301,7 @@ fn unwrap_key_hmac_emu() {
 }
 
 #[test]
-fn unwrap_key_rejects_invalid_usage_for_class_emu() {
+fn unwrap_key_rejects_invalid_usage_for_class() {
     let ctx = TestCtx::new();
     let session = finalized_co_session(&ctx);
 
