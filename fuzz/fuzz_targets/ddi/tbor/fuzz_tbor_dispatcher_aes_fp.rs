@@ -61,6 +61,8 @@ struct FuzzInput {
     gcm_request: FuzzAesGcmRequest,
     xts_request: FuzzAesXtsRequest,
     source_buffers: Vec<Vec<u8>>,
+    /// Retained only to preserve the legacy fuzz-input layout.
+    #[allow(dead_code)]
     destination_buffers: Vec<Vec<u8>>,
     masked_key: Vec<u8>,
 }
@@ -145,39 +147,9 @@ fn legacy_masked_key(input: &FuzzInput) -> Vec<u8> {
     key
 }
 
-/// Scatter the response across destination buffers, extending the last buffer
-/// if needed, and assert that concatenating them preserves every response byte.
-fn verify_response_buffers(response: &[u8], destination_buffers: &mut Vec<Vec<u8>>) {
-    if destination_buffers.is_empty() {
-        destination_buffers.push(Vec::new());
-    }
-
-    let mut offset = 0;
-    for buffer in destination_buffers.iter_mut() {
-        let count = buffer.len().min(response.len() - offset);
-        buffer.clear();
-        buffer.extend_from_slice(&response[offset..offset + count]);
-        offset += count;
-    }
-
-    if offset < response.len() {
-        destination_buffers
-            .last_mut()
-            .expect("a destination buffer was inserted above")
-            .extend_from_slice(&response[offset..]);
-    }
-
-    let scattered: Vec<u8> = destination_buffers
-        .iter()
-        .flat_map(|buffer| buffer.iter().copied())
-        .collect();
-    assert_eq!(scattered, response, "scattered response must be preserved");
-}
-
 fuzz_target!(|input: FuzzInput| {
     common::common_fuzz_test(&|ctx: &TestCtx, _path: &str| {
         let session = bootstrap_rotated_co(ctx, &ROTATED_CO_PSK);
-        let mut destination_buffers = input.destination_buffers.clone();
         let key_scope_is_supported = matches!(
             input.key_scope,
             common::KeyScope::Session
@@ -223,7 +195,7 @@ fuzz_target!(|input: FuzzInput| {
         };
 
         let msg = message_from_sources(&input.source_buffers);
-        let msg_len = msg.len();
+        let iv = iv_from_input(&input);
         let op = match input.aes_mode {
             FuzzAesMode::Encrypt => AES_OP_ENCRYPT,
             FuzzAesMode::Decrypt => AES_OP_DECRYPT,
@@ -235,10 +207,10 @@ fuzz_target!(|input: FuzzInput| {
 
         let result = ctx.tbor(&TborAesEncryptDecryptReq {
             session_id: session.session_id,
-            masked_key,
+            masked_key: masked_key.clone(),
             op,
-            msg,
-            iv: iv_from_input(&input),
+            msg: msg.clone(),
+            iv,
         });
 
         match (&result, expect_success) {
@@ -246,10 +218,29 @@ fuzz_target!(|input: FuzzInput| {
             (Ok(response), true) => {
                 assert_eq!(
                     response.msg.len(),
-                    msg_len,
+                    msg.len(),
                     "output length must match input"
                 );
-                verify_response_buffers(&response.msg, &mut destination_buffers);
+                let round_trip = ctx
+                    .tbor(&TborAesEncryptDecryptReq {
+                        session_id: session.session_id,
+                        masked_key,
+                        op: match input.aes_mode {
+                            FuzzAesMode::Encrypt => AES_OP_DECRYPT,
+                            FuzzAesMode::Decrypt => AES_OP_ENCRYPT,
+                        },
+                        msg: response.msg.clone(),
+                        iv,
+                    })
+                    .expect("inverse AES operation should succeed");
+                assert_eq!(
+                    round_trip.msg, msg,
+                    "AES round trip must recover the original input"
+                );
+                assert_eq!(
+                    round_trip.iv, response.iv,
+                    "AES round-trip chaining IV must match"
+                );
             }
             (Ok(_), false) => panic!("invalid AES request unexpectedly succeeded"),
             (Err(err), true) => panic!("valid AES request failed: {err}"),
