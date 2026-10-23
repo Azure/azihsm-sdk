@@ -19,7 +19,8 @@
 //   0x11840 - 0x11E44  OIC queues (OSQ, OCQ, IO_CQ, OCQ tail shadow)
 //   0x12840 - 0x15064  GDMA queues
 //   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
-//   0x20C58 - 0xA4D60  Heap (IO_META + SRAM_IO_BUF)
+//   0x20C58 - 0xA8D60  Heap (IO_META + SRAM_IO_BUF)
+//   0xA9000 - 0xB7C58  HSM code and read-only self-test vectors
 //   0xBB000 - 0xEBC00  Partition store
 //   0xEBC00 - 0x200000 Key vault
 //
@@ -444,6 +445,12 @@ mem sram_io_buf_t {
     memwidth = 32;
 };
 
+mem hsm_code_t {
+    desc = "Executable HSM code and read-only constants, loaded directly by 1SP.";
+    mementries = 60504;
+    memwidth = 8;
+};
+
 
 // ══════════════════════════════════════════════════════════════
 // Partition Store + Key Vault
@@ -640,6 +647,8 @@ addrmap io_gsram {
     //     at 0x20D60 (growing IO_META would shift SRAM_IO_BUF off alignment). ──
     io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
     sram_io_buf_t    SRAM_IO_BUF[34]     @ 0x20D60 += 0x4000;
+
+    hsm_code_t      HSM_CODE            @ 0xA9000;
 
     // ─── Partition persistent store (65 entries, 3072 B each) ───
     part_store_t     PART_STORE[65]      @ 0xBB000 += 0xC00;

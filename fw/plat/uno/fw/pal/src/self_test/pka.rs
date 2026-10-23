@@ -42,6 +42,12 @@ pub(super) const PKA_ENGINES: u8 = UPKA_ENGINE_CMD_COUNT as u8;
 /// RSA-2048 modulus size in bytes.
 const RSA_2K_LEN: usize = 256;
 
+// rsa_mod_exp_priv requires the trailing RsaPrivateKeyExt even for a CRT KAT.
+const _: () = {
+    assert!(RSA_2K_CRT_KAT.param1.len() == 2 * RSA_2K_LEN);
+    assert!(RSA_2K_CRT_KAT.param2.len() == 3 * RSA_2K_LEN + size_of::<u32>());
+};
+
 /// NIST P-384 field element / shared-secret size in bytes.
 const ECDH_384_LEN: usize = 48;
 
@@ -178,8 +184,9 @@ pub(super) async fn run_rsa_mod_exp_on_engine(
 /// Ported from the reference firmware's `rsa_mod_exp_crt_self_test`. The CRT
 /// private key is staged as a contiguous `param1 ‖ param2` blob: `param1`
 /// (`p ‖ q ‖ dp ‖ dq`, `2 * RSA_2K_LEN`) is read from the key pointer and
-/// `param2` (`n ‖ n1q ‖ n2p`, `3 * RSA_2K_LEN`) is read by the hardware from the
-/// arg3 pointer that [`rsa_mod_exp_priv`](azihsm_fw_uno_drivers_upka::UpkaEngine::rsa_mod_exp_priv)
+/// `param2` (`n ‖ n1q ‖ n2p`, `3 * RSA_2K_LEN`, plus the required four-byte
+/// extension) is read from the arg3 pointer that
+/// [`rsa_mod_exp_priv`](azihsm_fw_uno_drivers_upka::UpkaEngine::rsa_mod_exp_priv)
 /// derives for CRT key types. Computes `c^d mod n` on the pinned engine and
 /// compares against the expected plaintext. Returns
 /// [`HsmError::SelfTestKatMismatch`] on a mismatch, or any error surfaced by the
