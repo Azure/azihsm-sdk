@@ -152,6 +152,13 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_ecc_generate_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_generate_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_ecc_sign"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_ecc_sign.rs"
 test = false
@@ -194,6 +201,34 @@ test = false
 [[bin]]
 bench = false
 doc = false
+name = "fuzz_tbor_concat_kdf_derive"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_concat_kdf_derive.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
 name = "fuzz_tbor_rsa_mod_exp"
 path = "fuzz_targets/ddi/tbor/fuzz_tbor_rsa_mod_exp.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_get_unwrapping_key"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_unwrapping_key.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_get_cert"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_cert.rs"
+test = false
+
+[[bin]]
+bench = false
+doc = false
+name = "fuzz_tbor_get_cert_chain_info"
+path = "fuzz_targets/ddi/tbor/fuzz_tbor_get_cert_chain_info.rs"
 test = false
