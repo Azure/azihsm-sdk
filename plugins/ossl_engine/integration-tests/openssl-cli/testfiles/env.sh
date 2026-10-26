@@ -58,3 +58,7 @@ dynamic_path = $ENGINE_SO
 init = 1
 EOF
 export OPENSSL_CONF="$KEYDIR/openssl.cnf"
+
+# The engine's armed derive size-query answer in buffer mode (core
+# method_table.rs MASKED_KEY_MAX_BUFFER).
+MASKED_KEY_MAX_BUFFER=8192

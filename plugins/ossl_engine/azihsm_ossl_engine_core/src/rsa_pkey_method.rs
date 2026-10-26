@@ -46,9 +46,14 @@ use parking_lot::Mutex;
 use zeroize::Zeroizing;
 
 use crate::engine::Engine;
+use crate::error::CTRL_UNSUPPORTED;
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::RetCode;
 use crate::error::catch_panic;
+use crate::error::ctrl_ok;
+use crate::error::ossl_check;
+use crate::error::ossl_ok;
 use crate::error::result_to_int;
 use crate::pkey_method::ENGINE_METHODS;
 
@@ -155,22 +160,24 @@ pub trait RsaDecryptHandler {
     ) -> EngineResult<Vec<u8>>;
 }
 
-/// OpenSSL PSS salt-length sentinels (negative `rsa_pss_saltlen` values).
-const RSA_PSS_SALTLEN_DIGEST: c_int = -1;
-const RSA_PSS_SALTLEN_AUTO: c_int = -2;
-const RSA_PSS_SALTLEN_MAX: c_int = -3;
+/// PSS encoding bytes besides digest and salt: the 0x01 separator and the 0xbc
+/// trailer (RFC 8017 §9.1.1).
+const PSS_ENCODING_OVERHEAD: usize = 2;
+
+/// `rsa_keygen_bits` when unset: OpenSSL's built-in default.
+const DEFAULT_RSA_KEYGEN_BITS: u32 = 2048;
 
 /// Resolve an explicitly-set `rsa_pss_saltlen` value to a concrete byte length,
 /// matching the 3.x provider: `DIGEST` → the digest length, `MAX` → `max_salt`
-/// (modulus − digest − 2), a non-negative value as-is. An explicit `AUTO` is
-/// rejected (the provider refuses it), as is any other sentinel. An *unset* salt
-/// length is handled by the caller (it defaults to the digest length), so `AUTO`
-/// here only ever means the caller set it explicitly.
+/// (modulus − digest − `PSS_ENCODING_OVERHEAD`), a non-negative value as-is. An
+/// explicit `AUTO` is rejected (the provider refuses it), as is any other
+/// sentinel. An *unset* salt length is handled by the caller (it defaults to the
+/// digest length), so `AUTO` here only ever means the caller set it explicitly.
 fn resolve_salt_len(raw: c_int, md_size: usize, max_salt: usize) -> EngineResult<usize> {
     match raw {
-        RSA_PSS_SALTLEN_DIGEST => Ok(md_size),
-        RSA_PSS_SALTLEN_MAX => Ok(max_salt),
-        RSA_PSS_SALTLEN_AUTO => Err(EngineError::Other(
+        ffi::RSA_PSS_SALTLEN_DIGEST => Ok(md_size),
+        ffi::RSA_PSS_SALTLEN_MAX => Ok(max_salt),
+        ffi::RSA_PSS_SALTLEN_AUTO => Err(EngineError::Other(
             "rsa_pss_saltlen:auto is not supported; use digest, max, or an explicit length".into(),
         )),
         n if n >= 0 => Ok(n as usize),
@@ -259,11 +266,13 @@ fn defaults() -> EngineResult<Defaults> {
 unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
+            let Ok(d) = defaults() else {
+                return RetCode::Fail.into();
+            };
             if let Some(init) = d.init {
                 // SAFETY: delegating the ctx OpenSSL passed us.
-                if unsafe { init(ctx) } != 1 {
-                    return 0;
+                if !ossl_ok(unsafe { init(ctx) }) {
+                    return RetCode::Fail.into();
                 }
             }
             let engine = crate::method_table::take_pending_engine();
@@ -274,9 +283,9 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
                     ..CtxState::default()
                 },
             );
-            1
+            RetCode::Success.into()
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -286,20 +295,22 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
 unsafe extern "C" fn c_copy(dst: *mut ffi::EVP_PKEY_CTX, src: *mut ffi::EVP_PKEY_CTX) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
+            let Ok(d) = defaults() else {
+                return RetCode::Fail.into();
+            };
             if let Some(copy) = d.copy {
                 // SAFETY: delegating the ctx pair OpenSSL passed us.
-                if unsafe { copy(dst, src) } != 1 {
-                    return 0;
+                if !ossl_ok(unsafe { copy(dst, src) }) {
+                    return RetCode::Fail.into();
                 }
             }
             let mut table = ctx_state().lock();
             if let Some(dup) = table.get(&(src as usize)).cloned() {
                 table.insert(dst as usize, dup);
             }
-            1
+            RetCode::Success.into()
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -316,9 +327,8 @@ unsafe extern "C" fn c_cleanup(ctx: *mut ffi::EVP_PKEY_CTX) {
                 // SAFETY: delegating the ctx OpenSSL passed us, exactly once.
                 unsafe { cleanup(ctx) };
             }
-            0
         },
-        0,
+        (),
     );
 }
 
@@ -339,11 +349,15 @@ unsafe extern "C" fn c_ctrl(
 ) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
-            let Some(ctrl) = d.ctrl else { return 0 };
+            let Ok(d) = defaults() else {
+                return CTRL_UNSUPPORTED;
+            };
+            let Some(ctrl) = d.ctrl else {
+                return CTRL_UNSUPPORTED;
+            };
             // SAFETY: delegating the arguments OpenSSL passed us to the built-in.
             let rc = unsafe { ctrl(ctx, ctrl_type, p1, p2) };
-            if rc > 0
+            if ctrl_ok(rc)
                 && ctrl_type == ffi::EVP_PKEY_CTRL_RSA_KEYGEN_BITS_CONST
                 && let Ok(bits) = u32::try_from(p1)
                 && let Some(state) = ctx_state().lock().get_mut(&(ctx as usize))
@@ -352,7 +366,7 @@ unsafe extern "C" fn c_ctrl(
             }
             // Record an explicitly-set PSS salt length so the sign path can tell
             // it apart from the unset default (and reject an explicit `auto`).
-            if rc > 0
+            if ctrl_ok(rc)
                 && ctrl_type == ffi::EVP_PKEY_CTRL_RSA_PSS_SALTLEN_CONST
                 && let Some(state) = ctx_state().lock().get_mut(&(ctx as usize))
             {
@@ -360,7 +374,7 @@ unsafe extern "C" fn c_ctrl(
             }
             rc
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -376,7 +390,10 @@ unsafe extern "C" fn c_ctrl_str(
     key: *const c_char,
     value: *const c_char,
 ) -> c_int {
-    catch_panic(|| result_to_int(ctrl_str_inner(ctx, key, value)), 0)
+    catch_panic(
+        || result_to_int(ctrl_str_inner(ctx, key, value)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -488,7 +505,7 @@ fn ctrl_str_inner(
         .ctrl_str
         .ok_or(EngineError::Other("built-in ctrl_str missing".into()))?;
     // SAFETY: delegating the arguments OpenSSL passed us.
-    if unsafe { ctrl_str(ctx, key, value) } <= 0 {
+    if !ctrl_ok(unsafe { ctrl_str(ctx, key, value) }) {
         return Err(EngineError::Other(format!(
             "RSA option rejected: {key_str}"
         )));
@@ -506,7 +523,10 @@ unsafe extern "C" fn c_keygen<H: RsaImportHandler, const PSS: bool>(
     ctx: *mut ffi::EVP_PKEY_CTX,
     pkey: *mut ffi::EVP_PKEY,
 ) -> c_int {
-    catch_panic(|| result_to_int(keygen_inner::<H>(ctx, pkey, PSS)), 0)
+    catch_panic(
+        || result_to_int(keygen_inner::<H>(ctx, pkey, PSS)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -531,10 +551,8 @@ fn keygen_inner<H: RsaImportHandler>(
             .keygen
             .ok_or(EngineError::Other("built-in keygen missing".into()))?;
         // SAFETY: delegating the arguments OpenSSL passed us to the built-in.
-        if unsafe { keygen(ctx, pkey) } != 1 {
-            return Err(EngineError::Other("software RSA keygen failed".into()));
-        }
-        return Ok(());
+        let rc = unsafe { keygen(ctx, pkey) };
+        return ossl_check(rc, "software RSA keygen failed");
     }
 
     let engine_ptr = NonNull::new(state.engine as *mut ffi::ENGINE)
@@ -544,7 +562,7 @@ fn keygen_inner<H: RsaImportHandler>(
     let engine = unsafe { Engine::from_ptr(engine_ptr) };
 
     let params = RsaImportParams {
-        bits: state.bits.unwrap_or(2048),
+        bits: state.bits.unwrap_or(DEFAULT_RSA_KEYGEN_BITS),
         crt: state.crt.unwrap_or(true),
         key_usage: state.key_usage.unwrap_or(RsaKeyUsage::DigitalSignature),
         session: state.session.unwrap_or(false),
@@ -582,15 +600,20 @@ pub unsafe fn set_rsa_pss_type(pkey: *mut ffi::EVP_PKEY) -> EngineResult<()> {
         if rsa.is_null() {
             return Err(EngineError::Other("EVP_PKEY has no RSA".into()));
         }
-        if ffi::EVP_PKEY_assign(pkey, ffi::EVP_PKEY_RSA_PSS as c_int, rsa.cast()) != 1 {
+        let rc = ffi::EVP_PKEY_assign(pkey, ffi::EVP_PKEY_RSA_PSS as c_int, rsa.cast());
+        if let Err(e) = ossl_check(rc, "EVP_PKEY_assign (RSA-PSS) failed") {
             ffi::RSA_free(rsa);
-            return Err(EngineError::Other(
-                "EVP_PKEY_assign (RSA-PSS) failed".into(),
-            ));
+            return Err(e);
         }
     }
     Ok(())
 }
+
+/// `EVP_PKEY_CTX_ctrl` key-type wildcard: any key type.
+pub const ANY_KEYTYPE: c_int = -1;
+
+/// `EVP_PKEY_CTX_ctrl` operation wildcard: any operation.
+pub const ANY_OPTYPE: c_int = -1;
 
 /// Read an integer `EVP_PKEY_CTX_ctrl` getter (e.g. padding, salt length).
 /// # Safety
@@ -602,11 +625,19 @@ unsafe fn ctrl_get_int(
     cmd: c_int,
 ) -> EngineResult<c_int> {
     let mut out: c_int = 0;
-    // SAFETY: ctx is valid; the getter writes an int into `out` via p2. Key type
-    // -1: the ctx may be RSA or RSA-PSS.
-    let rc =
-        unsafe { ffi::EVP_PKEY_CTX_ctrl(ctx, -1, optype, cmd, 0, (&mut out as *mut c_int).cast()) };
-    if rc <= 0 {
+    // SAFETY: ctx is valid; the getter writes an int into `out` via p2. Any key
+    // type: the ctx may be RSA or RSA-PSS.
+    let rc = unsafe {
+        ffi::EVP_PKEY_CTX_ctrl(
+            ctx,
+            ANY_KEYTYPE,
+            optype,
+            cmd,
+            0,
+            (&mut out as *mut c_int).cast(),
+        )
+    };
+    if !ctrl_ok(rc) {
         return Err(EngineError::Other("EVP_PKEY_CTX_ctrl getter failed".into()));
     }
     Ok(out)
@@ -635,7 +666,7 @@ unsafe fn ctrl_get_md(
             (&mut md as *mut *const ffi::EVP_MD).cast(),
         )
     };
-    if rc <= 0 { std::ptr::null() } else { md }
+    if ctrl_ok(rc) { md } else { std::ptr::null() }
 }
 
 /// Maximum OAEP label the engine copies, matching the 3.x provider's cap, so a
@@ -698,7 +729,7 @@ unsafe extern "C" fn c_sign<S: RsaPssSignHandler>(
     catch_panic(
         // SAFETY: forwarding the arguments OpenSSL passed to this sign callback.
         || result_to_int(unsafe { sign_inner::<S>(ctx, sig, siglen, tbs, tbslen) }),
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -724,7 +755,7 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
     // SAFETY: ctx is a valid signing ctx.
     let is_pss = !sig.is_null()
         && !pkey.is_null()
-        && unsafe { ctrl_get_int(ctx, -1, ffi::EVP_PKEY_CTRL_GET_RSA_PADDING_CONST) }
+        && unsafe { ctrl_get_int(ctx, ANY_OPTYPE, ffi::EVP_PKEY_CTRL_GET_RSA_PADDING_CONST) }
             .map(|p| p == ffi::RSA_PKCS1_PSS_PADDING_CONST)
             .unwrap_or(false);
 
@@ -734,10 +765,8 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
             .sign
             .ok_or(EngineError::Other("built-in RSA sign missing".into()))?;
         // SAFETY: delegating the arguments OpenSSL passed us to the built-in.
-        if unsafe { sign(ctx, sig, siglen, tbs, tbslen) } != 1 {
-            return Err(EngineError::Other("RSA sign failed".into()));
-        }
-        return Ok(());
+        let rc = unsafe { sign(ctx, sig, siglen, tbs, tbslen) };
+        return ossl_check(rc, "RSA sign failed");
     }
 
     // PSS: the engine signs on the HSM and never falls back to software. A key
@@ -757,7 +786,7 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
     let md = unsafe {
         ctrl_get_md(
             ctx,
-            -1,
+            ANY_KEYTYPE,
             ffi::EVP_PKEY_OP_TYPE_SIG_CONST,
             ffi::EVP_PKEY_CTRL_GET_MD_CONST,
         )
@@ -778,7 +807,7 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
     let mgf1 = unsafe {
         ctrl_get_md(
             ctx,
-            -1,
+            ANY_KEYTYPE,
             ffi::EVP_PKEY_OP_TYPE_SIG_CONST,
             ffi::EVP_PKEY_CTRL_GET_RSA_MGF1_MD_CONST,
         )
@@ -809,7 +838,7 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
             "digest length ({tbslen}) does not match the signature digest ({md_size})"
         )));
     }
-    // Modulus size, and the maximum PSS salt (modulus − digest − 2) the provider
+    // Modulus size, and the maximum PSS salt (modulus − digest − `PSS_ENCODING_OVERHEAD`) the provider
     // uses for saltlen:max.
     // SAFETY: pkey is a valid RSA key (owned, checked).
     let cap = usize::try_from(unsafe { ffi::EVP_PKEY_size(pkey) })
@@ -830,7 +859,7 @@ unsafe fn sign_inner<S: RsaPssSignHandler>(
     }
     let max_salt = cap
         .checked_sub(md_size)
-        .and_then(|v| v.checked_sub(2))
+        .and_then(|v| v.checked_sub(PSS_ENCODING_OVERHEAD))
         .ok_or(EngineError::Other("RSA modulus too small for PSS".into()))?;
     // Salt length from the caller's explicitly-set value (recorded in c_ctrl):
     // an unset context defaults to the digest length (the provider's default),
@@ -883,7 +912,7 @@ unsafe extern "C" fn c_decrypt<D: RsaDecryptHandler>(
     catch_panic(
         // SAFETY: forwarding the arguments OpenSSL passed to this decrypt callback.
         || result_to_int(unsafe { decrypt_inner::<D>(ctx, out, outlen, in_, inlen) }),
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -909,7 +938,7 @@ unsafe fn decrypt_inner<D: RsaDecryptHandler>(
         None
     } else {
         // SAFETY: ctx is a valid decrypt ctx.
-        unsafe { ctrl_get_int(ctx, -1, ffi::EVP_PKEY_CTRL_GET_RSA_PADDING_CONST) }.ok()
+        unsafe { ctrl_get_int(ctx, ANY_OPTYPE, ffi::EVP_PKEY_CTRL_GET_RSA_PADDING_CONST) }.ok()
     };
     let is_oaep = pad == Some(ffi::RSA_PKCS1_OAEP_PADDING_CONST);
     let is_pkcs1 = pad == Some(ffi::RSA_PKCS1_PADDING_CONST);
@@ -927,10 +956,8 @@ unsafe fn decrypt_inner<D: RsaDecryptHandler>(
             .decrypt
             .ok_or(EngineError::Other("built-in RSA decrypt missing".into()))?;
         // SAFETY: delegating the arguments OpenSSL passed us to the built-in.
-        if unsafe { decrypt(ctx, out, outlen, in_, inlen) } != 1 {
-            return Err(EngineError::Other("RSA decrypt failed".into()));
-        }
-        return Ok(());
+        let rc = unsafe { decrypt(ctx, out, outlen, in_, inlen) };
+        return ossl_check(rc, "RSA decrypt failed");
     }
 
     let padding = if is_oaep {
@@ -1177,15 +1204,18 @@ mod tests {
     fn resolve_salt_len_maps_digest_max_explicit_and_rejects_auto() {
         // DIGEST (-1) resolves to the digest length; MAX (-3) to the max salt.
         assert_eq!(
-            resolve_salt_len(RSA_PSS_SALTLEN_DIGEST, 32, 222).unwrap(),
+            resolve_salt_len(ffi::RSA_PSS_SALTLEN_DIGEST, 32, 222).unwrap(),
             32
         );
-        assert_eq!(resolve_salt_len(RSA_PSS_SALTLEN_MAX, 32, 222).unwrap(), 222);
+        assert_eq!(
+            resolve_salt_len(ffi::RSA_PSS_SALTLEN_MAX, 32, 222).unwrap(),
+            222
+        );
         // An explicit non-negative length is used as-is.
         assert_eq!(resolve_salt_len(20, 32, 222).unwrap(), 20);
         assert_eq!(resolve_salt_len(0, 32, 222).unwrap(), 0);
         // An explicit AUTO (-2) is rejected, matching the provider.
-        assert!(resolve_salt_len(RSA_PSS_SALTLEN_AUTO, 32, 222).is_err());
+        assert!(resolve_salt_len(ffi::RSA_PSS_SALTLEN_AUTO, 32, 222).is_err());
         // Any other sentinel is rejected.
         assert!(resolve_salt_len(-99, 32, 222).is_err());
     }

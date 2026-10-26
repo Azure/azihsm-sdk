@@ -54,9 +54,14 @@ use azihsm_ossl_engine_sys as ffi;
 use parking_lot::Mutex;
 
 use crate::engine::Engine;
+use crate::error::CTRL_UNSUPPORTED;
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::RetCode;
 use crate::error::catch_panic;
+use crate::error::ctrl_ok;
+use crate::error::ossl_check;
+use crate::error::ossl_ok;
 use crate::error::result_to_int;
 use crate::method_table::MethodTable;
 
@@ -175,12 +180,14 @@ fn defaults() -> EngineResult<Defaults> {
 unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
+            let Ok(d) = defaults() else {
+                return RetCode::Fail.into();
+            };
             if let Some(init) = d.init {
                 // SAFETY: delegating the ctx OpenSSL passed us to the built-in
                 // init, per the pkey method contract.
-                if unsafe { init(ctx) } != 1 {
-                    return 0;
+                if !ossl_ok(unsafe { init(ctx) }) {
+                    return RetCode::Fail.into();
                 }
             }
             let engine = crate::method_table::take_pending_engine();
@@ -191,9 +198,9 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
                     ..CtxState::default()
                 },
             );
-            1
+            RetCode::Success.into()
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -206,21 +213,23 @@ unsafe extern "C" fn c_init(ctx: *mut ffi::EVP_PKEY_CTX) -> c_int {
 unsafe extern "C" fn c_copy(dst: *mut ffi::EVP_PKEY_CTX, src: *mut ffi::EVP_PKEY_CTX) -> c_int {
     catch_panic(
         || {
-            let Ok(d) = defaults() else { return 0 };
+            let Ok(d) = defaults() else {
+                return RetCode::Fail.into();
+            };
             if let Some(copy) = d.copy {
                 // SAFETY: delegating the ctx pair OpenSSL passed us to the
                 // built-in copy.
-                if unsafe { copy(dst, src) } != 1 {
-                    return 0;
+                if !ossl_ok(unsafe { copy(dst, src) }) {
+                    return RetCode::Fail.into();
                 }
             }
             let mut table = ctx_state().lock();
             if let Some(dup) = table.get(&(src as usize)).cloned() {
                 table.insert(dst as usize, dup);
             }
-            1
+            RetCode::Success.into()
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -241,9 +250,8 @@ unsafe extern "C" fn c_cleanup(ctx: *mut ffi::EVP_PKEY_CTX) {
                 // cleanup, exactly once.
                 unsafe { cleanup(ctx) };
             }
-            0
         },
-        0,
+        (),
     );
 }
 
@@ -265,13 +273,17 @@ unsafe extern "C" fn c_ctrl(
                     state.curve_nid = Some(p1);
                 }
             }
-            let Ok(d) = defaults() else { return -2 };
-            let Some(ctrl) = d.ctrl else { return -2 };
+            let Ok(d) = defaults() else {
+                return CTRL_UNSUPPORTED;
+            };
+            let Some(ctrl) = d.ctrl else {
+                return CTRL_UNSUPPORTED;
+            };
             // SAFETY: delegating the arguments OpenSSL passed us to the
             // built-in ctrl.
             unsafe { ctrl(ctx, cmd, p1, p2) }
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -289,7 +301,10 @@ unsafe extern "C" fn c_ctrl_str(
     key: *const c_char,
     value: *const c_char,
 ) -> c_int {
-    catch_panic(|| result_to_int(ctrl_str_inner(ctx, key, value)), 0)
+    catch_panic(
+        || result_to_int(ctrl_str_inner(ctx, key, value)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -374,7 +389,7 @@ fn ctrl_str_inner(
         .ok_or(EngineError::Other("built-in ctrl_str missing".into()))?;
     // SAFETY: delegating the arguments OpenSSL passed us to the built-in
     // ctrl_str.
-    if unsafe { ctrl_str(ctx, key, value) } <= 0 {
+    if !ctrl_ok(unsafe { ctrl_str(ctx, key, value) }) {
         return Err(EngineError::Other(format!(
             "pkey option rejected: {key_str}"
         )));
@@ -392,7 +407,10 @@ unsafe extern "C" fn c_keygen<H: EcKeygenHandler>(
     ctx: *mut ffi::EVP_PKEY_CTX,
     pkey: *mut ffi::EVP_PKEY,
 ) -> c_int {
-    catch_panic(|| result_to_int(keygen_inner::<H>(ctx, pkey)), 0)
+    catch_panic(
+        || result_to_int(keygen_inner::<H>(ctx, pkey)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -419,10 +437,8 @@ fn keygen_inner<H: EcKeygenHandler>(
             .ok_or(EngineError::Other("built-in keygen missing".into()))?;
         // SAFETY: delegating the arguments OpenSSL passed us to the built-in
         // keygen.
-        if unsafe { keygen(ctx, pkey) } != 1 {
-            return Err(EngineError::Other("software EC keygen failed".into()));
-        }
-        return Ok(());
+        let rc = unsafe { keygen(ctx, pkey) };
+        return ossl_check(rc, "software EC keygen failed");
     };
 
     let engine_ptr = NonNull::new(state.engine as *mut ffi::ENGINE)
@@ -453,7 +469,10 @@ unsafe extern "C" fn c_derive<D: EcDeriveHandler>(
     key: *mut c_uchar,
     keylen: *mut usize,
 ) -> c_int {
-    catch_panic(|| result_to_int(derive_inner::<D>(ctx, key, keylen)), 0)
+    catch_panic(
+        || result_to_int(derive_inner::<D>(ctx, key, keylen)),
+        RetCode::Fail.into(),
+    )
 }
 
 #[allow(unsafe_code)]
@@ -487,10 +506,8 @@ fn derive_inner<D: EcDeriveHandler>(
             .ok_or(EngineError::Other("built-in derive missing".into()))?;
         // SAFETY: delegating the arguments OpenSSL passed us to the built-in
         // derive.
-        if unsafe { derive(ctx, key, keylen) } != 1 {
-            return Err(EngineError::Other("software ECDH derive failed".into()));
-        }
-        return Ok(());
+        let rc = unsafe { derive(ctx, key, keylen) };
+        return ossl_check(rc, "software ECDH derive failed");
     }
 
     let state = ctx_state()
@@ -501,11 +518,11 @@ fn derive_inner<D: EcDeriveHandler>(
 
     if key.is_null() {
         // Size query: blob length is unknown until the derive runs, so mirror
-        // the provider's constants (max in buffer mode, 1 in file mode).
+        // the provider's constants.
         // SAFETY: keylen is non-null (checked).
         unsafe {
             *keylen = if state.output_file.is_some() {
-                1
+                crate::method_table::FILE_OUTPUT_SIZE_HINT
             } else {
                 crate::method_table::MASKED_KEY_MAX_BUFFER
             };
@@ -640,7 +657,7 @@ unsafe extern "C" fn c_pkey_meths(
                 crate::method_table::note_pending_engine,
             )
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -669,7 +686,7 @@ pub(crate) fn install_pkey_meths_callback(engine: &Engine) -> EngineResult<()> {
     #[allow(unsafe_code)]
     crate::error::ossl_check(
         unsafe { ffi::ENGINE_set_pkey_meths(engine.as_ptr(), Some(c_pkey_meths)) },
-        EngineError::Other("ENGINE_set_pkey_meths failed".into()),
+        "ENGINE_set_pkey_meths failed",
     )
 }
 
