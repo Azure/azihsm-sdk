@@ -667,3 +667,328 @@ fn sd_create_remote_backup_trusted_sa_rejects_tampered_report() {
     let req = backup_request(session.session_id, masked, &evidence, &policy);
     ctx.expect_fw_reject_oob(&req, &evidence.oob(), TborStatus::InvalidArg);
 }
+
+/// Verifies that an unknown session ID cannot create a remote backup.
+#[test]
+fn sd_create_remote_backup_rejects_invalid_session_id() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+    req.session_id = u16::MAX;
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "unknown session ID must be rejected",
+    );
+}
+
+/// Verifies that a zero-filled masked sealing key cannot create a remote backup.
+#[test]
+fn sd_create_remote_backup_rejects_zeroed_masked_sealing_key() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+    req.masked_sealing_key.fill(0);
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "zeroed masked sealing key must be rejected",
+    );
+}
+
+/// Verifies that corruption of the masked sealing key is rejected.
+#[test]
+fn sd_create_remote_backup_rejects_tampered_masked_sealing_key() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+    req.masked_sealing_key[0] ^= 0xFF;
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "tampered masked sealing key must be rejected",
+    );
+}
+
+/// Verifies that a request policy differing from the finalized policy is rejected.
+#[test]
+fn sd_create_remote_backup_rejects_policy_hash_mismatch() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut modified_policy = policy;
+    modified_policy[OFF_FLAGS] ^= 0x01;
+
+    let req = backup_request(session.session_id, masked, &evidence, &modified_policy);
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "policy hash mismatch must be rejected",
+    );
+}
+
+/// Verifies that an out-of-range receiver certificate descriptor is rejected.
+#[test]
+fn sd_create_remote_backup_rejects_invalid_receiver_cert_index() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+    req.receiver_cert_chain[0].index = u8::MAX;
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "out-of-range receiver certificate index must be rejected",
+    );
+}
+
+/// Verifies that a receiver certificate descriptor with an incorrect length is rejected.
+#[test]
+fn sd_create_remote_backup_rejects_receiver_cert_length_mismatch() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+    req.receiver_cert_chain[0].length = U16::new(0);
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "receiver certificate length mismatch must be rejected",
+    );
+}
+
+/// Verifies that trusted-SA validation rejects an invalid attestation-report index.
+#[test]
+fn sd_create_remote_backup_rejects_invalid_report_index() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let sapota_key = CaKey::generate();
+
+    let (session, policy, pid_pub) =
+        finalized_backing_session_trusted(&ctx, &sata_key, &sapota_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let receiver = make_chain(&sata_key, &rcvr_pub);
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(&sapota_key, &pid_pub);
+
+    let evidence = evidence_from_chains(&receiver, &mfgr, &owner, &part_owner, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    req.receiver_report.index = u8::MAX;
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "invalid trusted receiver report index must be rejected",
+    );
+}
+
+/// Verifies that trusted-SA validation rejects an incorrect attestation-report length.
+#[test]
+fn sd_create_remote_backup_rejects_report_length_mismatch() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let sapota_key = CaKey::generate();
+
+    let (session, policy, pid_pub) =
+        finalized_backing_session_trusted(&ctx, &sata_key, &sapota_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let receiver = make_chain(&sata_key, &rcvr_pub);
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(&sapota_key, &pid_pub);
+
+    let evidence = evidence_from_chains(&receiver, &mfgr, &owner, &part_owner, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    req.receiver_report.length = U16::new(0);
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "trusted receiver report length mismatch must be rejected",
+    );
+}
+
+/// Verifies that an empty receiver certificate chain is rejected.
+#[test]
+fn sd_create_remote_backup_rejects_empty_receiver_cert_chain() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    req.receiver_cert_chain.clear();
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "empty receiver certificate chain must be rejected",
+    );
+}
+
+/// Verifies that corrupted receiver certificate data is rejected.
+#[test]
+fn sd_create_remote_backup_rejects_corrupted_receiver_cert() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let receiver = make_chain(&sata_key, &rcvr_pub);
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(&sata_key, &pid_pub);
+
+    let mut evidence = evidence_from_chains(&receiver, &mfgr, &owner, &part_owner, &report);
+
+    evidence.oob_items[1][0] ^= 0xFF;
+
+    let req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "corrupted receiver certificate must be rejected",
+    );
+}
+
+/// Verifies that trusted-SA validation rejects a missing attestation-report OOB item.
+#[test]
+fn sd_create_remote_backup_rejects_missing_report_oob() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+    let sapota_key = CaKey::generate();
+
+    let (session, policy, pid_pub) =
+        finalized_backing_session_trusted(&ctx, &sata_key, &sapota_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let receiver = make_chain(&sata_key, &rcvr_pub);
+    let mfgr = make_chain(&CaKey::generate(), &pid_pub);
+    let owner = make_chain(&CaKey::generate(), &pid_pub);
+    let part_owner = make_chain(&sapota_key, &pid_pub);
+
+    let mut evidence = evidence_from_chains(&receiver, &mfgr, &owner, &part_owner, &report);
+
+    evidence.oob_items.pop();
+
+    let req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    assert!(
+        ctx.tbor_oob(&req, &evidence.oob()).is_err(),
+        "missing trusted receiver report must be rejected",
+    );
+}
+
+/// Verifies that a rejected create leaves the security domain uninitialized.
+#[test]
+fn sd_create_remote_backup_failed_create_allows_retry() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let valid_req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    let mut invalid_req = valid_req.clone();
+    invalid_req.receiver_cert_chain.clear();
+
+    assert!(
+        ctx.tbor_oob(&invalid_req, &evidence.oob()).is_err(),
+        "invalid create request must be rejected",
+    );
+
+    let resp = ctx
+        .tbor_oob(&valid_req, &evidence.oob())
+        .expect("valid create must succeed after rejected request");
+
+    assert_eq!(resp.pok_remote_backup.len(), POK_REMOTE_BACKUP_LEN,);
+
+    assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN,);
+
+    assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN,);
+
+    assert!(
+        resp.pok_remote_backup.iter().any(|&b| b != 0),
+        "remote backup must not be all-zero",
+    );
+
+    assert!(
+        resp.pok_local_backup.iter().any(|&b| b != 0),
+        "local backup must not be all-zero",
+    );
+
+    assert!(
+        resp.sd_mk_backup.iter().any(|&b| b != 0),
+        "SD masking-key backup must not be all-zero",
+    );
+
+    ctx.expect_fw_reject_oob(
+        &valid_req,
+        &evidence.oob(),
+        TborStatus::SdAlreadyInitialized,
+    );
+}
+
+/// Verifies that duplicate receiver certificate descriptors are accepted by the current firmware.
+#[test]
+fn sd_create_remote_backup_accepts_duplicate_receiver_cert_descriptor() {
+    let ctx = TestCtx::new();
+    let sata_key = CaKey::generate();
+
+    let (session, policy, pid_pub) = finalized_backing_session(&ctx, &sata_key);
+
+    let (masked, report, rcvr_pub) = masked_key_report_and_pub(&ctx, session.session_id);
+
+    let evidence = build_receiver_evidence(&pid_pub, &rcvr_pub, &sata_key, &report);
+
+    let mut req = backup_request(session.session_id, masked, &evidence, &policy);
+
+    req.receiver_cert_chain[1] = req.receiver_cert_chain[0];
+
+    let resp = ctx
+        .tbor_oob(&req, &evidence.oob())
+        .expect("current firmware accepts duplicate receiver descriptors");
+
+    assert_eq!(resp.pok_remote_backup.len(), POK_REMOTE_BACKUP_LEN,);
+
+    assert_eq!(resp.pok_local_backup.len(), MASKED_SD_LEN,);
+
+    assert_eq!(resp.sd_mk_backup.len(), SD_MK_BACKUP_LEN,);
+}
