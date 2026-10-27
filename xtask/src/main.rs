@@ -27,6 +27,7 @@ mod copyright;
 mod coverage;
 mod coverage_report;
 mod fmt;
+mod fw_precheck;
 mod host_openssl;
 mod install;
 mod integration_tests;
@@ -74,6 +75,7 @@ enum Commands {
     Coverage(coverage::Coverage),
     CoverageReport(coverage_report::CoverageReport),
     Fmt(fmt::Fmt),
+    FwPrecheck(fw_precheck::FwPrecheck),
     IntegrationTests(integration_tests::IntegrationTest),
     Nextest(nextest::Nextest),
     NextestReport(nextest_report::NextestReport),
@@ -116,6 +118,7 @@ fn try_main() -> anyhow::Result<()> {
         Commands::Coverage(task) => task.run(ctx),
         Commands::CoverageReport(task) => task.run(ctx),
         Commands::Fmt(task) => task.run(ctx),
+        Commands::FwPrecheck(task) => task.run(ctx),
         Commands::IntegrationTests(task) => task.run(ctx),
         Commands::Precheck(task) => task.run(ctx),
         Commands::Nextest(task) => task.run(ctx),
