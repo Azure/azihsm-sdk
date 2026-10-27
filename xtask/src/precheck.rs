@@ -331,9 +331,9 @@ impl Xtask for Precheck {
 
             #[cfg(not(target_os = "windows"))]
             {
-                // Run azihsm_ddi mock tests
-                let ddi_test_runs = ddi_tests(&self.exclude, self.profile.clone());
-                run_tests(ddi_test_runs, false, self.skip_clean, ctx.clone())?;
+                // Run mock tests with all table count combinations
+                let table_count_test_runs = table_count_tests(&self.exclude, self.profile.clone());
+                run_tests(table_count_test_runs, false, self.skip_clean, ctx.clone())?;
             }
         }
 
@@ -379,7 +379,10 @@ impl Xtask for Precheck {
         }
 
         if stage.fw_precheck {
-            FwPrecheck {}.run(ctx)?;
+            FwPrecheck {
+                skip_audit: self.skip_audit,
+            }
+            .run(ctx)?;
         }
 
         log::trace!("done precheck");
@@ -456,8 +459,24 @@ fn default_tests(exclude: &[String], profile: Option<String>, min: bool) -> Vec<
             filterset: None,
             profile: profile.clone().or(Some("ci-emu-smoke".to_string())),
             exclude: exclude.to_owned(),
-            test: Some("azihsm_ddi_tests".to_string()),
+            test: Some("azihsm_table_count_tests".to_string()),
             filter: vec!["smoke".to_string()],
+        });
+    }
+
+    // SDK Run azihsm_ddi_tbor_types tests through the emu
+    // backend (in-process firmware).
+    #[cfg(not(target_os = "windows"))]
+    if !exclude.iter().any(|e| e == "azihsm_ddi_tbor_types") {
+        tests.push(Nextest {
+            features: Some("emu".to_string()),
+            package: Some("azihsm_ddi_tbor_types".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-tbor-emu".to_string())),
+            exclude: exclude.to_owned(),
+            test: None,
+            filter: vec![],
         });
     }
 
@@ -466,7 +485,7 @@ fn default_tests(exclude: &[String], profile: Option<String>, min: bool) -> Vec<
 
 // Helper function to define test parameters for Linux-specific azihsm_ddi mock tests
 #[cfg(not(target_os = "windows"))]
-fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
+fn table_count_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
     let mut tests = Vec::new();
 
     if !exclude.iter().any(|e| e == "azihsm_ddi_mbor_types") {
@@ -489,21 +508,6 @@ fn ddi_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
             no_default_features: false,
             filterset: None,
             profile: profile.clone().or(Some("ci-mock-table-64".to_string())),
-            exclude: exclude.to_owned(),
-            test: None,
-            filter: vec![],
-        });
-    }
-
-    if !exclude.iter().any(|e| e == "azihsm_ddi_tbor_types") {
-        // SDK Run azihsm_ddi_tbor_types tests through the emu
-        // backend (in-process firmware).
-        tests.push(Nextest {
-            features: Some("emu".to_string()),
-            package: Some("azihsm_ddi_tbor_types".to_string()),
-            no_default_features: false,
-            filterset: None,
-            profile: profile.clone().or(Some("ci-tbor-emu".to_string())),
             exclude: exclude.to_owned(),
             test: None,
             filter: vec![],
