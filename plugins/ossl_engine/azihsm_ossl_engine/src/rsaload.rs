@@ -8,10 +8,11 @@
 //! Mirrors [`crate::keyload`] for EC: the returned `RSA` is bound to the engine
 //! (`RSA_new_method`), so the engine — hence [`EngineData`] and this `.so` —
 //! outlives any `EVP_PKEY` built from it, and the stashed HSM-key pointer
-//! (owned by `EngineData`, in `RSA` ex_data) never dangles. Private-key
-//! operations (sign/decrypt) land on the RSA `EVP_PKEY_METHOD` in later work;
-//! this module wires load + retention + the ex_data marker the serialization
-//! method uses to recognize HSM-backed keys.
+//! (owned by `EngineData`, in `RSA` ex_data) never dangles. PKCS#1 v1.5 signing
+//! on HSM-backed keys lands on the engine's RSA `RSA_METHOD` sign slot (see
+//! [`crate::rsasign`]); any future private-key decrypt support remains separate.
+//! This module wires load + retention + the ex_data marker the sign path and the
+//! serialization method use to recognize HSM-backed keys.
 
 use std::ffi::c_int;
 use std::ffi::c_void;
@@ -25,6 +26,8 @@ use azihsm_api::HsmRsaPrivateKey;
 use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
+use azihsm_ossl_engine_core::error::ossl_check;
+use azihsm_ossl_engine_core::exdata::new_ex_index;
 use azihsm_ossl_engine_core::ffi;
 use openssl::pkey::PKey;
 use parking_lot::Mutex;
@@ -139,10 +142,9 @@ fn set_rsa_public(rsa: *mut ffi::RSA, der: &[u8]) -> EngineResult<()> {
     // components only). On any failure we free whatever we still own.
     unsafe {
         let bn = |bytes: &[u8]| -> *mut ffi::BIGNUM {
-            let len = c_int::try_from(bytes.len()).unwrap_or(-1);
-            if len < 0 {
+            let Ok(len) = c_int::try_from(bytes.len()) else {
                 return null_mut();
-            }
+            };
             ffi::BN_bin2bn(bytes.as_ptr(), len, null_mut())
         };
         let n = bn(&n_bytes);
@@ -152,10 +154,13 @@ fn set_rsa_public(rsa: *mut ffi::RSA, der: &[u8]) -> EngineResult<()> {
             ffi::BN_free(e);
             return Err(EngineError::Other("BN_bin2bn failed".into()));
         }
-        if ffi::RSA_set0_key(rsa, n, e, null_mut()) != 1 {
+        if let Err(err) = ossl_check(
+            ffi::RSA_set0_key(rsa, n, e, null_mut()),
+            "RSA_set0_key failed",
+        ) {
             ffi::BN_free(n);
             ffi::BN_free(e);
-            return Err(EngineError::Other("RSA_set0_key failed".into()));
+            return Err(err);
         }
     }
     Ok(())
@@ -178,9 +183,12 @@ pub(crate) unsafe fn set_pkey_to_bound_rsa(
     // SAFETY: EVP_PKEY_set1_RSA up-refs rsa; drop our reference afterwards. On
     // failure free the bound key with its HSM-key retain rolled back.
     unsafe {
-        if ffi::EVP_PKEY_set1_RSA(pkey, rsa) != 1 {
+        if let Err(e) = ossl_check(
+            ffi::EVP_PKEY_set1_RSA(pkey, rsa),
+            "EVP_PKEY_set1_RSA failed",
+        ) {
             free_bound_rsa_key(data, rsa);
-            return Err(EngineError::Other("EVP_PKEY_set1_RSA failed".into()));
+            return Err(e);
         }
         ffi::RSA_free(rsa);
     }
@@ -200,9 +208,12 @@ pub(crate) unsafe fn set_pkey_to_public_rsa(
     let rsa = software_public_rsa(der)?;
     // SAFETY: EVP_PKEY_set1_RSA up-refs rsa; free our reference on both paths.
     unsafe {
-        if ffi::EVP_PKEY_set1_RSA(pkey, rsa) != 1 {
+        if let Err(e) = ossl_check(
+            ffi::EVP_PKEY_set1_RSA(pkey, rsa),
+            "EVP_PKEY_set1_RSA failed",
+        ) {
             ffi::RSA_free(rsa);
-            return Err(EngineError::Other("EVP_PKEY_set1_RSA failed".into()));
+            return Err(e);
         }
         ffi::RSA_free(rsa);
     }
@@ -230,10 +241,13 @@ fn build_rsa_pkey(
             free_bound_rsa_key(data, rsa);
             return Err(EngineError::Other("EVP_PKEY_new failed".into()));
         }
-        if ffi::EVP_PKEY_set1_RSA(pkey, rsa) != 1 {
+        if let Err(e) = ossl_check(
+            ffi::EVP_PKEY_set1_RSA(pkey, rsa),
+            "EVP_PKEY_set1_RSA failed",
+        ) {
             ffi::EVP_PKEY_free(pkey);
             free_bound_rsa_key(data, rsa);
-            return Err(EngineError::Other("EVP_PKEY_set1_RSA failed".into()));
+            return Err(e);
         }
         ffi::RSA_free(rsa);
         Ok(pkey)
@@ -280,9 +294,9 @@ fn attach_rsa(data: &EngineData, rsa: *mut ffi::RSA, key: HsmRsaPrivateKey) -> E
     // key_ptr is a non-owning pointer into a key EngineData keeps alive for the
     // engine's lifetime; the slot has no free callback, so no ownership moves.
     let rc = unsafe { ffi::RSA_set_ex_data(rsa, idx, key_ptr.cast_mut().cast::<c_void>()) };
-    if rc != 1 {
+    if let Err(e) = ossl_check(rc, "RSA_set_ex_data failed") {
         data.release_loaded_rsa_key(key_ptr);
-        return Err(EngineError::Other("RSA_set_ex_data failed".into()));
+        return Err(e);
     }
     Ok(())
 }
@@ -304,7 +318,6 @@ pub(crate) fn rsa_hsm_key(rsa: *mut ffi::RSA) -> *const HsmRsaPrivateKey {
 /// callback (the stored pointer is non-owning; a libcrypto-held free callback
 /// into this `.so` would be unsafe across `.so` unload — see
 /// [`azihsm_ossl_engine_core::exdata`]).
-#[allow(unsafe_code)]
 fn rsa_ex_index() -> EngineResult<c_int> {
     static IDX: OnceLock<c_int> = OnceLock::new();
     static INIT: Mutex<()> = Mutex::new(());
@@ -316,20 +329,7 @@ fn rsa_ex_index() -> EngineResult<c_int> {
     if let Some(i) = IDX.get() {
         return Ok(*i);
     }
-    // SAFETY: standard ex_data index registration with no new/dup/free callbacks.
-    let idx = unsafe {
-        ffi::CRYPTO_get_ex_new_index(
-            ffi::CRYPTO_EX_INDEX_RSA as c_int,
-            0,
-            null_mut(),
-            None,
-            None,
-            None,
-        )
-    };
-    if idx < 0 {
-        return Err(EngineError::ExDataRegisterFailed);
-    }
+    let idx = new_ex_index(ffi::CRYPTO_EX_INDEX_RSA as c_int)?;
     let _ = IDX.set(idx);
     Ok(idx)
 }

@@ -23,6 +23,7 @@
 
 #![cfg(feature = "emu")]
 
+use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptReq;
 use azihsm_ddi_tbor_types::TborAesEncryptDecryptResp;
 use azihsm_ddi_tbor_types::TborStatus;
@@ -39,7 +40,6 @@ use crate::commands::aes_generate_key::generate_key;
 use crate::commands::aes_generate_key::SCOPE_LOCAL;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 use crate::commands::unwrap_key::unwrap;
-use crate::harness::TestCtx;
 
 /// AES block / IV length.
 const IV_LEN: usize = azihsm_ddi_tbor_types::AES_IV_LEN;

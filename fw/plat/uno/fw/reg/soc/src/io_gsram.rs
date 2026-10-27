@@ -7,13 +7,18 @@
 //! 'Unified GSRAM address map (2 MiB at 0x6100_0000).'
 
 pub const IO_GSRAM_BASE: u32 = 0x61000000;
+pub const FIPS_PROVISIONED_KEYS_FLAG_OFFSET: u32 = 0x135C;
 pub const BOOT_STATUS_OFFSET: u32 = 0x7000;
 pub const IPC_ADMIN_HSM_RX_PI_OFFSET: u32 = 0x7004;
 pub const IPC_ADMIN_HSM_RX_CI_OFFSET: u32 = 0x7008;
 pub const IPC_ADMIN_HSM_TX_PI_OFFSET: u32 = 0x700C;
 pub const IPC_ADMIN_HSM_TX_CI_OFFSET: u32 = 0x7010;
+pub const IPC_HSM_ADMIN_TX_CI_OFFSET: u32 = 0x7EA4;
+pub const IPC_HSM_ADMIN_TX_PI_OFFSET: u32 = 0x7EA8;
+pub const IPC_HSM_ADMIN_RX_CI_OFFSET: u32 = 0x7F2C;
+pub const IPC_HSM_ADMIN_RX_PI_OFFSET: u32 = 0x7F30;
 pub const ICQ_TAIL_SHADOW_OFFSET: u32 = 0xEF40;
-pub const OCQ_TAIL_SHADOW_OFFSET: u32 = 0xF560;
+pub const OCQ_TAIL_SHADOW_OFFSET: u32 = 0x11E40;
 pub const GDMA_CQ_TAIL_SHADOW_OFFSET: u32 = 0x13240;
 pub const IPC_ADMIN_HSM_RX_RING_OFFSET: u32 = 0x7014;
 pub const IPC_ADMIN_HSM_RX_RING_COUNT: u32 = 2;
@@ -21,6 +26,12 @@ pub const IPC_ADMIN_HSM_RX_RING_STRIDE: u32 = 0x40;
 pub const IPC_ADMIN_HSM_TX_RING_OFFSET: u32 = 0x7094;
 pub const IPC_ADMIN_HSM_TX_RING_COUNT: u32 = 2;
 pub const IPC_ADMIN_HSM_TX_RING_STRIDE: u32 = 0x40;
+pub const IPC_HSM_ADMIN_TX_RING_OFFSET: u32 = 0x7EAC;
+pub const IPC_HSM_ADMIN_TX_RING_COUNT: u32 = 2;
+pub const IPC_HSM_ADMIN_TX_RING_STRIDE: u32 = 0x40;
+pub const IPC_HSM_ADMIN_RX_RING_OFFSET: u32 = 0x7F34;
+pub const IPC_HSM_ADMIN_RX_RING_COUNT: u32 = 2;
+pub const IPC_HSM_ADMIN_RX_RING_STRIDE: u32 = 0x40;
 pub const ISQ_OFFSET: u32 = 0xE440;
 pub const ISQ_COUNT: u32 = 32;
 pub const ISQ_STRIDE: u32 = 0x08;
@@ -30,13 +41,13 @@ pub const ICQ_STRIDE: u32 = 0x10;
 pub const IO_SQ_OFFSET: u32 = 0xE740;
 pub const IO_SQ_COUNT: u32 = 32;
 pub const IO_SQ_STRIDE: u32 = 0x40;
-pub const OSQ_OFFSET: u32 = 0xEF60;
+pub const OSQ_OFFSET: u32 = 0x11840;
 pub const OSQ_COUNT: u32 = 32;
 pub const OSQ_STRIDE: u32 = 0x10;
-pub const OCQ_OFFSET: u32 = 0xF160;
+pub const OCQ_OFFSET: u32 = 0x11A40;
 pub const OCQ_COUNT: u32 = 32;
 pub const OCQ_STRIDE: u32 = 0x10;
-pub const IO_CQ_OFFSET: u32 = 0xF360;
+pub const IO_CQ_OFFSET: u32 = 0x11C40;
 pub const IO_CQ_COUNT: u32 = 32;
 pub const IO_CQ_STRIDE: u32 = 0x10;
 pub const GDMA_SQ_OFFSET: u32 = 0x12840;
@@ -61,7 +72,15 @@ pub const BKS_TABLE_OFFSET: u32 = 0x1110;
 pub const BKS_TABLE_COUNT: u32 = 12;
 pub const BKS_TABLE_STRIDE: u32 = 0x29;
 pub const BKS_TABLE_SIZE: u32 = 0x29;
-pub const HSM_SEED_TABLE_OFFSET: u32 = 0x12FC;
+pub const SP_FIPS_PROVISIONED_KEYS_OFFSET: u32 = 0x12FC;
+pub const SP_FIPS_PROVISIONED_KEYS_COUNT: u32 = 1;
+pub const SP_FIPS_PROVISIONED_KEYS_STRIDE: u32 = 0x30;
+pub const SP_FIPS_PROVISIONED_KEYS_SIZE: u32 = 0x30;
+pub const CP_FIPS_PROVISIONED_KEYS_OFFSET: u32 = 0x132C;
+pub const CP_FIPS_PROVISIONED_KEYS_COUNT: u32 = 1;
+pub const CP_FIPS_PROVISIONED_KEYS_STRIDE: u32 = 0x30;
+pub const CP_FIPS_PROVISIONED_KEYS_SIZE: u32 = 0x30;
+pub const HSM_SEED_TABLE_OFFSET: u32 = 0x1360;
 pub const HSM_SEED_TABLE_COUNT: u32 = 2;
 pub const HSM_SEED_TABLE_STRIDE: u32 = 0x30;
 pub const HSM_SEED_TABLE_SIZE: u32 = 0x30;
@@ -71,6 +90,11 @@ pub const SRAM_IO_BUF_STRIDE: u32 = 0x4000;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4000;
 
 tock_registers::register_bitfields! [u32,
+    /// 'FIPS provisioned-keys flag (byte 0) plus 3 reserved bytes.'
+    pub FIPS_PROVISIONED_KEYS_FLAG [
+        FLAG OFFSET(0) NUMBITS(8) [],
+        RSVD OFFSET(8) NUMBITS(24) [],
+    ],
     /// 'HSM boot phase indicator. Written by HSM firmware, polled by Admin. Values: 0=NotStarted, 1=Done, 2=Run.'
     pub BOOT_STATUS [
         STATE OFFSET(0) NUMBITS(32) [],
@@ -89,6 +113,22 @@ tock_registers::register_bitfields! [u32,
     ],
     /// 'Producer or consumer index for an IPC ring.'
     pub IPC_ADMIN_HSM_TX_CI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_HSM_ADMIN_TX_CI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_HSM_ADMIN_TX_PI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_HSM_ADMIN_RX_CI [
+        VAL OFFSET(0) NUMBITS(32) [],
+    ],
+    /// 'Producer or consumer index for an IPC ring.'
+    pub IPC_HSM_ADMIN_RX_PI [
         VAL OFFSET(0) NUMBITS(32) [],
     ],
     /// 'DMA shadow of a queue producer/consumer index.'
@@ -318,8 +358,11 @@ pub mod regs {
         pub IoGsramRegs {
             (0x0 => _reserved0),
             (0x1110 => pub bks_table: [u8; 492]),
-            (0x12fc => pub hsm_seed_table: [u8; 96]),
-            (0x135c => _reserved1),
+            (0x12fc => pub sp_fips_provisioned_keys: [u8; 48]),
+            (0x132c => pub cp_fips_provisioned_keys: [u8; 48]),
+            (0x135c => pub fips_provisioned_keys_flag: crate::RW<u32, super::FIPS_PROVISIONED_KEYS_FLAG::Register>),
+            (0x1360 => pub hsm_seed_table: [u8; 96]),
+            (0x13c0 => _reserved1),
             (0x7000 => pub boot_status: crate::RW<u32, super::BOOT_STATUS::Register>),
             (0x7004 => pub ipc_admin_hsm_rx_pi: crate::RW<u32, super::IPC_ADMIN_HSM_RX_PI::Register>),
             (0x7008 => pub ipc_admin_hsm_rx_ci: crate::RW<u32, super::IPC_ADMIN_HSM_RX_CI::Register>),
@@ -328,24 +371,31 @@ pub mod regs {
             (0x7014 => pub ipc_admin_hsm_rx_ring: [super::IpcMessage; 2]),
             (0x7094 => pub ipc_admin_hsm_tx_ring: [super::IpcMessage; 2]),
             (0x7114 => _reserved2),
+            (0x7ea4 => pub ipc_hsm_admin_tx_ci: crate::RW<u32, super::IPC_HSM_ADMIN_TX_CI::Register>),
+            (0x7ea8 => pub ipc_hsm_admin_tx_pi: crate::RW<u32, super::IPC_HSM_ADMIN_TX_PI::Register>),
+            (0x7eac => pub ipc_hsm_admin_tx_ring: [super::IpcMessage; 2]),
+            (0x7f2c => pub ipc_hsm_admin_rx_ci: crate::RW<u32, super::IPC_HSM_ADMIN_RX_CI::Register>),
+            (0x7f30 => pub ipc_hsm_admin_rx_pi: crate::RW<u32, super::IPC_HSM_ADMIN_RX_PI::Register>),
+            (0x7f34 => pub ipc_hsm_admin_rx_ring: [super::IpcMessage; 2]),
+            (0x7fb4 => _reserved3),
             (0xe440 => pub isq: [super::IsqEntry; 32]),
             (0xe540 => pub icq: [super::IcqEntry; 32]),
             (0xe740 => pub io_sq: [super::IoSqEntry; 32]),
             (0xef40 => pub icq_tail_shadow: crate::RW<u32, super::ICQ_TAIL_SHADOW::Register>),
-            (0xef44 => _reserved3),
-            (0xef60 => pub osq: [super::OsqEntry; 32]),
-            (0xf160 => pub ocq: [super::OcqEntry; 32]),
-            (0xf360 => pub io_cq: [super::IoCqEntry; 32]),
-            (0xf560 => pub ocq_tail_shadow: crate::RW<u32, super::OCQ_TAIL_SHADOW::Register>),
-            (0xf564 => _reserved4),
+            (0xef44 => _reserved4),
+            (0x11840 => pub osq: [super::OsqEntry; 32]),
+            (0x11a40 => pub ocq: [super::OcqEntry; 32]),
+            (0x11c40 => pub io_cq: [super::IoCqEntry; 32]),
+            (0x11e40 => pub ocq_tail_shadow: crate::RW<u32, super::OCQ_TAIL_SHADOW::Register>),
+            (0x11e44 => _reserved5),
             (0x12840 => pub gdma_sq: [super::GdmaSqEntry; 32]),
             (0x13040 => pub gdma_cq: [super::GdmaCqEntry; 32]),
             (0x13240 => pub gdma_cq_tail_shadow: crate::RW<u32, super::GDMA_CQ_TAIL_SHADOW::Register>),
-            (0x13244 => _reserved5),
+            (0x13244 => _reserved6),
             (0x15064 => pub aes_cmd: [super::AesCmdEntry; 32]),
             (0x15364 => pub upka_engine_cmd: [super::UpkaCmdEntry; 16]),
             (0x154a4 => pub sha_cmd: [super::ShaCmdEntry; 32]),
-            (0x158a4 => _reserved6),
+            (0x158a4 => _reserved7),
             (0x20c58 => pub io_meta: [super::IoMetaEntry; 33]),
             (0x20d60 => pub sram_io_buf: [u8; 540672]),
             (0xa4d60 => @END),

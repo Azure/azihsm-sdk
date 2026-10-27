@@ -164,7 +164,7 @@ fn open_file_layer(
     if meta.mode() & MODE_BITS_MASK != SECRET_FILE_MODE {
         return Err(EngineError::Other(format!(
             "AZIHSM_ENGINE_LOG_FILE {path:?} has insecure permissions \
-             (must be owner-only, mode 0600)"
+             (must be owner-only, mode {SECRET_FILE_MODE:04o})"
         )));
     }
 

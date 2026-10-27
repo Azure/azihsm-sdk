@@ -40,6 +40,8 @@ namespace
 bool create_sd_capture(
     azihsm_handle session,
     std::vector<uint8_t> &masked,
+    const azihsm_sd_cert_chain &receiver_chain,
+
     const azihsm_sd_evidence &receiver,
     const std::vector<uint8_t> &policy,
     std::vector<uint8_t> &out_local,
@@ -50,9 +52,10 @@ bool create_sd_capture(
     azihsm_buffer policy_buf{ const_cast<uint8_t *>(policy.data()),
                               static_cast<uint32_t>(policy.size()) };
     azihsm_sd_create_remote_backup_params params{
-        &masked_buf,
-        &receiver,
         &policy_buf,
+        &masked_buf,
+        receiver_chain,
+        &receiver,
     };
 
     std::vector<uint8_t> remote;
@@ -155,7 +158,7 @@ class azihsm_sd_restore_local_backup_test : public ::testing::Test
         path_str.len = static_cast<uint32_t>(path.size());
 
         azihsm_handle part_handle = 0;
-        auto err = azihsm_part_open(&path_str, &part_handle, sd_test_api_rev());
+        auto err = azihsm_part_open(&path_str, &part_handle, session_ex_test_api_rev());
         if (err != AZIHSM_STATUS_SUCCESS)
         {
             ADD_FAILURE() << "azihsm_part_open failed: " << err;
@@ -210,13 +213,14 @@ TEST_F(azihsm_sd_restore_local_backup_test, restore_local_backup_roundtrip)
         ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(key.report.empty());
 
-        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(dev1, key.pub, key.report);
 
         std::vector<uint8_t> local_backup;
         std::vector<uint8_t> sd_mk_backup;
         ASSERT_TRUE(create_sd_capture(
             dev1.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             dev1.policy,
             local_backup,
@@ -317,7 +321,7 @@ TEST_F(azihsm_sd_restore_local_backup_test, restore_local_backup_is_one_shot)
         SealingKeyMaterial key = sealing_key_and_report(ctx.session);
         ASSERT_EQ(key.masked.size(), kMaskedSealingKeyLen);
         ASSERT_FALSE(key.report.empty());
-        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.report);
+        SdEvidenceHolder evidence = build_receiver_evidence(ctx, key.pub, key.report);
 
         // Create the SD (initializing this incarnation), capturing the
         // device-local backups the restore would consume.
@@ -326,6 +330,7 @@ TEST_F(azihsm_sd_restore_local_backup_test, restore_local_backup_is_one_shot)
         ASSERT_TRUE(create_sd_capture(
             ctx.session,
             key.masked,
+            evidence.receiver_chain(),
             evidence.get(),
             ctx.policy,
             local_backup,

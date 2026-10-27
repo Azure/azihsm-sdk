@@ -6,18 +6,19 @@
 //!
 //! The engine registers an EC `EVP_PKEY_METHOD` (see
 //! [`azihsm_ossl_engine_core::pkey_method`]) whose keygen hook lands here when
-//! the context was armed with `azihsm.masked_key:<path>` — the same parameter
-//! the OpenSSL 3.x provider uses. The handler generates a persistent signing
-//! key pair on the HSM, writes the masked private-key blob (owner-only) to the
-//! given path, and returns an `EVP_PKEY` that is immediately usable for ECDSA
-//! signing: the same engine-bound `EC_KEY` + retained-HSM-key plumbing the
-//! loader produces, so generate→sign works without a reload, and the blob
-//! reloads later via `ENGINE_load_private_key`.
+//! the context was armed with `azihsm.masked_key:<path>` or
+//! `azihsm.session:true` — the same parameters the OpenSSL 3.x provider uses.
+//! The handler generates a key pair on the HSM, writes the masked private-key
+//! blob (owner-only) when a path is given, and returns an `EVP_PKEY` that is
+//! immediately usable for ECDSA signing: the same engine-bound `EC_KEY` +
+//! retained-HSM-key plumbing the loader produces, so generate→sign works
+//! without a reload, and the blob reloads later via `ENGINE_load_private_key`.
 //!
 //! `azihsm.key_usage` selects the pair's exclusive usage: `digitalSignature`
 //! (sign/verify, the default) or `keyAgreement` (ECDH derive, see
-//! [`crate::derive`]). `azihsm.session` accepts only `false` — session keys
-//! are not implemented yet and fail keygen with a clear error.
+//! [`crate::derive`]). `azihsm.session:true` makes it a session key, dropped
+//! when the HSM session closes; its blob only unmasks within that session, so
+//! `azihsm.masked_key` is optional for session keys.
 //!
 //! Unarmed keygen contexts never reach this module — the toolkit delegates
 //! them to OpenSSL's software keygen (see the pkey_method module docs).
@@ -37,10 +38,12 @@ use azihsm_api::HsmKeyPropsBuilder;
 use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
+use azihsm_ossl_engine_core::error::ossl_check;
 use azihsm_ossl_engine_core::ffi;
 use azihsm_ossl_engine_core::pkey_method::EcKeyUsage;
 use azihsm_ossl_engine_core::pkey_method::EcKeygenHandler;
 use azihsm_ossl_engine_core::pkey_method::KeygenParams;
+use zeroize::Zeroizing;
 
 use crate::SECRET_FILE_MODE;
 use crate::engine_impl::engine_data_slot;
@@ -128,14 +131,6 @@ impl EcKeygenHandler for AzihsmEcKeygen {
     ) -> EngineResult<()> {
         let curve = curve_from_nid(params.curve_nid)?;
 
-        // Session keys are not implemented yet; fail loudly rather than mint
-        // a key the engine cannot use.
-        if params.session {
-            return Err(EngineError::Other(
-                "azihsm.session:true (session keys) is not yet supported by the engine".into(),
-            ));
-        }
-
         let slot = engine_data_slot()?;
         let data = slot
             .get(engine)
@@ -143,16 +138,18 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // First caller may be the keygen itself (idempotent open).
         data.open_hsm_from_env()?;
 
-        // Generate a persistent key pair on the HSM and export the masked
-        // blob + public-key DER. Usage is exclusive: sign/verify for
-        // digitalSignature, derive on both halves for keyAgreement.
+        // Generate a key pair on the HSM (persistent, or a session key that
+        // dies with the HSM session) and export the public-key DER, plus the
+        // masked blob when a path will receive it. Usage is exclusive:
+        // sign/verify for digitalSignature, derive on both halves for
+        // keyAgreement.
         let agree = params.key_usage == EcKeyUsage::KeyAgreement;
-        let (priv_key, masked, pub_der) = data.with_session(|session| {
+        let (priv_key, blob, pub_der) = data.with_session(|session| {
             let priv_props = HsmKeyPropsBuilder::default()
                 .class(HsmKeyClass::Private)
                 .key_kind(HsmKeyKind::Ecc)
                 .ecc_curve(curve)
-                .is_session(false)
+                .is_session(params.session)
                 .can_sign(!agree)
                 .can_derive(agree)
                 .build()
@@ -161,7 +158,7 @@ impl EcKeygenHandler for AzihsmEcKeygen {
                 .class(HsmKeyClass::Public)
                 .key_kind(HsmKeyKind::Ecc)
                 .ecc_curve(curve)
-                .is_session(false)
+                .is_session(params.session)
                 .can_verify(!agree)
                 .can_derive(agree)
                 .build()
@@ -172,17 +169,26 @@ impl EcKeygenHandler for AzihsmEcKeygen {
             let (priv_key, _pub) =
                 HsmKeyManager::generate_key_pair(session, &mut algo, priv_props, pub_props)
                     .map_err(|e| EngineError::wrap("generate EC key pair", e))?;
-            let exported = priv_key
-                .masked_key_vec()
+            // Zeroizing: the masked blob is the private key in its persistent
+            // form.
+            let exported = params
+                .masked_key_path
+                .as_ref()
+                .map(|path| {
+                    priv_key
+                        .masked_key_vec()
+                        .map(|masked| (path, Zeroizing::new(masked)))
+                })
+                .transpose()
                 .map_err(|e| EngineError::wrap("export masked key", e))
-                .and_then(|masked| {
+                .and_then(|blob| {
                     priv_key
                         .pub_key_der_vec()
-                        .map(|pub_der| (masked, pub_der))
+                        .map(|pub_der| (blob, pub_der))
                         .map_err(|e| EngineError::wrap("read public key DER", e))
                 });
             match exported {
-                Ok((masked, pub_der)) => Ok((priv_key, masked, pub_der)),
+                Ok((blob, pub_der)) => Ok((priv_key, blob, pub_der)),
                 Err(e) => {
                     crate::context::delete_hsm_key(priv_key, "generated EC private key");
                     Err(e)
@@ -191,9 +197,11 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         })?;
 
         // Persist the blob before touching `pkey`, so a write failure surfaces
-        // cleanly. (The blob stays valid independently of this key handle: a
-        // later unmask imports it as a fresh handle.)
-        if let Err(e) = write_masked_blob(&params.masked_key_path, &masked) {
+        // cleanly. (A persistent key's blob stays valid independently of this
+        // key handle: a later unmask imports it as a fresh handle.)
+        if let Some((path, masked)) = &blob
+            && let Err(e) = write_masked_blob(path, masked)
+        {
             crate::context::delete_hsm_key(priv_key, "generated EC private key");
             return Err(e);
         }
@@ -205,9 +213,10 @@ impl EcKeygenHandler for AzihsmEcKeygen {
         // engine-bound EC_KEY, freed after set1 takes its own reference (the
         // OOM failure path also rolls back the HSM-key retain).
         unsafe {
-            if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
+            let rc = ffi::EVP_PKEY_set1_EC_KEY(pkey, ec);
+            if let Err(e) = ossl_check(rc, "EVP_PKEY_set1_EC_KEY failed") {
                 crate::keyload::free_bound_ec_key(data, ec);
-                return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
+                return Err(e);
             }
             ffi::EC_KEY_free(ec);
         }

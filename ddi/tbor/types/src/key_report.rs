@@ -24,8 +24,8 @@ use crate::tbor;
 pub const TBOR_OP_KEY_REPORT: u8 = 0x10;
 
 /// Maximum wire length of the `masked_key` request buffer (a masked-key
-/// AEAD envelope; the plaintext size depends on the key kind).
-pub const KEY_REPORT_MASKED_KEY_MAX_LEN: usize = 512;
+/// AEAD envelope), matching the largest key returned by `UnwrapKey`.
+pub const KEY_REPORT_MASKED_KEY_MAX_LEN: usize = crate::UNWRAP_MASKED_KEY_MAX_LEN;
 
 /// Length of the caller-supplied `report_data` bound into the report.
 pub const KEY_REPORT_DATA_LEN: usize = 128;
@@ -44,7 +44,7 @@ pub struct TborKeyReportReq {
 
     /// The masked-key envelope to attest. Variable length up to
     /// [`KEY_REPORT_MASKED_KEY_MAX_LEN`].
-    #[tbor(max_len = 512)]
+    #[tbor(max_len = 3168)]
     pub masked_key: Vec<u8>,
 
     /// Caller-supplied [`KEY_REPORT_DATA_LEN`] (128 B) report data.

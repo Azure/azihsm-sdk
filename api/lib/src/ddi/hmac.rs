@@ -135,9 +135,10 @@ pub(crate) fn hmac_generate_key(
     // Fixed canonical key length for the SHA variant (validated by
     // `HsmHmacKey::validate_props`: 256/384/512 bits -> 32/48/64 B).
     let key_length = u8::try_from(props.bits() / 8).map_err(|_| HsmError::InvalidKeyProps)?;
+    let scope = props.tbor_scope();
     let req = TborHmacGenerateKeyReq {
         session_id: session.ex_session_id()?,
-        scope: props.tbor_scope(),
+        scope,
         hash_algo: hmac_hash_for_kind(props.kind())?,
         key_length,
         key_label: key_label.to_vec(),
@@ -148,6 +149,7 @@ pub(crate) fn hmac_generate_key(
             .map_err(HsmError::from)
     })?;
 
+    HsmMaskedKey::verify_scope(&resp.masked_key, scope)?;
     let key_props = HsmMaskedKey::to_key_props(&resp.masked_key)?;
     if !props.validate_dev_props(&key_props) {
         return Err(HsmError::InvalidKeyProps);

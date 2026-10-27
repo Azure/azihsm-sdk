@@ -107,13 +107,15 @@ fn sgl_desc_buf(desc: &[u8; 16]) -> GdmaBuf {
 
 /// Maps a partition ID to a GDMA host interface selector.
 ///
-/// Controller ID = `part_id + 1` because GDMA `IFC_SLCT` uses 0 for
-/// device memory, so host interfaces start at 1.
+/// `IFC_SLCT` names the AXI port that owns the buffer: the PCIe
+/// memory-location id of the function (PF `0x10`, VF `n` `0x20 + n`).
+/// Partition ids use the dense PcieFunction numbering, so widen before
+/// selecting the port; an id naming no function is rejected rather than
+/// widened into a port that would alias another function. A valid id never
+/// yields 0, which selects device memory.
 #[inline(always)]
 fn host_interface(part_id: HsmPartId) -> HsmResult<MemInterface> {
-    let ctrl_id = u8::from(part_id)
-        .checked_add(1)
-        .ok_or(HsmError::InvalidArg)?;
+    let ctrl_id = crate::pal::pfn_to_axi_id(u8::from(part_id)).ok_or(HsmError::InvalidArg)?;
     Ok(MemInterface::Host { ctrl_id })
 }
 

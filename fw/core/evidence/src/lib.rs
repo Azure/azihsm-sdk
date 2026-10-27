@@ -15,11 +15,26 @@
 //!
 //! 1. all three certificate chains validate as X.509 ECDSA chains;
 //! 2. the manufacturer and owner chains are validated but **not** anchored;
-//! 3. the partition-owner chain is anchored to the policy SATA key (a
-//!    non-leaf certificate's public key must equal it — SATA endorses the
-//!    leaf directly or indirectly);
+//! 3. the partition-owner chain is anchored to a **caller-selected**
+//!    sealing-authority key passed in [`TrustAnchors`] (a non-leaf
+//!    certificate's public key must equal it — the anchor endorses the
+//!    leaf directly or indirectly). The evidence-based `SdReseal`,
+//!    `SdCreatePeerBackup`, and `SdRestorePeerBackup` commands anchor to
+//!    the policy **SATA** key; the **optional** evidence verified by
+//!    `SdCreateRemoteBackup` / `SdRestoreRemoteBackup` (only when the
+//!    policy sets `require_trusted_sa_key`) anchors to the policy
+//!    **SAPOTA** key instead;
 //! 4. all three chains share the **same** leaf public key;
 //! 5. that shared leaf key signed the COSE_Sign1 attestation report.
+//!
+//! The anchor choice reflects two distinct trust models. For the
+//! evidence-based reseal and peer commands, [`verify_evidence`] is the sole
+//! source of the peer key (recovered from the attested COSE_Key) and is
+//! always SATA-anchored. For `SdCreateRemoteBackup` /
+//! `SdRestoreRemoteBackup`, the authoritative peer key instead comes from a
+//! separate, always-required SATA key certificate chain (see
+//! [`verify_receiver_cert_chain`]); the attestation evidence is optional
+//! and, when present, SAPOTA-anchored.
 //!
 //! The bulk DER/COSE items travel out of band as NVMe SGL Data Blocks; the
 //! caller passes the [`OobPtr`] locating them plus the per-item
@@ -94,17 +109,67 @@ pub struct EvidenceRefs<'a> {
 /// Trust anchors the evidence must chain to, taken from the partition
 /// policy. The manufacturer and owner chains are validated but unanchored;
 /// the partition-owner chain must be endorsed (directly or indirectly) by
-/// [`sata`](Self::sata).
+/// [`part_owner_anchor`](Self::part_owner_anchor).
 pub struct TrustAnchors<'a> {
-    /// SATA (Sealing Authority Trust Anchor) public key: raw `X ‖ Y`,
-    /// big-endian, exactly [`POINT_LEN`] bytes.
-    pub sata: &'a [u8],
+    /// Public key the partition-owner chain must chain to: raw `X ‖ Y`,
+    /// big-endian, exactly [`POINT_LEN`] bytes.  The **optional** evidence
+    /// verified by [`SdCreateRemoteBackup`] and [`SdRestoreRemoteBackup`]
+    /// anchors here to the policy **SAPOTA** key; the evidence-based
+    /// `SdReseal`, `SdCreatePeerBackup`, and `SdRestorePeerBackup` commands
+    /// anchor here to the policy **SATA** key.
+    ///
+    /// [`SdCreateRemoteBackup`]: azihsm_fw_ddi_tbor_types::TborSdCreateRemoteBackupReq
+    /// [`SdRestoreRemoteBackup`]: azihsm_fw_ddi_tbor_types::TborSdRestoreRemoteBackupReq
+    pub part_owner_anchor: &'a [u8],
+}
+
+/// Validate a receiver key certificate chain and recover its leaf key.
+///
+/// Validates `chain` as an X.509 ECDSA-P384 chain (root→leaf), requiring a
+/// **non-leaf** certificate's public key to byte-match `sata_anchor` (the
+/// policy SATA key), and writes the leaf public key — the receiver public
+/// key (`RcvrPub`) — into `rcvr_pub` in SEC1 uncompressed big-endian form
+/// (`0x04 ‖ X ‖ Y`, [`ATTESTED_KEY_LEN`] bytes).
+///
+/// This is the spec `RcvrCertChain` step of `CreateSD`: it authorizes the
+/// recipient key under the Sealing Authority (SATA) independently of any
+/// attestation report, and is the sole source of `RcvrPub` for the seal.
+///
+/// # Errors
+///
+/// * [`HsmError::InvalidArg`] — `sata_anchor` is not [`POINT_LEN`] bytes,
+///   `rcvr_pub` is too small, the chain is empty, or no non-leaf
+///   certificate matches `sata_anchor`.
+/// * `X509…` errors — a certificate is malformed or its signature / chain
+///   linkage is invalid (propagated from the chain validator).
+pub async fn verify_receiver_cert_chain<P>(
+    pal: &P,
+    io: &impl HsmIo,
+    oob: &OobPtr,
+    chain: &[CertDescriptor],
+    sata_anchor: &[u8],
+    rcvr_pub: &mut DmaBuf,
+) -> HsmResult<()>
+where
+    P: HsmGdmaController + HsmAlloc + HsmCrypto,
+{
+    if sata_anchor.len() != POINT_LEN || rcvr_pub.len() < ATTESTED_KEY_LEN {
+        return Err(HsmError::InvalidArg);
+    }
+
+    // The validated leaf point (`X ‖ Y`, big-endian) is the receiver key;
+    // prefix the SEC1 uncompressed tag so it is ready for the HPKE seal.
+    let mut leaf = [0u8; POINT_LEN];
+    validate_chain(pal, io, oob, chain, Some(sata_anchor), &mut leaf).await?;
+    rcvr_pub[0] = SEC1_UNCOMPRESSED;
+    rcvr_pub[1..ATTESTED_KEY_LEN].copy_from_slice(&leaf);
+    Ok(())
 }
 
 /// Verify a receiver's attestation evidence and recover the attested key.
 ///
 /// Validates the three certificate chains in `refs`, anchors the
-/// partition-owner chain to `anchors.sata`, requires a single shared leaf
+/// partition-owner chain to `anchors.part_owner_anchor`, requires a single shared leaf
 /// key across the chains, and confirms that leaf key signed the report.
 /// On success the attested public key recovered from the report's COSE_Key
 /// is written to `attested_key` in SEC1 uncompressed big-endian form
@@ -119,7 +184,7 @@ pub struct TrustAnchors<'a> {
 /// # Errors
 ///
 /// * [`HsmError::InvalidArg`] — a chain is empty, the partition-owner chain
-///   is not anchored to `anchors.sata`, the chains disagree on a leaf key,
+///   is not anchored to `anchors.part_owner_anchor`, the chains disagree on a leaf key,
 ///   the report signature does not verify, the attested key is not P-384,
 ///   `attested_key` is too small, or `policy_hash_out` is `Some` but the
 ///   report carries no v2 `policy_hash` (or the buffer is too small).
@@ -138,7 +203,7 @@ pub async fn verify_evidence<P>(
 where
     P: HsmGdmaController + HsmAlloc + HsmCrypto,
 {
-    if anchors.sata.len() != POINT_LEN || attested_key.len() < ATTESTED_KEY_LEN {
+    if anchors.part_owner_anchor.len() != POINT_LEN || attested_key.len() < ATTESTED_KEY_LEN {
         return Err(HsmError::InvalidArg);
     }
     let coord = COORD_LEN;
@@ -155,13 +220,15 @@ where
     }
 
     // Reqs 1, 3, 4: the partition-owner chain must validate, be anchored to
-    // the policy SATA key, and share the canonical leaf key.
+    // the caller-selected `anchors.part_owner_anchor` (the policy SATA key
+    // for reseal/peer, the policy SAPOTA key for remote create/restore),
+    // and share the canonical leaf key.
     validate_chain(
         pal,
         io,
         oob,
         refs.part_owner_chain,
-        Some(anchors.sata),
+        Some(anchors.part_owner_anchor),
         &mut leaf,
     )
     .await?;

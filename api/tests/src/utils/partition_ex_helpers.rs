@@ -10,13 +10,8 @@
 //! credential establishment (`init`).
 
 use azihsm_api::*;
-use parking_lot::Mutex;
 
-/// Serialises tests against the single shared partition the backend (emu or
-/// hardware) exposes. `cargo-nextest` runs each test in its own process, but
-/// this keeps a plain `cargo test` (single process, multi-threaded) correct
-/// too.
-pub(crate) static PARTITION_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) use crate::utils::partition::PARTITION_LOCK;
 
 /// Open the backend's partition at its maximum supported revision and
 /// factory-reset it, so each test starts from byte-identical state (no

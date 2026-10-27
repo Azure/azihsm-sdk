@@ -22,6 +22,9 @@ use crate::tbor;
 /// TBOR opcode for `SdSealingKeyGen`.
 pub const TBOR_OP_SD_SEALING_KEY_GEN: u8 = 0x09;
 
+/// Vault kind of an SD sealing key in masked-key metadata.
+pub const KEY_KIND_SD_SEALING: u8 = 41;
+
 /// Wire length of the returned sealing public key: a raw P-384 point
 /// (`x ‖ y`, 48 + 48 bytes).
 pub const SD_SEALING_PUB_KEY_LEN: usize = 96;

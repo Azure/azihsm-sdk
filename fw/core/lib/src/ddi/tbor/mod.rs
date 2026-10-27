@@ -41,6 +41,7 @@ pub mod part_info;
 pub mod part_init;
 pub mod policy;
 pub(crate) mod psk_change;
+pub(crate) mod pta;
 pub(crate) mod rsa_mod_exp;
 pub(crate) mod sd_backup;
 pub(crate) mod sd_create_peer_backup;

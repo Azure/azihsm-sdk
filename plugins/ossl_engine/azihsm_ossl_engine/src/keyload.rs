@@ -32,7 +32,6 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::ptr::null_mut;
 use std::sync::OnceLock;
 
 use azihsm_api::HsmEccKeyUnmaskAlgo;
@@ -42,6 +41,9 @@ use azihsm_api::HsmKeyManager;
 use azihsm_ossl_engine_core::engine::Engine;
 use azihsm_ossl_engine_core::error::EngineError;
 use azihsm_ossl_engine_core::error::EngineResult;
+use azihsm_ossl_engine_core::error::ossl_check;
+use azihsm_ossl_engine_core::error::ossl_ok;
+use azihsm_ossl_engine_core::exdata::new_ex_index;
 use azihsm_ossl_engine_core::ffi;
 use foreign_types::ForeignTypeRef;
 use openssl::pkey::PKey;
@@ -55,37 +57,51 @@ use crate::uri::KeyType;
 /// Load the private key named by `key_id` (an `azihsm://…` URI) and return an
 /// owning `*mut EVP_PKEY`. `engine` binds the returned key to the engine so it
 /// stays loaded while the key is alive (see [`build_ec_pkey`]).
+#[allow(unsafe_code)]
 pub fn load_key(
     engine: &Engine,
     data: &EngineData,
     key_id: &str,
 ) -> EngineResult<*mut ffi::EVP_PKEY> {
     let parsed = uri::parse(key_id)?;
-
-    // Reject key types with no load path yet before any HSM open or file I/O,
-    // so they fail with a clear error instead of a misleading environment or
-    // filesystem one. RSA-PSS loading lands with its signature support.
-    if parsed.key_type == KeyType::RsaPss {
-        return Err(EngineError::Other(
-            "RSA-PSS key loading is not yet supported".into(),
-        ));
-    }
-
-    // First real caller of the lazy HSM open (idempotent).
-    data.open_hsm_from_env()?;
-    let masked = read_masked_key(&parsed.masked_key_path)?;
+    let path = &parsed.masked_key_path;
     match parsed.key_type {
-        KeyType::Ec => load_ec(engine, data, &masked),
-        KeyType::Rsa => crate::rsaload::load_rsa(engine, data, &masked),
-        KeyType::RsaPss => unreachable!("rejected above"),
+        KeyType::Ec => load_ec(engine, data, &open_and_read(data, path)?),
+        KeyType::Rsa => crate::rsaload::load_rsa(engine, data, &open_and_read(data, path)?),
+        // The blob does not record RSA-PSS-ness; the URI type selects it.
+        KeyType::RsaPss => {
+            let pkey = crate::rsaload::load_rsa(engine, data, &open_and_read(data, path)?)?;
+            // SAFETY: pkey is the owning RSA key load_rsa just returned; on
+            // failure it is still ours to free.
+            unsafe {
+                if let Err(e) = azihsm_ossl_engine_core::rsa_pkey_method::set_rsa_pss_type(pkey) {
+                    ffi::EVP_PKEY_free(pkey);
+                    return Err(e);
+                }
+            }
+            Ok(pkey)
+        }
+        // A symmetric key is attached to a cipher context instead; refused
+        // without opening the HSM.
+        KeyType::Aes => Err(EngineError::Other(
+            "aes keys are not private keys: attach them to an AES cipher context \
+             with AZIHSM_CTRL_SET_KEY_URI"
+                .into(),
+        )),
     }
 }
 
-/// Upper bound on a masked-key blob. A masked EC/RSA key is far smaller; this
-/// bounds allocation against a caller-supplied path pointing at a very large or
-/// unbounded file. Mirrors `MAX_STORAGE_FILE_SIZE` in
-/// azihsm_ossl_engine_resiliency.
-const MAX_MASKED_KEY_SIZE: u64 = 64 * 1024;
+/// Open the HSM (the loader is the first real caller of the lazy, idempotent
+/// open) and read the masked-key blob at `path`.
+fn open_and_read(data: &EngineData, path: &Path) -> EngineResult<Zeroizing<Vec<u8>>> {
+    data.open_hsm_from_env()?;
+    read_masked_key(path)
+}
+
+/// Upper bound on a masked-key blob, the resiliency layer's file cap. A masked
+/// EC/RSA key is far smaller; this bounds allocation against a caller-supplied
+/// path pointing at a very large or unbounded file.
+const MAX_MASKED_KEY_SIZE: u64 = azihsm_ossl_engine_resiliency::MAX_STORAGE_FILE_SIZE;
 
 /// Read a masked-key blob with the same hardening the rest of the engine
 /// applies to key-material files: `O_NOFOLLOW` refuses a symlink at `path`,
@@ -214,7 +230,7 @@ fn bound_public_ec_key(engine: &Engine, der: &[u8]) -> EngineResult<*mut ffi::EC
     // SAFETY: ec is a fresh EC_KEY; set_group/set_public_key dup the borrowed
     // group/point out of `parsed`.
     let set_ok = unsafe {
-        ffi::EC_KEY_set_group(ec, group) == 1 && ffi::EC_KEY_set_public_key(ec, point) == 1
+        ossl_ok(ffi::EC_KEY_set_group(ec, group)) && ossl_ok(ffi::EC_KEY_set_public_key(ec, point))
     };
     // `group`/`point` borrow into `parsed`; keep it alive until here (they are
     // raw pointers, so the borrow checker won't do it for us) — they were dup'd
@@ -271,10 +287,13 @@ fn build_ec_pkey(
             free_bound_ec_key(data, ec);
             return Err(EngineError::Other("EVP_PKEY_new failed".into()));
         }
-        if ffi::EVP_PKEY_set1_EC_KEY(pkey, ec) != 1 {
+        if let Err(e) = ossl_check(
+            ffi::EVP_PKEY_set1_EC_KEY(pkey, ec),
+            "EVP_PKEY_set1_EC_KEY failed",
+        ) {
             ffi::EVP_PKEY_free(pkey);
             free_bound_ec_key(data, ec);
-            return Err(EngineError::Other("EVP_PKEY_set1_EC_KEY failed".into()));
+            return Err(e);
         }
         ffi::EC_KEY_free(ec);
         Ok(pkey)
@@ -299,11 +318,11 @@ fn attach_ec(data: &EngineData, ec: *mut ffi::EC_KEY, key: HsmEccPrivateKey) -> 
     // the engine's lifetime; the slot has no free callback, so no ownership is
     // transferred.
     let rc = unsafe { ffi::EC_KEY_set_ex_data(ec, idx, key_ptr.cast_mut().cast::<c_void>()) };
-    if rc != 1 {
+    if let Err(e) = ossl_check(rc, "EC_KEY_set_ex_data failed") {
         // Roll back the retain so the failed load doesn't leave the key in the
         // HSM until engine teardown.
         data.release_loaded_key(key_ptr);
-        return Err(EngineError::Other("EC_KEY_set_ex_data failed".into()));
+        return Err(e);
     }
 
     // Signing on this key already routes through the HSM: the EC_KEY adopted
@@ -330,7 +349,6 @@ pub(crate) fn ec_key_hsm_key(ec_key: *mut ffi::EC_KEY) -> *const HsmEccPrivateKe
 /// callback: the stored pointer is non-owning (the key is owned by
 /// [`EngineData`]), and a libcrypto-held free callback into this `.so` would be
 /// unsafe across `.so` unload (see [`azihsm_ossl_engine_core::exdata`]).
-#[allow(unsafe_code)]
 fn ec_key_ex_index() -> EngineResult<c_int> {
     static IDX: OnceLock<c_int> = OnceLock::new();
     static INIT: Mutex<()> = Mutex::new(());
@@ -342,22 +360,8 @@ fn ec_key_ex_index() -> EngineResult<c_int> {
     if let Some(i) = IDX.get() {
         return Ok(*i);
     }
-    // EC_KEY_get_ex_new_index is a macro in 1.1.x, so call the underlying
-    // CRYPTO_get_ex_new_index with the EC_KEY class directly.
-    // SAFETY: standard ex_data index registration with no new/dup/free callbacks.
-    let idx = unsafe {
-        ffi::CRYPTO_get_ex_new_index(
-            ffi::CRYPTO_EX_INDEX_EC_KEY as c_int,
-            0,
-            null_mut(),
-            None,
-            None,
-            None,
-        )
-    };
-    if idx < 0 {
-        return Err(EngineError::ExDataRegisterFailed);
-    }
+    // EC_KEY_get_ex_new_index is a macro in 1.1.x, so register by class.
+    let idx = new_ex_index(ffi::CRYPTO_EX_INDEX_EC_KEY as c_int)?;
     let _ = IDX.set(idx);
     Ok(idx)
 }
@@ -369,7 +373,6 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::path::PathBuf;
-    use std::ptr::NonNull;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
 
@@ -428,28 +431,19 @@ mod tests {
         assert!(read_masked_key(&p).is_err());
     }
 
-    /// `load_key` rejects RSA-PSS before opening the HSM, so this needs no
-    /// device — only a throwaway ENGINE to satisfy the signature. (RSA now has
-    /// a load path via `rsaload::load_rsa`; RSA-PSS lands with its signature
-    /// support.)
+    // An aes URI is refused before the HSM is opened or the blob read.
     #[test]
     #[allow(unsafe_code)]
-    fn load_key_rejects_rsa_pss_before_hsm_open() {
-        // SAFETY: ENGINE_new returns a fresh structural ref, freed below; the
-        // Engine wrapper is only used to satisfy the signature (the RSA-PSS arm
-        // returns before touching it).
-        unsafe {
-            let raw = ffi::ENGINE_new();
-            assert!(!raw.is_null(), "ENGINE_new");
-            let engine = Engine::from_ptr(NonNull::new(raw).unwrap());
-            let data = EngineData::new();
-            let err =
-                load_key(&engine, &data, "azihsm:///tmp/does-not-matter;type=rsa-pss").unwrap_err();
-            assert!(
-                format!("{err}").contains("RSA-PSS key loading is not yet supported"),
-                "unexpected error: {err}"
-            );
-            ffi::ENGINE_free(raw);
-        }
+    fn load_key_refuses_aes_without_opening_the_hsm() {
+        let data = EngineData::new();
+        // SAFETY: a fresh ENGINE, freed below; load_key fails before using it.
+        let raw = unsafe { ffi::ENGINE_new() };
+        // SAFETY: raw is the non-null ENGINE just created.
+        let engine = unsafe { Engine::from_ptr(std::ptr::NonNull::new(raw).unwrap()) };
+        let err = load_key(&engine, &data, "azihsm:///no/such/key.bin;type=aes").unwrap_err();
+        assert!(err.to_string().contains("AZIHSM_CTRL_SET_KEY_URI"), "{err}");
+        assert!(!data.is_hsm_open());
+        // SAFETY: raw is the ENGINE_new ref from above.
+        unsafe { ffi::ENGINE_free(raw) };
     }
 }

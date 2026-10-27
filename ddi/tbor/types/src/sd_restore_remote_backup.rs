@@ -48,6 +48,13 @@ pub struct TborSdRestoreRemoteBackupReq {
     /// restored.  Encoded as its 484-byte little-endian image.
     pub policy: PartPolicy,
 
+    /// Sender key certificate-chain descriptors (spec `SndrCertChain`).
+    /// Always present; validated and anchored to the policy **SATA** key,
+    /// its leaf public key is the sender public key (`SndrPub`) that sealed
+    /// `src_remote_backup`.  The DER bytes travel out of band.
+    #[tbor(max_len = 24)]
+    pub sender_cert_chain: Vec<CertDescriptor>,
+
     /// Sender manufacturer certificate-chain descriptors.  Flattened from
     /// the firmware `sender_evidence` field group (first of its four TOC
     /// entries); the DER bytes travel out of band.
@@ -104,6 +111,7 @@ mod tests {
             session_id: 9,
             masked_sealing_key: [0u8; MASKED_SEALING_KEY_LEN],
             policy: PartPolicy::zeroed(),
+            sender_cert_chain: Vec::new(),
             sender_mfgr_cert_chain: Vec::new(),
             sender_owner_cert_chain: Vec::new(),
             sender_part_owner_cert_chain: Vec::new(),

@@ -14,6 +14,8 @@
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod asn1_method;
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod cipher_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod ec_method;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod engine;
@@ -24,10 +26,18 @@ pub mod exdata;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod hkdf_method;
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod mem;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 mod method_table;
 #[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod pkey_method;
 #[cfg(all(target_os = "linux", feature = "engine"))]
+pub mod rsa_method;
+#[cfg(all(target_os = "linux", feature = "engine"))]
 pub mod rsa_pkey_method;
 
 pub use azihsm_ossl_engine_sys as ffi;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub use method_table::FILE_OUTPUT_SIZE_HINT;
+#[cfg(all(target_os = "linux", feature = "engine"))]
+pub use method_table::MASKED_KEY_MAX_BUFFER;

@@ -11,13 +11,12 @@
 //! Backend is selected at compile time by
 //! [`azihsm_ddi::AzihsmDdi::default`].
 
+use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
+use azihsm_ddi_tbor_test_harness::TestCtx;
+use azihsm_ddi_tbor_test_harness::CO_PSK_ID;
 use azihsm_ddi_tbor_types::SessionType;
 use azihsm_ddi_tbor_types::TborApiRevReq;
 use azihsm_ddi_tbor_types::TborStatus;
-
-use crate::harness::assertions::assert_fw_rejects;
-use crate::harness::TestCtx;
-use crate::harness::CO_PSK_ID;
 
 const EXPECTED: azihsm_ddi_tbor_types::TborApiRevResp = azihsm_ddi_tbor_types::TborApiRevResp {
     min_ver: 1,
