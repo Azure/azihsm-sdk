@@ -44,7 +44,9 @@ pub(crate) fn ecdh_test_pair(curve: HsmEccCurve) -> EcdhTestPair {
 /// Copies big-endian `src` into the front of `dst` in little-endian order.
 ///
 /// `dst` must be at least `src.len()` bytes; bytes past `src.len()` are left
-/// unchanged, so a zeroed `dst` keeps its zero padding.
+/// unchanged, so a zeroed `dst` keeps its zero padding. The key-agreement PCT
+/// calls it three times, so it stays out of line.
+#[inline(never)]
 pub(crate) fn be_to_le(src: &[u8], dst: &mut [u8]) {
     for (d, s) in dst.iter_mut().zip(src.iter().rev()) {
         *d = *s;

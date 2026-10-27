@@ -19,8 +19,8 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmRsa;
 use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmRsaPct;
-use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_uno_pct::rsa_pct;
+use azihsm_fw_uno_pct::scratch;
 
 use crate::UnoHsmPal;
 
@@ -45,7 +45,7 @@ impl UnoHsmPal {
     ) -> HsmResult<bool> {
         self.alloc_scoped_async(io, async |alloc| -> HsmResult<bool> {
             let pub_len = self.rsa_priv_pub_key(io, key, None)?;
-            let pub_key = alloc.dma_alloc(pub_len)?;
+            let pub_key = scratch(alloc, pub_len)?;
             self.rsa_priv_pub_key(io, key, Some(&mut *pub_key))?;
             rsa_pct(self, io, alloc, key_size, &pct, key, pub_key).await
         })

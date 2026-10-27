@@ -100,7 +100,7 @@ pub async fn rsa_pct<P: HsmRsa + HsmHash>(
     // `e = d = 1`, would pass the round trip, so the middle value must differ
     // from the input too.
     let consistent = result.is_ok() && middle[..] != input[..] && output[..] == input[..];
-    output.zeroize();
+    crate::wipe(output);
     result.map(|()| consistent)
 }
 

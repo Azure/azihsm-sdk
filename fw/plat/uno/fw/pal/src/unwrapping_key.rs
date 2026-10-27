@@ -38,13 +38,14 @@ use azihsm_fw_hsm_pal_traits::HsmPartId;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 use azihsm_fw_hsm_pal_traits::HsmRsaKey;
 use azihsm_fw_hsm_pal_traits::HsmRsaPct;
-use azihsm_fw_hsm_pal_traits::HsmScopedAlloc;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_uno_drivers_part_store::PartStore;
 use azihsm_fw_uno_drivers_part_store::UnwrappingKeySlot;
 use azihsm_fw_uno_pct::ct_eq;
+use azihsm_fw_uno_pct::scratch;
+use azihsm_fw_uno_pct::wipe;
 
 use crate::UnoHsmPal;
 
@@ -136,7 +137,7 @@ impl UnoHsmPal {
         // Test a copy. The slot can change while the test waits on the PKA,
         // for example when a teardown wipes it and the SP publishes a new key.
         self.alloc_scoped_async(io, async |alloc| {
-            let Ok(key) = alloc.dma_alloc(part.unwrapping_key_bk().len()) else {
+            let Ok(key) = scratch(alloc, part.unwrapping_key_bk().len()) else {
                 return;
             };
             key.copy_from_slice(part.unwrapping_key_bk());
@@ -146,7 +147,7 @@ impl UnoHsmPal {
             // marked or discarded, and the SP doesn't write an occupied slot.
             let same = part.unwrapping_key_slot() == Some(UnwrappingKeySlot::PendingPct)
                 && ct_eq(part.unwrapping_key_bk(), key);
-            key.zeroize();
+            wipe(key);
             match result {
                 Ok(true) if same => part.mark_unwrapping_key_pct_passed(),
                 Ok(false) => {

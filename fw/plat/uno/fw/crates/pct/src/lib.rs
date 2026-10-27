@@ -34,6 +34,10 @@ pub use rsa::rsa_pct;
 /// Compares two byte strings without stopping at the first difference, so
 /// the time it takes doesn't depend on where they differ. Use it for secret
 /// data, such as key material. Strings of different lengths are unequal.
+///
+/// Out of line, so that callers with a known length don't each get their own
+/// unrolled copy of the loop.
+#[inline(never)]
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -45,15 +49,27 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 /// Allocates PCT scratch.
 ///
 /// A PAL's scoped allocator can inline its bounds checks into every caller.
-/// The PCTs allocate through these out-of-line wrappers instead, so that code
-/// appears once.
+/// The PCTs, and the PAL code that runs them, allocate through these
+/// out-of-line wrappers instead, so that code appears once.
 #[inline(never)]
-fn scratch<A: HsmScopedAlloc>(alloc: &A, len: usize) -> HsmResult<&mut DmaBuf> {
+pub fn scratch<A: HsmScopedAlloc>(alloc: &A, len: usize) -> HsmResult<&mut DmaBuf> {
     alloc.dma_alloc(len)
 }
 
 /// Allocates zeroed PCT scratch; see [`scratch`].
 #[inline(never)]
 fn scratch_zeroed<A: HsmScopedAlloc>(alloc: &A, len: usize) -> HsmResult<&mut DmaBuf> {
-    alloc.dma_alloc_zeroed(len)
+    let buf = scratch(alloc, len)?;
+    buf.fill(0);
+    Ok(buf)
+}
+
+/// Wipes scratch that held secret values, with [`DmaBuf::zeroize`].
+///
+/// `zeroize` inlines its byte loop into every caller. The PCTs, and the PAL
+/// code that runs them, wipe through this out-of-line wrapper instead, so
+/// that loop appears once.
+#[inline(never)]
+pub fn wipe(buf: &mut DmaBuf) {
+    buf.zeroize();
 }

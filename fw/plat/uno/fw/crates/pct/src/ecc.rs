@@ -137,8 +137,8 @@ async fn key_agreement<P: HsmEcc>(
     let secret_len = curve.secret_len();
     let consistent =
         derived.is_ok() && crate::ct_eq(&from_key[..secret_len], &from_test_key[..secret_len]);
-    from_key.zeroize();
-    from_test_key.zeroize();
+    crate::wipe(from_key);
+    crate::wipe(from_test_key);
     derived.map(|()| consistent)
 }
 

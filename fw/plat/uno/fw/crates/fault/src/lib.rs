@@ -211,6 +211,8 @@ pub fn explicit_crash(additional_info: Option<&str>) -> ! {
 // `reason` is consumed only by `error!`, which compiles out when no trace
 // level is enabled (production builds); allow keeps that build warning-free.
 #[allow(unused_variables)]
+#[cold]
+#[inline(never)]
 pub fn enter_error_state(reason: HsmError) -> ! {
     error!("fips", reason, "#### FIPS error state ####");
     #[cfg(not(feature = "semihosting"))]

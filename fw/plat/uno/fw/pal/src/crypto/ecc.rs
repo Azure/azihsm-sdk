@@ -368,7 +368,7 @@ impl UnoHsmPal {
         embedded: &[u8],
     ) -> HsmResult<()> {
         self.alloc_scoped_async(io, async |alloc| -> HsmResult<()> {
-            let pub_key = alloc.dma_alloc(curve.wire_pub_key_len())?;
+            let pub_key = azihsm_fw_uno_pct::scratch(alloc, curve.wire_pub_key_len())?;
             self.ecc_priv_pub_key(io, priv_key, Some(&mut *pub_key))
                 .await?;
             if !is_wire_point(curve, embedded, pub_key) {
