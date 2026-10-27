@@ -375,19 +375,22 @@ impl HsmSessionManager for UnoHsmPal {
         let physical_id = table.physical_id(id)?;
         let blob = self.vault_key(io, physical_id)?;
         // The masking key follows `api_rev` in a legacy MBOR `Session`
-        // blob, or `api_rev ‖ param_key` in a `SessionEx` (CU/CO) blob;
-        // pick the offset from the blob length so both schedules work.
+        // blob (80 B `aes32 ‖ hmac48` cbc key), or `api_rev ‖ param_key`
+        // in a `SessionEx` (CU/CO) blob (32 B AES-256-GCM aead key); pick
+        // the offset *and length* from the blob length so both schedules
+        // work.
         // A blob of any other length indicates vault corruption, not a
         // caller error — surface it as `InternalError` (matches the trait
         // contract and the std PAL).
-        let offset = match blob.len() {
-            SESSION_BLOB_SIZE => SESSION_API_REV_SIZE,
-            SESSION_CU_BLOB_SIZE | SESSION_CU_AUTH_BLOB_SIZE => {
-                SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN
-            }
+        let (offset, size) = match blob.len() {
+            SESSION_BLOB_SIZE => (SESSION_API_REV_SIZE, SESSION_MASKING_KEY_SIZE),
+            SESSION_CU_BLOB_SIZE | SESSION_CU_AUTH_BLOB_SIZE => (
+                SESSION_API_REV_SIZE + SESSION_PARAM_KEY_LEN,
+                SESSION_MASKING_KEY_LEN,
+            ),
             _ => return Err(HsmError::InternalError),
         };
-        Ok(blob.split_at(offset).1.split_at(SESSION_MASKING_KEY_SIZE).0)
+        Ok(blob.split_at(offset).1.split_at(size).0)
     }
 
     fn session_try_consume_psk_change(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
