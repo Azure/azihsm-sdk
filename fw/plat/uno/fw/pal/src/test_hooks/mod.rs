@@ -55,6 +55,11 @@
 //! and 2008, so the refactor host package and firmware must be updated
 //! together.
 
+use core::future::Future;
+use core::pin::Pin;
+use core::task::Context;
+use core::task::Poll;
+
 #[cfg(feature = "azihsm_test_hooks")]
 mod clear_user_credentials;
 mod common;
@@ -77,6 +82,18 @@ use azihsm_fw_hsm_pal_traits::HsmResult;
 use common::ReqHdr;
 
 use crate::pal::UnoHsmPal;
+
+/// Keep test-hook polling out of the shared host-IO state machine.
+pub(crate) struct Outlined<F>(pub(crate) Pin<F>);
+
+impl<F: Future> Future for Outlined<&mut F> {
+    type Output = F::Output;
+
+    #[inline(never)]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.get_mut().0.as_mut().poll(cx)
+    }
+}
 
 /// `DdiOp::TestAction` — matches `mcr-hsm`'s discriminant so the same
 /// host tooling drives both firmwares.

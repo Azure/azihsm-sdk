@@ -37,6 +37,10 @@
 
 #![no_std]
 #![no_main]
+// The `handle_io` Embassy task future is a deeply nested async state machine;
+// with `trace-uart` enabled its layout computation exceeds rustc's default
+// recursion limit of 128. Raise it to give headroom.
+#![recursion_limit = "256"]
 
 mod trampoline;
 
@@ -143,6 +147,18 @@ async fn heartbeat() -> ! {
     }
 }
 
+/// Periodic cryptographic self-test task (CAST).
+///
+/// Started once boot completes; runs one self-test per interval for the
+/// lifetime of the firmware.
+///
+/// # Returns
+/// Never returns (`!`).
+#[embassy_executor::task]
+async fn periodic_self_tests() -> ! {
+    HSM.get().await.pal().run_periodic_self_tests().await
+}
+
 /// IPC message/event receive loop — runs forever as a single
 /// Embassy task. PAL handles boot handshake internally;
 /// app spawns [`poll_io`] once boot completes.
@@ -167,6 +183,9 @@ async fn poll_ipc(spawner: Spawner) -> ! {
             booted = true;
             info!("app", "boot complete, spawning poll_io");
             if let Ok(token) = poll_io(spawner) {
+                spawner.spawn(token);
+            }
+            if let Ok(token) = periodic_self_tests() {
                 spawner.spawn(token);
             }
         }

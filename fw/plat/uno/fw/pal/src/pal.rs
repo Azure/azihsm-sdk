@@ -519,6 +519,14 @@ impl UnoHsmPal {
         core_status::set(CoreStatus::Alive);
     }
 
+    /// Runs the periodic cryptographic self-tests forever (one test per interval).
+    ///
+    /// Must only be started once the PAL is in [`BootPhase::Running`], after
+    /// the pre-operational suite has passed. Never returns.
+    pub async fn run_periodic_self_tests(&self) -> ! {
+        crate::self_test::run_periodic(self).await
+    }
+
     /// Validate and acknowledge an expected boot state-change message.
     ///
     /// # Parameters
@@ -656,6 +664,20 @@ impl UnoHsmPal {
                 if !self.try_ack_state_change(buf, IoProcessorState::Start, "WaitStart") {
                     return;
                 }
+                // Pre-operational self-test gate (FIPS): the in-scope algorithm
+                // KATs must pass before the HSM exposes any crypto. Crypto
+                // engines are construct-ready (AES/SHA/PKA need no boot-time
+                // init), so this runs before `on_boot_complete`. On failure we
+                // withhold the transition — the PAL never reaches `Running`,
+                // never publishes `BootStatus::Run`. As in the reference
+                // firmware (`HsmEnv::new` -> `preops_cast`), a failure panics;
+                // the panic handler is the fail-stop path.
+                let io = crate::io::UnoHsmIo::self_test();
+                if let Err(_e) = crate::self_test::run_pre_op(self, &io).await {
+                    error!("selftest", _e, "pre-operational self-test FAILED");
+                    panic!("pre-operational self-test failed");
+                }
+                info!("selftest", "pre-operational self-test PASSED");
                 self.on_boot_complete()
             }
             BootPhase::Running => {
@@ -810,7 +832,8 @@ impl UnoHsmPal {
 impl HsmCustomDispatch for UnoHsmPal {
     #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]
     async fn mbor_dispatch(&self, io: &impl HsmIo, req: &mut DmaBuf) -> HsmResult<&DmaBuf> {
-        crate::test_hooks::mbor_dispatch(self, io, req).await
+        let future = core::pin::pin!(crate::test_hooks::mbor_dispatch(self, io, req));
+        crate::test_hooks::Outlined(future).await
     }
 
     #[cfg(not(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks")))]

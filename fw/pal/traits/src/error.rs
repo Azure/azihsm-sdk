@@ -450,6 +450,10 @@ pub enum HsmError {
     /// exhaustion.
     DmaAllocLenOverrun = 0x0870010C,
 
+    /// A cryptographic algorithm self-test (CAST) produced output that
+    /// did not match its known-answer vector.
+    SelfTestKatMismatch = 0x0870010D,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of
