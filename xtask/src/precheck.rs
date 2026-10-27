@@ -459,7 +459,7 @@ fn default_tests(exclude: &[String], profile: Option<String>, min: bool) -> Vec<
             filterset: None,
             profile: profile.clone().or(Some("ci-emu-smoke".to_string())),
             exclude: exclude.to_owned(),
-            test: Some("azihsm_table_count_tests".to_string()),
+            test: Some("azihsm_ddi_tests".to_string()),
             filter: vec!["smoke".to_string()],
         });
     }
