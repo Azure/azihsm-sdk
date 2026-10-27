@@ -564,6 +564,13 @@ CK_RV azihsm_pkcs11_key_aes_cbc_stream_update(
             stream->encrypt ? "encrypt" : "decrypt",
             (int)st
         );
+        /* The SDK writes block by block, so a device call failing part-way
+         * can leave released plaintext behind a reported length of zero. The
+         * update never writes more than the held-back block plus the part. */
+        azihsm_pkcs11_wipe(
+            out,
+            ((CK_ULONG)cap < (in_len + AES_BLOCK_LEN)) ? cap : (in_len + AES_BLOCK_LEN)
+        );
         /* The only handle passed is this module's own stream context, so its
          * going stale is an internal fault rather than a caller's bad key. */
         return azihsm_pkcs11_ckr_from_azihsm_hint((int)st, CKR_FUNCTION_FAILED);
