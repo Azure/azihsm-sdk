@@ -28,10 +28,6 @@ use crate::error::EngineError;
 use crate::error::EngineResult;
 use crate::error::ossl_check;
 
-/// Sentinel `CRYPTO_get_ex_new_index` returns on allocation failure; any
-/// other (non-negative) value is a valid slot index.
-const EX_NEW_INDEX_FAILURE: c_int = -1;
-
 /// Typed handle to an ex_data slot on `ENGINE` for values of type `T`. `Copy`
 /// (holds only the slot index).
 ///
@@ -58,24 +54,8 @@ impl<T: Send + Sync + 'static> EngineExData<T> {
     /// module docs for the rationale; callers must `take()` to drop the
     /// stored value.
     pub fn register() -> EngineResult<Self> {
-        // SAFETY: All inputs are constants or 'static. No callbacks are
-        // registered (see module docs).
-        #[allow(unsafe_code)]
-        let idx = unsafe {
-            ffi::CRYPTO_get_ex_new_index(
-                ffi::CRYPTO_EX_INDEX_ENGINE as c_int,
-                0,
-                null_mut(),
-                None,
-                None,
-                None,
-            )
-        };
-        if idx == EX_NEW_INDEX_FAILURE {
-            return Err(EngineError::ExDataRegisterFailed);
-        }
         Ok(Self {
-            idx,
+            idx: new_ex_index(ffi::CRYPTO_EX_INDEX_ENGINE as c_int)?,
             _marker: PhantomData,
         })
     }
@@ -142,6 +122,19 @@ impl<T: Send + Sync + 'static> EngineExData<T> {
         // SAFETY: `ptr` was put there by `set`; the slot is now cleared.
         Ok(Some(unsafe { Box::from_raw(ptr) }))
     }
+}
+
+/// Allocate a fresh ex_data index of `class` (`CRYPTO_EX_INDEX_*`), with no
+/// argument and no new/dup/free callbacks (see module docs).
+#[allow(unsafe_code)]
+pub fn new_ex_index(class: c_int) -> EngineResult<c_int> {
+    // SAFETY: all inputs are constants or 'static; no callbacks are registered.
+    let idx = unsafe { ffi::CRYPTO_get_ex_new_index(class, 0, null_mut(), None, None, None) };
+    // -1 on failure; a valid index is never negative.
+    if idx < 0 {
+        return Err(EngineError::ExDataRegisterFailed);
+    }
+    Ok(idx)
 }
 
 #[cfg(test)]

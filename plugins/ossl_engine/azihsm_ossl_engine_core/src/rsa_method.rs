@@ -28,7 +28,9 @@ use azihsm_ossl_engine_sys as ffi;
 
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::RetCode;
 use crate::error::catch_panic;
+use crate::error::ossl_check;
 use crate::error::result_to_int;
 
 /// Caller-supplied RSA signing for an engine-backed RSA key, invoked through the
@@ -71,7 +73,7 @@ unsafe extern "C" fn c_rsa_sign<H: RsaSignHandler>(
     catch_panic(
         // SAFETY: forwarding the arguments OpenSSL passed to this sign callback.
         || result_to_int(unsafe { rsa_sign_inner::<H>(md_nid, m, m_len, sigret, siglen, rsa) }),
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -152,10 +154,11 @@ pub fn new_rsa_sign_method<H: RsaSignHandler>() -> EngineResult<*mut ffi::RSA_ME
     }
     // SAFETY: method is our fresh dup; install our sign slot. In 1.1.1 RSA_sign
     // dispatches to a non-NULL rsa_sign (no flag needed).
-    if unsafe { ffi::RSA_meth_set_sign(method, Some(c_rsa_sign::<H>)) } != 1 {
+    let rc = unsafe { ffi::RSA_meth_set_sign(method, Some(c_rsa_sign::<H>)) };
+    if let Err(e) = ossl_check(rc, "RSA_meth_set_sign failed") {
         // SAFETY: method is ours and not yet published.
         unsafe { ffi::RSA_meth_free(method) };
-        return Err(EngineError::Other("RSA_meth_set_sign failed".into()));
+        return Err(e);
     }
     // RSA_meth_dup preserves RSA_FLAG_FIPS_METHOD from RSA_PKCS1_OpenSSL(); clear
     // it so this custom host-padding/HSM sign is not advertised as OpenSSL's
@@ -163,10 +166,11 @@ pub fn new_rsa_sign_method<H: RsaSignHandler>() -> EngineResult<*mut ffi::RSA_ME
     // SAFETY: method is our fresh dup; RSA_meth_get_flags reads its flags.
     let flags = unsafe { ffi::RSA_meth_get_flags(method) } & !ffi::RSA_FLAG_FIPS_METHOD_CONST;
     // SAFETY: method is our fresh dup; RSA_meth_set_flags writes its flags.
-    if unsafe { ffi::RSA_meth_set_flags(method, flags) } != 1 {
+    let rc = unsafe { ffi::RSA_meth_set_flags(method, flags) };
+    if let Err(e) = ossl_check(rc, "RSA_meth_set_flags failed") {
         // SAFETY: method is ours and not yet published.
         unsafe { ffi::RSA_meth_free(method) };
-        return Err(EngineError::Other("RSA_meth_set_flags failed".into()));
+        return Err(e);
     }
     Ok(method)
 }

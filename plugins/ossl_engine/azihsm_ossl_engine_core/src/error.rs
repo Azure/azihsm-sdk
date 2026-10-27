@@ -17,6 +17,7 @@
 //! - [`catch_panic`] — wrap a C entry point so a Rust panic returns a
 //!   caller-supplied fallback instead of unwinding into C (which is UB).
 
+use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::c_int;
 use std::panic::UnwindSafe;
@@ -116,15 +117,40 @@ impl From<RetCode> for c_int {
     }
 }
 
-/// Map an OpenSSL `1`(success)/`0`(failure) return code into a result,
-/// attaching `err` on failure. Keeps the bare `1`/`!= 1` literal out of
-/// the call sites.
-pub(crate) fn ossl_check(rc: c_int, err: EngineError) -> EngineResult<()> {
-    if rc == RetCode::Success as c_int {
-        Ok(())
-    } else {
-        Err(err)
+/// `EVP_PKEY_METHOD` ctrl result for an unsupported command.
+pub const CTRL_UNSUPPORTED: c_int = -2;
+
+/// `EVP_CIPHER` ctrl result for an unimplemented control type.
+pub const CTRL_NOT_IMPLEMENTED: c_int = -1;
+
+/// `OPENSSL_FILE`/`OPENSSL_LINE` stand-ins: no source location.
+pub(crate) const NO_FILE: &CStr = c"";
+pub(crate) const NO_LINE: c_int = 0;
+
+/// `ERR_put_error` function code for an unknown function (a negative value
+/// would pack an invalid code).
+const ERR_FUNC_UNKNOWN: c_int = 0;
+
+impl From<&'static str> for EngineError {
+    fn from(msg: &'static str) -> Self {
+        Self::Other(msg.into())
     }
+}
+
+/// Map an OpenSSL 1/0 return code to a result. `err` is converted only on
+/// failure, so a `&'static str` message costs nothing on success.
+pub fn ossl_check(rc: c_int, err: impl Into<EngineError>) -> EngineResult<()> {
+    if ossl_ok(rc) { Ok(()) } else { Err(err.into()) }
+}
+
+/// Whether an OpenSSL 1/0 return code is a success.
+pub fn ossl_ok(rc: c_int) -> bool {
+    rc == RetCode::Success as c_int
+}
+
+/// Whether a ctrl/ctrl_str result is a success: positive, not only 1.
+pub fn ctrl_ok(rc: c_int) -> bool {
+    rc > 0
 }
 
 /// Push a human-readable message onto the OpenSSL ERR queue.
@@ -143,12 +169,17 @@ pub fn openssl_err(reason: c_int, msg: &str) {
     };
     let msg_c = CString::new(msg).unwrap_or_default();
 
-    // SAFETY: ERR_put_error stores the file pointer as-is; we pass a
-    // 'static empty C string so it remains valid for the lifetime of the
-    // ERR queue entry. ERR_add_error_data copies its argument internally.
-    // func is 0 ("unknown"): a negative value packs an invalid function code.
+    // SAFETY: ERR_put_error stores the file pointer as-is; NO_FILE is a
+    // 'static C string, valid for the lifetime of the ERR queue entry.
+    // ERR_add_error_data copies its one string argument.
     unsafe {
-        ffi::ERR_put_error(ffi::ERR_LIB_ENGINE as c_int, 0, reason, c"".as_ptr(), 0);
+        ffi::ERR_put_error(
+            ffi::ERR_LIB_ENGINE as c_int,
+            ERR_FUNC_UNKNOWN,
+            reason,
+            NO_FILE.as_ptr(),
+            NO_LINE,
+        );
         ffi::ERR_add_error_data(1, msg_c.as_ptr());
     }
 }
