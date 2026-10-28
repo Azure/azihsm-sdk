@@ -34,7 +34,11 @@ mod vectors;
 
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_uno_drivers_aes::AesError;
+use azihsm_fw_uno_drivers_sha::ShaError;
+use azihsm_fw_uno_drivers_upka::UpkaError;
 use embassy_time::Duration;
+use embassy_time::Instant;
 use embassy_time::Timer;
 use embassy_time::with_timeout;
 
@@ -158,6 +162,9 @@ const RNG_STATUS_POLL_MS: u64 = 20;
 /// Time between two periodic tests.
 const PERIODIC_INTERVAL_SECS: u64 = 60;
 
+/// Delay between attempts to acquire a busy crypto queue.
+const QUEUE_RETRY_INTERVAL_SECS: u64 = 1;
+
 impl SelfTest {
     /// Returns `(test kind, engine)` for periodic failure attribution.
     fn id(self) -> (u32, u32) {
@@ -258,8 +265,8 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
 ///
 /// Tests run one at a time on the dedicated self-test slot, so two periodic
 /// tests can never overlap; PKA engines are shared with live IO through
-/// `acquire_engine`, which waits for a busy engine. A failure or timeout
-/// stops the HSM.
+/// `acquire_engine`, which waits for a busy engine. A full crypto queue is
+/// retried for at most one interval; other failures stop the HSM.
 pub(crate) async fn run_periodic(pal: &UnoHsmPal) -> ! {
     let io = UnoHsmIo::self_test();
     let mut index = 0;
@@ -268,15 +275,43 @@ pub(crate) async fn run_periodic(pal: &UnoHsmPal) -> ! {
         Timer::after(Duration::from_secs(PERIODIC_INTERVAL_SECS)).await;
 
         let test = periodic_test(index);
-        let result = match test {
-            SelfTest::Rng => run_rng_periodic(pal).await,
-            _ => match with_timeout(Duration::from_secs(1), test.run(pal, &io)).await {
-                Ok(result) => result,
-                Err(_) => Err(HsmError::CryptoTimeout),
-            },
-        };
-        if let Err(e) = result {
-            notify_self_test_failure(test, e);
+        match test {
+            SelfTest::Rng => {
+                if let Err(e) = run_rng_periodic(pal).await {
+                    notify_self_test_failure(test, e);
+                }
+            }
+            _ => {
+                let admission_deadline =
+                    Instant::now() + Duration::from_secs(PERIODIC_INTERVAL_SECS);
+                loop {
+                    let result = {
+                        let future = test.run(pal, &io);
+                        let mut future = core::pin::pin!(future);
+                        match with_timeout(Duration::from_secs(1), future.as_mut()).await {
+                            Ok(result) => result,
+                            Err(_) => notify_self_test_failure(test, HsmError::CryptoTimeout),
+                        }
+                    };
+                    match result {
+                        Ok(()) => break,
+                        Err(e)
+                            if e == AesError::QUEUE_FULL
+                                || e == ShaError::QUEUE_FULL
+                                || e == UpkaError::QUEUE_FULL =>
+                        {
+                            let retry_at = (Instant::now()
+                                + Duration::from_secs(QUEUE_RETRY_INTERVAL_SECS))
+                            .min(admission_deadline);
+                            Timer::at(retry_at).await;
+                            if Instant::now() >= admission_deadline {
+                                notify_self_test_failure(test, e);
+                            }
+                        }
+                        Err(e) => notify_self_test_failure(test, e),
+                    }
+                }
+            }
         }
 
         index += 1;

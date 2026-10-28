@@ -263,7 +263,7 @@ pub(crate) fn clear_io_peak(pal: &UnoHsmPal, io_index: u16) {
 /// - `slice`: mutable view over the newly allocated region.
 ///
 /// Returns [`HsmError::NotEnoughSpace`] if aligned allocation would exceed heap capacity.
-#[inline(always)]
+#[inline(never)]
 fn bump(
     pal: &UnoHsmPal,
     io_index: u16,

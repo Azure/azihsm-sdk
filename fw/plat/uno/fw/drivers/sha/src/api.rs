@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use core::future::poll_fn;
+use core::ops::AsyncFnOnce;
 use core::task::Poll;
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -17,6 +18,8 @@ use azihsm_fw_uno_reg_soc::sha::regs::ShaRegs;
 use azihsm_fw_uno_reg_soc::sha::SHA_BASE;
 use bitfield_struct::bitfield;
 use embassy_sync::waitqueue::WakerRegistration;
+use embassy_time::with_timeout;
+use embassy_time::Duration;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
 
@@ -239,6 +242,9 @@ struct WaiterSlot {
     /// True for [`ShaDriver::with_exclusive`] slots — prevents
     /// [`ShaDriver::wake`] from submitting a command for this slot.
     exclusive: bool,
+
+    /// An exclusive command has been submitted and is awaiting completion.
+    exclusive_in_flight: bool,
 }
 
 struct ShaState<const DEPTH: usize> {
@@ -308,6 +314,7 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
                     waker: WakerRegistration::new(),
                     status: 0,
                     exclusive: false,
+                    exclusive_in_flight: false,
                 }),
                 head: 0,
                 active: 0,
@@ -416,6 +423,14 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
             if s.active != s.tail {
                 let idx = (s.active & Self::MASK) as usize;
                 let slot = &mut s.slots[idx];
+                if slot.exclusive {
+                    if slot.exclusive_in_flight {
+                        slot.status = flags as u8;
+                        slot.exclusive_in_flight = false;
+                        slot.waker.wake();
+                    }
+                    return;
+                }
                 slot.status = flags as u8;
                 slot.waker.wake();
 
@@ -425,8 +440,7 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
                     if !s.slots[next].exclusive {
                         submit_cmd(next);
                     } else {
-                        // Exclusive slot — wake it so it can start its
-                        // synchronous work. Don't submit a command.
+                        // The exclusive owner submits its own commands.
                         s.slots[next].waker.wake();
                     }
                 }
@@ -434,23 +448,20 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
         });
     }
 
-    /// Acquire exclusive synchronous access to the SHA engine.
+    /// Acquire exclusive access to the SHA engine.
     ///
     /// Allocates a waiter slot and waits (async) for it to become the active
     /// slot — meaning all prior callers have completed and the hardware is
-    /// available. Then runs `f` synchronously with a [`ShaExclusive`] handle
-    /// that exposes busy-polled [`digest`](ShaExclusive::digest) and
-    /// [`digest_verify`](ShaExclusive::digest_verify) methods. The slot is
-    /// released when the closure returns, waking the next queued caller.
+    /// available. Runs `f` with a [`ShaExclusive`] handle that awaits each
+    /// command while retaining the slot. The slot is released when the
+    /// closure completes, waking the next queued caller.
     ///
     /// Multiple tasks may call `with_exclusive` concurrently — they queue
     /// behind each other and behind regular [`digest`](Self::digest) calls
     /// through the same FIFO slot queue.
     ///
     /// This is designed for multi-invocation patterns (MGF1, HKDF, PBKDF2)
-    /// where the overhead of poll/wake per SHA call is undesirable. One
-    /// async boundary to acquire hardware, N synchronous hashes, one wake
-    /// on release.
+    /// that must keep their FIFO position across several SHA commands.
     ///
     /// # Cancellation safety
     ///
@@ -458,13 +469,25 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
     /// the future after slot allocation but before completion will leave a
     /// dead slot that blocks the queue. Callers must not cancel this future
     /// after the first poll.
+    #[inline(never)]
     pub async fn with_exclusive<F, R>(&self, f: F) -> HsmResult<R>
     where
-        F: FnOnce(&ShaExclusive<'_, DEPTH>) -> HsmResult<R>,
+        F: for<'a> AsyncFnOnce(&'a mut ShaExclusive<'_, DEPTH>) -> HsmResult<R>,
     {
+        let slot_idx = self.acquire_exclusive().await?;
+        let mut exclusive = ShaExclusive {
+            driver: self,
+            slot_idx: (slot_idx & Self::MASK) as usize,
+        };
+        let result = f(&mut exclusive).await;
+        self.release_exclusive(slot_idx);
+        result
+    }
+
+    #[inline(never)]
+    async fn acquire_exclusive(&self) -> HsmResult<u8> {
         let mut slot_idx: Option<u8> = None;
 
-        // Wait for our slot to become the active one.
         poll_fn(|cx| {
             self.state.with(|s| {
                 if slot_idx.is_none() {
@@ -480,7 +503,7 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
                 // Our slot is active when active has reached it — all prior
                 // commands have completed and the hardware is free.
                 if s.active == slot_idx.unwrap() {
-                    Poll::Ready(Ok(()))
+                    Poll::Ready(Ok(slot_idx.unwrap()))
                 } else {
                     let idx = (slot_idx.unwrap() & Self::MASK) as usize;
                     s.slots[idx].waker.register(cx.waker());
@@ -488,21 +511,21 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
                 }
             })
         })
-        .await?;
+        .await
+    }
 
-        let result = f(&ShaExclusive {
-            driver: self,
-            slot_idx: (slot_idx.unwrap() & Self::MASK) as usize,
-        });
-
+    #[inline(never)]
+    fn release_exclusive(&self, my: u8) {
         // Release our slot: clear exclusive flag, advance head and active
         // past it, then submit/wake the next queued slot if present.
         self.state.with(|s| {
-            let my = slot_idx.unwrap();
             let idx = (my & Self::MASK) as usize;
             s.slots[idx].exclusive = false;
+            s.slots[idx].status = 0;
             s.active = my.wrapping_add(1);
-            s.head = my.wrapping_add(1);
+            while s.head != s.active && s.slots[(s.head & Self::MASK) as usize].status == 0 {
+                s.head = s.head.wrapping_add(1);
+            }
             if s.active != s.tail {
                 let next = (s.active & Self::MASK) as usize;
                 if !s.slots[next].exclusive {
@@ -512,17 +535,12 @@ impl<const DEPTH: usize> ShaDriver<DEPTH> {
                 }
             }
         });
-
-        result
     }
 }
 
-/// Exclusive synchronous handle to the SHA engine.
+/// Exclusive handle to the SHA engine.
 ///
-/// Provides busy-polled [`digest`](Self::digest) and
-/// [`digest_verify`](Self::digest_verify) methods that submit a command
-/// and spin on the hardware status register instead of yielding to the
-/// async executor.
+/// Awaits each command's completion while retaining the same FIFO slot.
 ///
 /// Cannot be constructed directly — only obtained through
 /// [`ShaDriver::with_exclusive`].
@@ -534,35 +552,29 @@ pub struct ShaExclusive<'a, const DEPTH: usize> {
     driver: &'a ShaDriver<DEPTH>,
 
     /// The ring-buffer slot index (`raw_tail & MASK`) reserved for this
-    /// exclusive session. Passed to `submit_and_spin` so it writes and submits
+    /// exclusive session. Passed to `submit_and_wait` so it writes and submits
     /// the command descriptor into the correct slot instead of hard-coding 0.
     slot_idx: usize,
 }
 
 impl<const DEPTH: usize> ShaExclusive<'_, DEPTH> {
-    /// Submit a SHA request and busy-poll until completion.
+    /// Submit a SHA request and await completion on the held slot.
     ///
-    /// Identical to [`ShaDriver::digest`] but runs synchronously, spinning
-    /// on the hardware status register instead of yielding to the executor.
-    pub fn digest(&self, req: ShaRequest<'_>) -> HsmResult<()> {
-        let status = self.submit_and_spin(&req)?;
+    pub async fn digest(&mut self, req: ShaRequest<'_>) -> HsmResult<()> {
+        let status = self.submit_and_wait(&req).await?;
         map_status(status)
     }
 
-    /// Submit a SHA request with digest comparison and busy-poll until
-    /// completion.
+    /// Submit a SHA request with digest comparison and await completion.
     ///
-    /// Synchronous variant of [`ShaDriver::digest_verify`].
-    pub fn digest_verify(&self, req: ShaRequest<'_>) -> HsmResult<bool> {
-        let status = self.submit_and_spin(&req)?;
+    /// Exclusive variant of [`ShaDriver::digest_verify`].
+    pub async fn digest_verify(&mut self, req: ShaRequest<'_>) -> HsmResult<bool> {
+        let status = self.submit_and_wait(&req).await?;
         map_verify_status(status)
     }
 
-    /// Write the command descriptor, submit to hardware, and spin until the
-    /// status register indicates completion. Clears NVIC pending after
-    /// consuming the status to prevent stale pending bits from triggering
-    /// a spurious [`ShaDriver::wake`] call when normal polling resumes.
-    fn submit_and_spin(&self, req: &ShaRequest<'_>) -> HsmResult<u8> {
+    /// Submit on the reserved descriptor and wait without yielding ownership.
+    async fn submit_and_wait(&mut self, req: &ShaRequest<'_>) -> HsmResult<u8> {
         // `self.driver` ensures this method can only be called via a valid
         // ShaExclusive handle — the field itself is not read at runtime.
         //
@@ -575,18 +587,30 @@ impl<const DEPTH: usize> ShaExclusive<'_, DEPTH> {
         let mode = mode_field(req.mode)?;
         let cmd_idx = self.slot_idx & (DEPTH - 1);
         write_cmd(cmd_idx, req, mode);
+        self.driver.state.with(|s| {
+            let slot = &mut s.slots[self.slot_idx];
+            slot.status = 0;
+            slot.exclusive_in_flight = true;
+        });
         submit_cmd(cmd_idx);
 
-        loop {
-            let status = SHA.status.get();
-            let flags = status & STATUS_FLAGS_MASK;
-            if flags != 0 {
-                // STATUS is read-only; do not write it (bus-faults). It
-                // auto-clears on the next command doorbell.
-                Nvic::unpend(Interrupt::SHA_DONE);
-                Nvic::unpend(Interrupt::SHA_ERROR);
-                return Ok(flags as u8);
-            }
+        let completion = poll_fn(|cx| {
+            self.driver.state.with(|s| {
+                let slot = &mut s.slots[self.slot_idx];
+                if slot.status != 0 {
+                    let status = slot.status;
+                    slot.status = 0;
+                    Poll::Ready(status)
+                } else {
+                    slot.waker.register(cx.waker());
+                    Poll::Pending
+                }
+            })
+        });
+        let mut completion = core::pin::pin!(completion);
+        match with_timeout(Duration::from_secs(1), completion.as_mut()).await {
+            Ok(status) => Ok(status),
+            Err(_) => azihsm_fw_uno_fault::enter_crypto_timeout_error_state("SHA command timeout"),
         }
     }
 }

@@ -266,8 +266,8 @@ pub(super) async fn run_ecdh_on_engine(
         let prime = scope.dma_alloc(ECDH_384_LEN)?;
         prime.copy_from_slice(ECDH_P384_PRIME_LE);
         let mont_result = scope.dma_alloc(ECDH_384_LEN)?;
-        // Derived shared-secret output (little-endian).
-        let secret = scope.dma_alloc_zeroed(ECDH_384_LEN)?;
+        // Point multiplication writes both coordinates; the shared secret is X.
+        let secret = scope.dma_alloc_zeroed(ECDH_384_LEN * 2)?;
         // Status word for the hardware on-curve validation the driver runs
         // between the Montgomery-constant setup and the ECDH compute.
         let point_valid = scope.dma_alloc(4)?;

@@ -143,6 +143,18 @@ pub fn enter_self_test_error_state(test: u32, engine: u32, reason: HsmError) -> 
     enter_error_state(reason)
 }
 
+/// Reports an AES/SHA hardware timeout without releasing its active DMA slot.
+pub fn enter_crypto_timeout_error_state(detail: &'static str) -> ! {
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+    crashdump_save(
+        &capture_register_context(),
+        FailureCode::ExplicitFailure,
+        Some(detail),
+    );
+    Tcon::fire_wakeup_timer1();
+    enter_error_state(HsmError::CryptoTimeout)
+}
+
 /// Capture the calling core's `sp` and `pc` for a crash dump.
 ///
 /// Used by the *software*-initiated crash paths ([`panic`] and
