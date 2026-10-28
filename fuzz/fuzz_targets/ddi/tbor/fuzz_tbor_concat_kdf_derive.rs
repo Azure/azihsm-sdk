@@ -510,8 +510,8 @@ fn run(input: &FuzzInput<'_>, ctx: &TestCtx) {
             assert!(resp.masked_key.len() <= CONCAT_MASKED_KEY_MAX_LEN);
         }
         (Err(err), Err(status)) => assert_rejection(&err, status),
-        (Ok(_), Err(status)) => {
-            panic!("{scenario:?}: invalid request succeeded; expected {status:?}")
+        (Ok(_), Err(_status)) => {
+            panic!("invalid request succeeded unexpectedly")
         }
         (Err(err), Ok(_)) => panic!("{scenario:?}: valid request failed: {err:?}"),
     }
