@@ -4,8 +4,9 @@
 #pragma once
 
 /// Helpers for the AES tests: key generation with the usual template and the
-/// two-call (probe, then fill) one-shot cipher discipline.
+/// two-call (probe, then fill) cipher discipline, one-shot and multi-part.
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -119,6 +120,79 @@ inline CK_RV crypt_oneshot(
     rv = encrypt ? p11()->C_Encrypt(s, in_ptr, in_len, out_ptr, &len)
                  : p11()->C_Decrypt(s, in_ptr, in_len, out_ptr, &len);
     out.resize((rv == CKR_OK) ? len : 0);
+    return rv;
+}
+
+/// `n` deterministic test bytes; no two blocks within 256 bytes are equal.
+inline std::vector<CK_BYTE> pattern(size_t n)
+{
+    std::vector<CK_BYTE> v(n);
+    for (size_t i = 0; i < n; i++)
+    {
+        v[i] = static_cast<CK_BYTE>((i * 7) + 1);
+    }
+    return v;
+}
+
+/// Multi-part encrypt/decrypt: init, `in` fed in parts of `chunk` bytes (all
+/// of it in one part when `chunk` is 0), then the final call. Every call is
+/// probed first and filled at exactly the reported length, so each part also
+/// exercises the sizing probe. `out` is the concatenated output.
+inline CK_RV crypt_multipart(
+    CK_SESSION_HANDLE s,
+    bool encrypt,
+    CK_MECHANISM *mech,
+    CK_OBJECT_HANDLE key,
+    const std::vector<CK_BYTE> &in,
+    size_t chunk,
+    std::vector<CK_BYTE> &out
+)
+{
+    out.clear();
+    CK_RV rv = encrypt ? p11()->C_EncryptInit(s, mech, key) : p11()->C_DecryptInit(s, mech, key);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    size_t step = (chunk == 0) ? in.size() : chunk;
+    for (size_t off = 0; off < in.size(); off += step)
+    {
+        CK_BYTE_PTR part = const_cast<CK_BYTE_PTR>(in.data()) + off;
+        CK_ULONG n = static_cast<CK_ULONG>(std::min(step, in.size() - off));
+        CK_ULONG need = 0;
+        rv = encrypt ? p11()->C_EncryptUpdate(s, part, n, nullptr, &need)
+                     : p11()->C_DecryptUpdate(s, part, n, nullptr, &need);
+        if (rv != CKR_OK)
+        {
+            return rv;
+        }
+        // One spare byte so the fill buffer is never NULL (a NULL one would be
+        // a second probe), while the length handed in stays the probed one.
+        std::vector<CK_BYTE> buf(need + 1);
+        CK_ULONG len = need;
+        rv = encrypt ? p11()->C_EncryptUpdate(s, part, n, buf.data(), &len)
+                     : p11()->C_DecryptUpdate(s, part, n, buf.data(), &len);
+        if (rv != CKR_OK)
+        {
+            return rv;
+        }
+        out.insert(out.end(), buf.begin(), buf.begin() + len);
+    }
+    CK_ULONG need = 0;
+    rv = encrypt ? p11()->C_EncryptFinal(s, nullptr, &need)
+                 : p11()->C_DecryptFinal(s, nullptr, &need);
+    if (rv != CKR_OK)
+    {
+        return rv;
+    }
+    std::vector<CK_BYTE> buf(need + 1);
+    CK_ULONG len = need;
+    rv = encrypt ? p11()->C_EncryptFinal(s, buf.data(), &len)
+                 : p11()->C_DecryptFinal(s, buf.data(), &len);
+    if (rv == CKR_OK)
+    {
+        out.insert(out.end(), buf.begin(), buf.begin() + len);
+    }
     return rv;
 }
 

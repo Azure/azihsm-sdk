@@ -184,8 +184,9 @@ void azihsm_pkcs11_session_disown_object(CK_SLOT_ID slot, CK_OBJECT_HANDLE h);
  * every path that ends the session (close, close-all, finalize). */
 void azihsm_pkcs11_session_destroy_owned(azihsm_pkcs11_session_t *s);
 
-/* Free a cipher operation context (releases its unmasked device key first).
- * NULL-safe no-op. Defined in azihsm_pkcs11_crypt.c, which owns the type. */
+/* Free a cipher operation context (releases its SDK stream and unmasked device
+ * key first). NULL-safe no-op. Defined in azihsm_pkcs11_crypt.c, which owns the
+ * type. */
 void azihsm_pkcs11_cipher_op_free(void *op_ctx);
 
 /* Fill a fixed-width, space-padded CK_UTF8CHAR string field. */
