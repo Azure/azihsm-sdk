@@ -14,6 +14,9 @@
 #[path = "../../common.rs"]
 mod common;
 
+use std::time::Duration;
+
+use azihsm_ddi_interface::DdiError;
 use azihsm_ddi_tbor_test_harness::assertions::assert_fw_rejects;
 use azihsm_ddi_tbor_test_harness::*;
 use azihsm_ddi_tbor_types::*;
@@ -106,6 +109,7 @@ fn assert_valid_unwrapping_pub_key(pub_key: &[u8]) {
 
 /// Issue a request against a precomputed oracle and validate every successful key.
 ///
+/// Valid requests poll for key readiness for at most 100 retries, 100 ms apart.
 /// Only an exactly matched expected rejection returns `None`; all unexpected
 /// errors, including driver errors and emulator key-generation failures, panic.
 fn check_request(
@@ -115,9 +119,22 @@ fn check_request(
     default_psk: bool,
 ) -> Option<[u8; UNWRAPPING_PUB_KEY_LEN]> {
     let expected = expected_outcome(request_session_id, bound_session_id, default_psk);
-    let result = ctx.tbor(&TborGetUnwrappingKeyReq {
+    let request = TborGetUnwrappingKeyReq {
         session_id: request_session_id,
-    });
+    };
+    let mut result = ctx.tbor(&request);
+    if matches!(expected, Expected::Success) {
+        for _ in 0..100 {
+            if !matches!(
+                result,
+                Err(DdiError::TborStatus(TborStatus::PendingKeyGeneration))
+            ) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            result = ctx.tbor(&request);
+        }
+    }
     match (expected, result) {
         (Expected::Success, Ok(resp)) => {
             assert_valid_unwrapping_pub_key(&resp.pub_key);
