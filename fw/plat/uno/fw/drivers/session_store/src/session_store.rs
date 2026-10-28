@@ -208,6 +208,31 @@ impl SessionTable {
         Ok(id)
     }
 
+    /// Rolls back a [`recreate`](Self::recreate): restores the
+    /// renegotiation flag and clears the physical vault mapping.
+    ///
+    /// The caller must delete the orphaned vault entry (resolved via
+    /// [`physical_id`](Self::physical_id)) before calling this, so the
+    /// physical mapping is read while still intact.
+    ///
+    /// This is the slot-table half of the reference firmware's
+    /// `rollback_open_session` reopen branch
+    /// (`session_table().rollback_recreation(id)`): a `ReopenSession`
+    /// whose later steps fail must leave the slot exactly as a
+    /// freshly-migrated [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation)
+    /// slot — zeroed physical id — so the host can retry the reopen.
+    ///
+    /// # Errors
+    ///
+    /// - [`HsmError::SessionNotFound`] — `id` is not an allocated slot.
+    #[inline(never)]
+    pub fn rollback_recreation(&mut self, id: HsmSessId) -> HsmResult<()> {
+        let slot = self.active_slot(id)?;
+        self.region_mut()[RENEGO_MASK] |= 1u8 << slot;
+        self.set_phys_id(slot, 0);
+        Ok(())
+    }
+
     /// Returns the persistent state of a session slot.
     ///
     /// A slot whose handshake is still in flight reports
@@ -257,9 +282,12 @@ impl SessionTable {
     /// physical-id indirection is dropped because the caller deletes the
     /// backing session-blob vault keys.
     ///
-    /// An NSSR (`Migrate`) and a free use [`clear_all`](Self::clear_all)
-    /// instead: both regenerate or discard the partition identity that a
-    /// renegotiating slot would have to be reopened against.
+    /// NSSR (`Migrate`) uses the same transition so established IDs can be
+    /// reopened after the host restores provisioning. Partition free uses
+    /// [`clear_all`](Self::clear_all) instead.
+    ///
+    /// Call after deleting the backing vault keys, but before clearing the
+    /// volatile session metadata needed to identify Pending slots.
     ///
     /// [`Pending`](HsmSessionState::Pending) slots are released because the
     /// reset invalidates their handshake state. The host may already have
@@ -285,12 +313,11 @@ impl SessionTable {
     /// the physical-id indirection, and the volatile pending / PSK-change
     /// masks.
     ///
-    /// Used on partition free and NSSR (`Migrate`), which discard or regenerate
-    /// the partition identity and release the prior session context. A plain
-    /// disable uses [`mark_all_needs_renego`](Self::mark_all_needs_renego)
-    /// instead, retaining established logical IDs so the host can still close
-    /// its sessions. Mirrors the reference firmware's
-    /// `session_table().restore(0)` in `PartState::clear_partition_info`.
+    /// Used on partition free, which releases the prior session context.
+    /// Disable and NSSR (`Migrate`) use
+    /// [`mark_all_needs_renego`](Self::mark_all_needs_renego) instead, retaining
+    /// established logical IDs for reopen or close. Mirrors the reference
+    /// firmware's `session_table().restore(0)` in `PartState::clear_partition_info`.
     #[inline(never)]
     pub fn clear_all(&mut self) {
         self.region_mut().fill(0);

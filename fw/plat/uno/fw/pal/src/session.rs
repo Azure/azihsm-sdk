@@ -86,25 +86,20 @@ impl HsmSessionManager for UnoHsmPal {
 
         let table = SessionStore::partition(io.pid())?;
 
-        // On re-key: tear down the old session-scoped keys and the old
-        // session key before creating the replacement.
-        //
-        // A slot awaiting renegotiation after a partition disable is the
-        // exception: `mark_all_needs_renego` already dropped its physical-id
+        // On re-key, only a slot awaiting renegotiation may be recreated:
+        // `mark_all_needs_renego` already dropped its physical-id
         // indirection (the caller deleted the backing vault keys), so there
-        // is nothing left to tear down. Resolving it anyway would either
-        // fail with `KeyNotFound` or — worse — delete key id 0, which is the
-        // valid id for vault table 0 / entry 0 rather than a "no mapping"
-        // sentinel. `recreate` below simply installs the fresh mapping.
-        // Mirrors the std PAL and the reference firmware's
-        // `recreate_session`.
-        let stale_reopen = id.filter(|reopen_id| {
-            !matches!(table.state(*reopen_id), HsmSessionState::NeedsRenegotiation)
-        });
-        if let Some(reopen_id) = stale_reopen {
-            let old_phys = table.physical_id(reopen_id)?;
-            crate::vault::delete_session_keys(self, io, reopen_id).await?;
-            crate::vault::vault(io).delete(self, io, old_phys).await?;
+        // is nothing to tear down and `recreate` below simply installs the
+        // fresh mapping. Reject every other state up front, before touching
+        // any vault state: `recreate` refuses a non-renegotiating slot
+        // anyway, and tearing down a live session's keys first would leave
+        // its slot pointing at a deleted key, so a later close/flush could
+        // never free it (leaking the slot). Mirrors the std PAL and the
+        // reference firmware's `recreate_session`.
+        if let Some(reopen_id) = id
+            && !matches!(table.state(reopen_id), HsmSessionState::NeedsRenegotiation)
+        {
+            return Err(HsmError::InvalidArg);
         }
 
         // Build the 88-byte session blob in a DMA buffer:
@@ -188,6 +183,31 @@ impl HsmSessionManager for UnoHsmPal {
 
         // Free the logical session slot.
         table.delete(id)?;
+        Ok(())
+    }
+
+    /// Roll back a failed post-migration re-key (`ReopenSession`).
+    ///
+    /// Deletes the fresh masking-key vault entry that
+    /// [`session_create`](Self::session_create) installed, then restores
+    /// the slot to [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation)
+    /// (clearing its physical mapping), so neither the vault nor the slot
+    /// leaks and the host can retry the reopen. Mirrors the reference
+    /// firmware's `rollback_open_session` reopen branch.
+    async fn session_rollback_reopen(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
+        // Hold the bulk-key lock for the same reason as `session_destroy`.
+        let _guard = self.fp_bulk_lock.lock().await;
+
+        let mut table = SessionStore::partition(io.pid())?;
+
+        // Resolve the physical vault key id the failed reopen installed
+        // before the vault await; delete it, then restore the slot's
+        // renegotiation state (zeroing its physical mapping).
+        let physical_id = table.physical_id(id)?;
+        crate::vault::vault(io)
+            .delete(self, io, physical_id)
+            .await?;
+        table.rollback_recreation(id)?;
         Ok(())
     }
 

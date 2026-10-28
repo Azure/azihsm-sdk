@@ -268,6 +268,24 @@ impl SessionTable {
         Ok(id)
     }
 
+    /// Roll back a [`recreate`](Self::recreate): restore the
+    /// renegotiation bit and clear the physical mapping.
+    ///
+    /// The caller is responsible for deleting the orphaned vault entry
+    /// (via [`physical_id`](Self::physical_id)) before invoking this, so
+    /// the physical mapping is read while still intact.
+    ///
+    /// Leaves the slot as a freshly-migrated
+    /// [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation) slot
+    /// so the host can retry a failed `ReopenSession` (mirrors the
+    /// reference firmware's `session_table().rollback_recreation(id)`).
+    pub fn rollback_recreation(&mut self, id: HsmSessId) -> HsmResult<()> {
+        let slot = self.active_slot(id)?;
+        self.renego_mask |= 1 << slot;
+        self.phys_ids[slot] = 0;
+        Ok(())
+    }
+
     /// Query the current state of a session slot.
     pub fn state(&self, id: HsmSessId) -> HsmSessionState {
         let Ok(slot) = self.active_slot(id) else {

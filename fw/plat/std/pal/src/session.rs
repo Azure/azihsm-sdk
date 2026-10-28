@@ -75,20 +75,20 @@ impl HsmSessionManager for StdHsmPal {
         let pid = io.pid();
         let entry = self.active_part_mut(pid)?;
 
-        // On re-key: clean up the old session-scoped keys and the old
-        // session key before creating the replacement.  A slot awaiting
-        // renegotiation after a live-migration disable has already had
-        // its vault key material cleared, so there is nothing to tear
-        // down — `recreate` below simply installs the fresh mapping
-        // (mirroring the reference firmware's `recreate_session`).
+        // On re-key, only a slot awaiting renegotiation after a
+        // live-migration disable may be recreated: its vault key material
+        // was already cleared, so `recreate` below simply installs the
+        // fresh mapping (mirroring the reference firmware's
+        // `recreate_session`).  Reject every other state before touching
+        // the vault — tearing down a live session's keys and then failing
+        // in `recreate` would leave the slot pointing at a deleted key,
+        // so it could never be closed.
         if let Some(reopen_id) = id {
             if !matches!(
                 entry.session_table.state(reopen_id),
                 HsmSessionState::NeedsRenegotiation
             ) {
-                let old_phys = entry.session_table.physical_id(reopen_id)?;
-                entry.vault.delete_by_session_key(old_phys)?;
-                entry.vault.delete(old_phys)?;
+                return Err(HsmError::InvalidArg);
             }
         }
 
@@ -154,6 +154,23 @@ impl HsmSessionManager for StdHsmPal {
 
         // Free the logical session slot.
         entry.session_table.delete(id)?;
+        Ok(())
+    }
+
+    /// Roll back a failed post-migration re-key (`ReopenSession`).
+    ///
+    /// Restores the slot to [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation)
+    /// and deletes the fresh masking-key vault entry that
+    /// [`session_create`](Self::session_create) installed, so neither the
+    /// slot state nor the vault leaks and the host can retry the reopen.
+    async fn session_rollback_reopen(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
+        let entry = self.active_part_mut(io.pid())?;
+
+        // Delete the fresh masking-key vault entry while the physical mapping
+        // is still intact, then restore the slot (clearing the mapping).
+        let physical_id = entry.session_table.physical_id(id)?;
+        entry.vault.delete(physical_id)?;
+        entry.session_table.rollback_recreation(id)?;
         Ok(())
     }
 
