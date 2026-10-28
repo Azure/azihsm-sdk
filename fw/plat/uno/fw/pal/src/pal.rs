@@ -340,8 +340,9 @@ pub struct UnoHsmPal {
     io_in_flight: Cell<u32>,
 
     /// Set while a PCIe reset (PERST / FLR) frees partitions. `poll_io`
-    /// holds the next inbound IO until it clears, so no new host IO starts
-    /// while partition keys are being deleted.
+    /// recycles any inbound IO received while it is set without dispatching
+    /// it, so no new host IO starts while partition keys are being deleted
+    /// and no pre-reset IO runs after the reset.
     io_paused: Cell<bool>,
 }
 
@@ -946,11 +947,12 @@ impl UnoHsmPal {
     /// wipe are available. Before `Running` the event is only acknowledged.
     ///
     /// Admin does not drain host IO before raising the event, so the HSM
-    /// quiesces it here: `poll_io` holds new inbound IO, and partitions are
-    /// freed only once every in-flight `handle_io` task has finished. Because
-    /// `part_free` awaits (vault clear, GDMA scrub), this keeps host IO from
-    /// using or creating keys in a partition that is being freed. Held IO is
-    /// released after the free and is dropped by the partition-enable gate.
+    /// quiesces it here: `poll_io` recycles inbound IO received during the
+    /// reset without dispatching it, and partitions are freed only once every
+    /// in-flight `handle_io` task has finished. Because `part_free` awaits
+    /// (vault clear, GDMA scrub), this keeps host IO from using or creating
+    /// keys in a partition that is being freed, and no IO from before the
+    /// reset can reach a partition re-enabled after the acknowledgement.
     ///
     /// # Parameters
     /// - `self`: PAL instance providing the IPC driver.
@@ -991,8 +993,7 @@ impl UnoHsmPal {
                     );
                 }
             }
-            // Release held IO. Every partition is now `Unallocated` or
-            // `Faulted`, so the enable gate drops it.
+            // Resume normal IO dispatch.
             self.io_paused.set(false);
             if faulted == 0 {
                 info!("pcie", "reset event {}: all partitions reset", value);

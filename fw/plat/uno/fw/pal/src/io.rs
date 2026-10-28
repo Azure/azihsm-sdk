@@ -41,6 +41,7 @@ use azihsm_fw_uno_reg_soc::io_gsram::IoCqEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::IoMetaEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::IoSqEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
+use azihsm_fw_uno_trace::tracing::*;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
 
@@ -174,14 +175,23 @@ impl HsmIoController for UnoHsmPal {
 
     /// Awaits the next inbound IO from the IIC driver.
     async fn poll_io(&self) -> HsmResult<Self::Io> {
-        let index = self.iic.recv().await;
-        // Hold the IO while a PCIe reset frees partitions; see
-        // `UnoHsmPal::handle_ipc_event`.
-        while self.io_paused() {
-            embassy_futures::yield_now().await;
+        loop {
+            let index = self.iic.recv().await;
+            reset_io_alloc(self, index);
+            let io = UnoHsmIo { index };
+            if !self.io_paused() {
+                return Ok(io);
+            }
+            // IO received during a PCIe reset belongs to the host state being
+            // torn down: recycle it (scrub, return the slot, no CQE) without
+            // dispatching it. See `UnoHsmPal::handle_ipc_event`.
+            if let Err(_e) = self.drop_io(io).await {
+                error!(
+                    "pcie",
+                    _e, "reset: failed to recycle IO received during reset"
+                );
+            }
         }
-        reset_io_alloc(self, index);
-        Ok(UnoHsmIo { index })
     }
 
     /// Posts the completion (CQE) to the host via OIC.
