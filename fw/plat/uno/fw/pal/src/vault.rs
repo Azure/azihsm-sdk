@@ -381,6 +381,7 @@ fn fp_slot_free(vault_id: u8, key_index: u8) {
 
 /// Clear the slot bits set in `bits` (one bitmap byte per table).  Used to
 /// release a batch of slots after their vault entries have been removed.
+#[inline(never)]
 fn fp_slots_free_bits(bits: &[u8; NUM_FP_TABLES]) {
     FP_SLOTS.with(|slots| {
         for (used, clear) in slots.iter_mut().zip(bits.iter()) {

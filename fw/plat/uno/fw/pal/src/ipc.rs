@@ -63,7 +63,8 @@ const _: () = assert!(core::mem::size_of::<IpcMessage>() == IPC_MESSAGE_LENGTH *
 
 impl Zeroize for IpcMessage {
     fn zeroize(&mut self) {
-        self.data.zeroize();
+        // The slice implementation uses one optimization barrier for the whole slot.
+        self.data.as_mut_slice().zeroize();
     }
 }
 
@@ -794,7 +795,7 @@ pub struct KeyUpdateInfo {
 
 impl Zeroize for KeyUpdateInfo {
     fn zeroize(&mut self) {
-        self.key_data.zeroize();
+        self.key_data.as_mut_slice().zeroize();
     }
 }
 
