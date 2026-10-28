@@ -1,0 +1,59 @@
+From google/pkcs11test (https://github.com/google/pkcs11test), Apache-2.0,
+at the revision pinned in run.sh. The four changed lines make the cipher,
+signature, MAC and key-pair fixtures log in before generating their keys, so
+they run against this token's CKF_LOGIN_REQUIRED profile; the context lines
+below are upstream's. See README.md for the rationale and for how to
+regenerate this patch against a newer revision.
+
+diff --git a/hmac.cc b/hmac.cc
+index 43f42c3..f232c3b 100644
+--- a/hmac.cc
++++ b/hmac.cc
+@@ -82,7 +82,7 @@ map<string, vector<TestData> > kTestVectors = {
+ 
+ }  // namespace
+ 
+-class HmacTest : public ReadOnlySessionTest,
++class HmacTest : public ROUserSessionTest,
+                  public ::testing::WithParamInterface<string> {
+  public:
+   HmacTest()
+diff --git a/keypair.cc b/keypair.cc
+index 4edf034..fc533fb 100644
+--- a/keypair.cc
++++ b/keypair.cc
+@@ -32,7 +32,7 @@ namespace test {
+ 
+ namespace {
+ 
+-class KeyPairTest : public ReadWriteSessionTest {
++class KeyPairTest : public RWUserSessionTest {
+  public:
+   KeyPairTest()
+     : public_attrs_({CKA_ENCRYPT, CKA_TOKEN}),
+diff --git a/pkcs11test.h b/pkcs11test.h
+index 9fac97a..aadc166 100644
+--- a/pkcs11test.h
++++ b/pkcs11test.h
+@@ -313,7 +313,7 @@ class KeyPair {
+ };
+ 
+ // Test fixture for tests involving a secret key.
+-class SecretKeyTest : public ReadOnlySessionTest,
++class SecretKeyTest : public ROUserSessionTest,
+                       public ::testing::WithParamInterface<std::string> {
+  public:
+   static const int kNumBlocks = 4;
+diff --git a/sign.cc b/sign.cc
+index 98eb5d3..d26f7af 100644
+--- a/sign.cc
++++ b/sign.cc
+@@ -35,7 +35,7 @@ namespace test {
+ 
+ namespace {
+ 
+-class SignTest : public ReadOnlySessionTest,
++class SignTest : public ROUserSessionTest,
+                  public ::testing::WithParamInterface<string> {
+  public:
+   SignTest()
