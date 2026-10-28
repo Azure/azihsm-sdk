@@ -104,7 +104,8 @@ async fn poll_io(spawner: Spawner) -> ! {
         // `handle_io` balances this. The increment is synchronous (no await
         // between here and `spawn`), so the spawned task cannot decrement
         // before this executes. The IDFU shutdown handler reads this count to
-        // fail closed while any IO is still in flight.
+        // fail closed while any IO is still in flight, and the PCIe-reset
+        // handler waits for it to reach zero before freeing partitions.
         hsm.pal().io_in_flight_inc();
         spawner.spawn(token);
     }

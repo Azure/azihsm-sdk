@@ -165,6 +165,14 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         // sized rings; attaching to that would read/write the wrong memory or
         // wrap the indices at the wrong depth, so require a full match before
         // adopting the hardware state.
+        //
+        // Attach also keeps the receive-buffer addresses the previous firmware
+        // posted in the ISQ, so the buffer pool (`io_pool_base`, `io_size`,
+        // `DEPTH`) is part of the impactless-update contract. These come from
+        // fixed IO_GSRAM layout constants; an update that changes them must be
+        // impactful (full reprogram). Every retained ISQ entry is checked to
+        // address a buffer in this firmware's pool, so a mismatched layout
+        // reprograms instead of attaching.
         let icq = &regs.icq_ch[ch];
         let isq = &regs.isq_ch[ch];
         let ours = icq.base_lo.get() == config.icq_base
@@ -176,7 +184,8 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
             && isq.base_lo.get() == config.isq_base
             && isq.base_hi.get() == 0
             && isq.ctrl.read(ISQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
-            && isq.ctrl.read(ISQ_CHANNEL_CTRL::BUF_LEN) == config.io_size >> 4;
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::BUF_LEN) == config.io_size >> 4
+            && self.isq_entries_ours();
 
         // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
         // On a FwUpdateWarmReset the queues were programmed and enabled by the
@@ -409,11 +418,42 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     fn buf_index(&self, addr: u32) -> u16 {
         ((addr - self.buf_pool_base) / self.buf_size) as u16
     }
+
+    /// Returns `true` if every ISQ entry addresses a receive buffer in this
+    /// firmware's pool.
+    fn isq_entries_ours(&self) -> bool {
+        (0..DEPTH).all(|i| {
+            // SAFETY: `isq_ring` is the `DEPTH`-entry ISQ ring at
+            // `config.isq_base`, owned by this driver; `i < DEPTH`.
+            let entry = unsafe { self.isq_ring.add(i).read_volatile() };
+            isq_addr_in_pool(
+                entry.addr_lo,
+                entry.addr_hi,
+                self.buf_pool_base,
+                self.buf_size,
+                DEPTH as u32,
+            )
+        })
+    }
+}
+
+/// Whether an ISQ entry address is the start of one of the `depth` receive
+/// buffers of `size` bytes at `base`.
+#[inline]
+fn isq_addr_in_pool(addr_lo: u32, addr_hi: u32, base: u32, size: u32, depth: u32) -> bool {
+    if addr_hi != 0 {
+        return false;
+    }
+    let Some(off) = addr_lo.checked_sub(base) else {
+        return false;
+    };
+    off.checked_rem(size) == Some(0) && off.checked_div(size).is_some_and(|i| i < depth)
 }
 
 /// Whether queue init should ATTACH to the running hardware instead of
 /// reprogramming it: only on a fw-update warm reset, and only when the queues
-/// are already enabled AND still programmed with this firmware's ring bases.
+/// are already enabled AND still programmed with this firmware's rings and
+/// receive-buffer pool.
 /// Any other combination reprograms, so attach can never adopt foreign or
 /// uninitialised hardware state.
 #[inline]
@@ -423,7 +463,21 @@ fn should_attach(fw_update: bool, already_enabled: bool, ours: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::isq_addr_in_pool;
     use super::should_attach;
+
+    /// Only buffer-start addresses inside the `depth`-entry pool are accepted.
+    #[test]
+    fn isq_addr_must_be_in_pool() {
+        let (base, size, depth) = (0x6100_E740, 64, 32);
+        assert!(isq_addr_in_pool(base, 0, base, size, depth));
+        assert!(isq_addr_in_pool(base + 31 * size, 0, base, size, depth));
+        assert!(!isq_addr_in_pool(base + 32 * size, 0, base, size, depth)); // past pool
+        assert!(!isq_addr_in_pool(base - size, 0, base, size, depth)); // below pool
+        assert!(!isq_addr_in_pool(base + 16, 0, base, size, depth)); // misaligned
+        assert!(!isq_addr_in_pool(base, 1, base, size, depth)); // high bits set
+        assert!(!isq_addr_in_pool(base, 0, base, 0, depth)); // zero size
+    }
 
     /// Attach is permitted only when all three preconditions hold; any missing
     /// one must fall through to a full reprogram so foreign or uninitialised

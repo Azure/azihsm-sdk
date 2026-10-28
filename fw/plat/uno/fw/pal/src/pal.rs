@@ -334,8 +334,15 @@ pub struct UnoHsmPal {
     /// decremented when that task finishes. Read by the IDFU shutdown
     /// handler as the async analog of the reference firmware's
     /// `scheduler.occupancy_list()` — a non-zero value means host IO is
-    /// still in flight, so `prepare-for-shutdown` must fail closed.
+    /// still in flight, so `prepare-for-shutdown` must fail closed. The
+    /// PCIe-reset handler waits for it to reach zero before freeing
+    /// partitions.
     io_in_flight: Cell<u32>,
+
+    /// Set while a PCIe reset (PERST / FLR) frees partitions. `poll_io`
+    /// holds the next inbound IO until it clears, so no new host IO starts
+    /// while partition keys are being deleted.
+    io_paused: Cell<bool>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -460,6 +467,7 @@ impl Default for UnoHsmPal {
             io_peak: IO_ALLOC_INIT,
             fp_bulk_lock: Mutex::new(()),
             io_in_flight: Cell::new(0),
+            io_paused: Cell::new(false),
         }
     }
 }
@@ -517,6 +525,13 @@ impl UnoHsmPal {
     /// See [`io_in_flight_inc`](Self::io_in_flight_inc).
     pub(crate) fn io_in_flight(&self) -> u32 {
         self.io_in_flight.get()
+    }
+
+    /// Whether inbound host IO is held by a PCIe reset in progress.
+    ///
+    /// See [`handle_ipc_event`](Self::handle_ipc_event).
+    pub(crate) fn io_paused(&self) -> bool {
+        self.io_paused.get()
     }
 
     /// Process one IPC receive cycle.
@@ -930,6 +945,13 @@ impl UnoHsmPal {
     /// to reach `Running`, so GDMA and the admin IO slot used by the vault
     /// wipe are available. Before `Running` the event is only acknowledged.
     ///
+    /// Admin does not drain host IO before raising the event, so the HSM
+    /// quiesces it here: `poll_io` holds new inbound IO, and partitions are
+    /// freed only once every in-flight `handle_io` task has finished. Because
+    /// `part_free` awaits (vault clear, GDMA scrub), this keeps host IO from
+    /// using or creating keys in a partition that is being freed. Held IO is
+    /// released after the free and is dropped by the partition-enable gate.
+    ///
     /// # Parameters
     /// - `self`: PAL instance providing the IPC driver.
     /// - `channel`: IPC event channel to acknowledge.
@@ -940,6 +962,14 @@ impl UnoHsmPal {
         // trigger a spurious teardown; anything unrecognised is ignored but
         // still acked.
         if self.boot_phase.get() == BootPhase::Running && is_pcie_reset_event(value) {
+            // Quiesce host IO before freeing partitions. In-flight IO waits
+            // only on its own drivers, which `run` keeps waking, never on
+            // this task, so the drain completes.
+            self.io_paused.set(true);
+            while self.io_in_flight() != 0 {
+                embassy_futures::yield_now().await;
+            }
+
             let mut faulted = 0u16;
             for pfn in 0..crate::part::NUM_PARTITIONS as u8 {
                 let pid = HsmPartId::from(pfn);
@@ -961,6 +991,9 @@ impl UnoHsmPal {
                     );
                 }
             }
+            // Release held IO. Every partition is now `Unallocated` or
+            // `Faulted`, so the enable gate drops it.
+            self.io_paused.set(false);
             if faulted == 0 {
                 info!("pcie", "reset event {}: all partitions reset", value);
             } else {

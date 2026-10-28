@@ -175,6 +175,11 @@ impl HsmIoController for UnoHsmPal {
     /// Awaits the next inbound IO from the IIC driver.
     async fn poll_io(&self) -> HsmResult<Self::Io> {
         let index = self.iic.recv().await;
+        // Hold the IO while a PCIe reset frees partitions; see
+        // `UnoHsmPal::handle_ipc_event`.
+        while self.io_paused() {
+            embassy_futures::yield_now().await;
+        }
         reset_io_alloc(self, index);
         Ok(UnoHsmIo { index })
     }

@@ -103,10 +103,15 @@ impl UnoHsmPal {
         // and `rollback_alloc` clear it and `part_migrate` re-provisions it,
         // so a partially-provisioned slot never short-circuits here.
         //
+        // A `Faulted` partition (its free failed on a PCIe reset) still holds
+        // its mask and identity, so it never short-circuits: it falls through
+        // to retry `part_free` and reprovision, which clears the fault.
+        //
         // Nothing is re-run on this path. Gate 1 in particular is already
         // re-armed for every partition with a non-zero `res_mask` by
         // `PartStore::rearm_unwrapping_key_required()` in `init()`.
-        if mask == part.res_mask() && part.id_key_id().is_some() {
+        let state = part.state()?;
+        if state != PartState::Faulted && mask == part.res_mask() && part.id_key_id().is_some() {
             return Ok(());
         }
 
@@ -133,7 +138,7 @@ impl UnoHsmPal {
         // fully-provisioned `Enabled` partition being reallocated under a
         // *different* mask — is freed so keygen starts from a clean slate (no
         // leaked vault keys, no stale resource mask).
-        let pre_enabled = is_pf && part.state()? == PartState::Enabled && part.res_mask() == 0;
+        let pre_enabled = is_pf && state == PartState::Enabled && part.res_mask() == 0;
         if !pre_enabled {
             self.part_free(pid).await?;
         }
