@@ -105,8 +105,7 @@ fn read_certificate(ctx: &TestCtx, request: &TborGetCertReq, state: Lifecycle) -
     let der = &response.certificate;
     assert!(
         !der.is_empty() && der.len() <= CERT_MAX_LEN,
-        "TborGetCertReq in {state:?}: invalid certificate length {}",
-        der.len(),
+        "TborGetCertReq in {state:?}: invalid certificate length",
     );
     assert_eq!(
         der[0], 0x30,
@@ -148,14 +147,14 @@ fn exercise_request(ctx: &TestCtx, request: &TborGetCertReq, count: u8, state: L
         let baseline_request = TborGetCertReq::new(0, 0);
         let before = read_certificate(ctx, &baseline_request, state);
         match ctx.tbor(request) {
-            Ok(response) => {
-                panic!("invalid TborGetCertReq in {state:?} unexpectedly succeeded: {response:?}");
+            Ok(_response) => {
+                panic!("invalid TborGetCertReq in {state:?} unexpectedly succeeded");
             }
             Err(err) => {
                 if !matches!(&err, azihsm_ddi_interface::DdiError::TborStatus(status)
                     if *status == TborStatus::InvalidArg)
                 {
-                    eprintln!("invalid TborGetCertReq in {state:?} returned unexpected {err:?}");
+                    eprintln!("invalid TborGetCertReq in {state:?} returned unexpected error type");
                 }
                 assertions::assert_fw_rejects(&err, TborStatus::InvalidArg);
             }
