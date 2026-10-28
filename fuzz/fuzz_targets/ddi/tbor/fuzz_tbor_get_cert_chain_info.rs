@@ -145,7 +145,7 @@ fn exercise_request<R: TborOpReq<OpResp = TborGetCertChainInfoResp> + core::fmt:
         Expected::Success(slot_id) => {
             let response = ctx
                 .tbor(request)
-                .unwrap_or_else(|err| panic!("valid {request:?} in {state:?} failed: {err:?}"));
+                .unwrap_or_else(|err| panic!("valid TborGetCertChainInfoReq in {state:?} failed: {err:?}"));
             validate_metadata(&response);
             if slot_id == 0 {
                 assert_eq!(
