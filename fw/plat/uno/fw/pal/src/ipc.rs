@@ -530,8 +530,10 @@ pub struct SetResInfo {
     /// `u16` -- a wider field shifts `vm_launch_guid` and corrupts `pfn`.
     pub pfn: u8,
 
-    /// VM launch GUID (unused by the emulator; retained for wire
-    /// compatibility with the reference firmware).
+    /// VM launch GUID supplied by the host. Captured into the partition
+    /// persistent store on a non-zero (allocate) `SetResource`, so a later
+    /// `InitBk3` reports the correct VM identity and migration preserves it
+    /// (mirrors the reference firmware's `part_init::handle_set_res_cnt`).
     pub vm_launch_guid: [u8; 16],
 }
 

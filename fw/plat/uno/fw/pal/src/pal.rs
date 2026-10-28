@@ -328,6 +328,16 @@ pub struct UnoHsmPal {
     /// being torn down can't be registered with the engine after the
     /// session's engine-side delete (see `vault.rs`).
     pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
+
+    /// Count of host IOs currently being processed: incremented when an
+    /// inbound IO is accepted and dispatched to a `handle_io` task, and
+    /// decremented when that task finishes. Read by the IDFU shutdown
+    /// handler as the async analog of the reference firmware's
+    /// `scheduler.occupancy_list()` — a non-zero value means host IO is
+    /// still in flight, so `prepare-for-shutdown` must fail closed. The
+    /// PCIe-reset handler waits for it to reach zero before freeing
+    /// partitions.
+    io_in_flight: Cell<u32>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -451,6 +461,7 @@ impl Default for UnoHsmPal {
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
             fp_bulk_lock: Mutex::new(()),
+            io_in_flight: Cell::new(0),
         }
     }
 }
@@ -468,6 +479,25 @@ impl UnoHsmPal {
     /// - `Running` after hardware channels are initialized
     pub fn boot_phase(&self) -> BootPhase {
         self.boot_phase.get()
+    }
+
+    /// Increment the in-flight IO count.
+    ///
+    /// Called when an inbound IO has been accepted and dispatched to a
+    /// `handle_io` task. Saturating so it can never panic across the host
+    /// trust boundary.
+    pub fn io_in_flight_inc(&self) {
+        self.io_in_flight
+            .set(self.io_in_flight.get().saturating_add(1));
+    }
+
+    /// Decrement the in-flight IO count.
+    ///
+    /// Called when a `handle_io` task has finished processing (the IO slot
+    /// has been returned to the ISQ). Saturating so it can never panic.
+    pub fn io_in_flight_dec(&self) {
+        self.io_in_flight
+            .set(self.io_in_flight.get().saturating_sub(1));
     }
 
     /// Process one IPC receive cycle.
@@ -773,7 +803,8 @@ impl UnoHsmPal {
         let result = if mask == 0 {
             self.part_free(pid).await
         } else {
-            self.part_alloc(pid, mask, is_pf).await
+            self.part_alloc(pid, mask, &msg.info.vm_launch_guid, is_pf)
+                .await
         };
         let (status, count) = match result {
             Ok(()) => (IpcMessageStatusCode::Success, mask.count_ones() as u8),

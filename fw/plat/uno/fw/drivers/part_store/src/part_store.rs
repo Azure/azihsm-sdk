@@ -294,6 +294,7 @@ struct Storage {
 }
 
 // Compile-time layout assertions (see `part_store/layout_asserts.rs`).
+#[path = "part_store/layout_asserts.rs"]
 mod layout_asserts;
 
 /// GSRAM-backed partition persistent store.
@@ -512,12 +513,13 @@ impl Partition {
         // Per-tenant runtime: nonce and the volatile session metadata. The
         // persistent `session_table` is deliberately *not* touched here,
         // because the right disposition depends on the caller: a disable
-        // keeps the allocation mask so the host can still close the sessions
-        // it owns, while a migrate (NSSR) or free releases the slots. That
-        // policy needs the session-store layout, so it lives one layer up —
-        // see `SessionTable::mark_all_needs_renego` / `clear_all`, which
-        // every caller of this function invokes. Mirrors the reference, whose
-        // `disable` calls `session_table().restore(backup())` and whose
+        // or migrate (NSSR) keeps established slots for renegotiation so the
+        // host can reopen or close the sessions it owns, while a free
+        // releases the slots. That policy needs the session-store layout, so
+        // it lives one layer up — see `SessionTable::mark_all_needs_renego` /
+        // `clear_all`, which every caller of this function invokes. Mirrors
+        // the reference, whose `disable` / `migrate` call
+        // `session_table().restore(backup())` and whose
         // `clear_partition_info` calls `session_table().restore(0)`.
         {
             let slot = self.slot_mut();
@@ -707,17 +709,13 @@ impl Partition {
 
     /// Sets the VM-launch GUID.
     ///
-    /// # Errors
-    ///
-    /// - [`HsmError::InvalidArg`] — `v` is not exactly `GUID_LEN` bytes.
+    /// The GUID arrives inline in the `SetResource` IPC message body
+    /// (not DMA-sourced), so this takes a fixed-size array rather than a
+    /// [`DmaBuf`]. Mirrors the reference firmware's capture in
+    /// `part_init::handle_set_res_cnt`.
     #[inline(never)]
-    pub fn set_vm_launch_guid(mut self, v: &DmaBuf) -> HsmResult<()> {
-        let src: &[u8] = v;
-        if src.len() != GUID_LEN {
-            return Err(HsmError::InvalidArg);
-        }
-        self.slot_mut().vm_launch_guid.copy_from_slice(src);
-        Ok(())
+    pub fn set_vm_launch_guid(mut self, v: &[u8; GUID_LEN]) {
+        self.slot_mut().vm_launch_guid.copy_from_slice(v);
     }
 
     // ── masked boot key (variable length) ────────────────────────────────
@@ -765,12 +763,14 @@ impl Partition {
         unsafe { DmaBuf::from_raw(&slot.sealed_bk3.data[..len]) }
     }
 
-    /// Stores a sealed BK3 blob once until explicitly cleared.
+    /// Stores a sealed BK3 blob, overwriting any prior value.
+    ///
+    /// This is a raw store: write-once enforcement lives in the PAL
+    /// property layer (`part_set_prop(SEALED_BK3)`).
     ///
     /// # Errors
     ///
     /// - [`HsmError::InvalidArg`] — `v` exceeds `SEALED_BK3_DATA_LEN`.
-    /// - [`HsmError::SealedBk3AlreadySet`] — a non-empty blob is already stored.
     #[inline(never)]
     pub fn set_sealed_bk3(mut self, v: &DmaBuf) -> HsmResult<()> {
         let src: &[u8] = v;
@@ -778,9 +778,6 @@ impl Partition {
             return Err(HsmError::InvalidArg);
         }
         let slot = self.slot_mut();
-        if slot.sealed_bk3.len != 0 {
-            return Err(HsmError::SealedBk3AlreadySet);
-        }
         slot.sealed_bk3.len = src.len() as u32;
         slot.sealed_bk3.data[..src.len()].copy_from_slice(src);
         // Clear the unused tail of the storage slot.
@@ -1553,4 +1550,5 @@ impl Partition {
 }
 
 #[cfg(test)]
+#[path = "part_store/tests.rs"]
 mod tests;
