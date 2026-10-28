@@ -105,8 +105,7 @@ fn read_certificate(ctx: &TestCtx, request: &TborGetCertReq, state: Lifecycle) -
     let der = &response.certificate;
     assert!(
         !der.is_empty() && der.len() <= CERT_MAX_LEN,
-        "TborGetCertReq in {state:?}: invalid certificate length {}",
-        der.len(),
+        "TborGetCertReq in {state:?}: invalid certificate length",
     );
     assert_eq!(
         der[0], 0x30,
