@@ -328,6 +328,22 @@ pub struct UnoHsmPal {
     /// being torn down can't be registered with the engine after the
     /// session's engine-side delete (see `vault.rs`).
     pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
+
+    /// Count of host IOs currently holding an IO_SQ slot: incremented when an
+    /// IO is received from the IIC driver and decremented when `drop_io`
+    /// returns its slot. Read by the IDFU shutdown
+    /// handler as the async analog of the reference firmware's
+    /// `scheduler.occupancy_list()` — a non-zero value means host IO is
+    /// still in flight, so `prepare-for-shutdown` must fail closed. The
+    /// PCIe-reset handler waits for it to reach zero before freeing
+    /// partitions.
+    io_in_flight: Cell<u32>,
+
+    /// Set while a PCIe reset (PERST / FLR) frees partitions. IO received
+    /// while it is set is recycled without being dispatched, so no new host
+    /// IO starts while partition keys are being deleted and no pre-reset IO
+    /// runs after the reset.
+    io_paused: Cell<bool>,
 }
 
 // SAFETY: UnoHsmPal is only accessed from a single-threaded Embassy
@@ -451,8 +467,24 @@ impl Default for UnoHsmPal {
             io_alloc: IO_ALLOC_INIT,
             io_peak: IO_ALLOC_INIT,
             fp_bulk_lock: Mutex::new(()),
+            io_in_flight: Cell::new(0),
+            io_paused: Cell::new(false),
         }
     }
+}
+
+/// PERST / FLR PCIe-reset discriminants as defined by Admin's reference
+/// `PcieResetReason` (admin/src/fsm/types); the HSM matches these exact
+/// 32-bit values as delivered over the IPC event channel.
+const PCIE_RESET_FLR: u32 = 0x524C4650;
+const PCIE_RESET_PERST: u32 = 0x54535250;
+
+/// Classifies an admin IPC event payload: `true` only for the PERST / FLR
+/// reset reasons that must tear partitions down. Every other value is an
+/// unrecognised event that must not reset partitions (it is ignored but still
+/// acknowledged).
+fn is_pcie_reset_event(value: u32) -> bool {
+    value == PCIE_RESET_FLR || value == PCIE_RESET_PERST
 }
 
 impl UnoHsmPal {
@@ -468,6 +500,39 @@ impl UnoHsmPal {
     /// - `Running` after hardware channels are initialized
     pub fn boot_phase(&self) -> BootPhase {
         self.boot_phase.get()
+    }
+
+    /// Increment the in-flight IO count.
+    ///
+    /// Called by [`accept_io`](Self::accept_io) for every IO received from
+    /// the IIC driver. Saturating so it can never panic across the host
+    /// trust boundary.
+    pub(crate) fn io_in_flight_inc(&self) {
+        self.io_in_flight
+            .set(self.io_in_flight.get().saturating_add(1));
+    }
+
+    /// Decrement the in-flight IO count.
+    ///
+    /// Called by `drop_io` right after the IO slot is returned to the ISQ.
+    /// Saturating so it can never panic.
+    pub(crate) fn io_in_flight_dec(&self) {
+        self.io_in_flight
+            .set(self.io_in_flight.get().saturating_sub(1));
+    }
+
+    /// Current number of host IOs in flight.
+    ///
+    /// See [`io_in_flight_inc`](Self::io_in_flight_inc).
+    pub(crate) fn io_in_flight(&self) -> u32 {
+        self.io_in_flight.get()
+    }
+
+    /// Whether inbound host IO is held by a PCIe reset in progress.
+    ///
+    /// See [`handle_ipc_event`](Self::handle_ipc_event).
+    pub(crate) fn io_paused(&self) -> bool {
+        self.io_paused.get()
     }
 
     /// Process one IPC receive cycle.
@@ -503,7 +568,7 @@ impl UnoHsmPal {
                     .await;
             }
             Either::Second(value) => {
-                self.handle_ipc_event(IpcChannel::AdminEvent, value);
+                self.handle_ipc_event(IpcChannel::AdminEvent, value).await;
             }
         }
     }
@@ -570,6 +635,13 @@ impl UnoHsmPal {
     /// - Publishes `Run` to shared boot-status memory.
     /// - Optionally emits semihosting `SYS_READY` when feature-enabled.
     fn on_boot_complete(&self) {
+        // On an impactless (fw-update) warm reset the IIC/OIC queues were
+        // programmed and enabled by the previous firmware and must survive the
+        // update; the drivers attach (resume from the hardware indices) rather
+        // than reprogram. Every other reset type performs a full program. Each
+        // driver reads the SP-published reset reason itself in `init`. GDMA is
+        // re-initialised unconditionally, mirroring the reference Admin's
+        // unconditional `GdmaController::new_with_enable`.
         self.iic.init();
         self.oic.init();
         self.gdma.init();
@@ -663,6 +735,9 @@ impl UnoHsmPal {
                     return;
                 }
                 if self.try_handle_pfn_enable(channel, buf).await {
+                    return;
+                }
+                if self.try_handle_shutdown(channel, buf) {
                     return;
                 }
                 buf[0] |= 0x80;
@@ -785,19 +860,169 @@ impl UnoHsmPal {
         true
     }
 
+    /// Handle a `Shutdown` (IDFU prepare-for-shutdown) IPC in the running
+    /// state.
+    ///
+    /// Admin owns the IO drain: it sends this only after every host SQ
+    /// credit has been restored, and inbound is HW-paused so no new IO can
+    /// arrive. The HSM therefore just confirms it holds no in-flight IO and
+    /// replies — mirroring the reference firmware's fail-closed
+    /// `scheduler.occupancy_list() != 0` guard:
+    ///
+    /// - non-zero in-flight -> reply `OperationFailed`, so Admin aborts
+    ///   (rolls back) the IDFU instead of resetting with resident work;
+    /// - zero in-flight -> reply `Success`. Partition state is already
+    ///   GSRAM write-through (see [`part`](crate::part)), so there is no
+    ///   separate flush to perform before the SP resets the core.
+    ///
+    /// Returns `true` when the message was a `Shutdown` (and thus fully
+    /// handled here), `false` otherwise so the caller falls back to the
+    /// default echo path.
+    fn try_handle_shutdown(&self, channel: IpcChannel, buf: &[u32; 16]) -> bool {
+        // Only claim messages that carry the `Shutdown` opcode; anything else
+        // is left for the caller's default echo path.
+        let is_shutdown = IpcMessageDecoder::decode_header(&IpcMessage { data: *buf })
+            .map(|header| header.msg_op() == IpcMessageOpCode::Shutdown as u32)
+            .unwrap_or(false);
+        if !is_shutdown {
+            return false;
+        }
+
+        // A `Shutdown`-opcode message that fails to decode/validate (e.g. an
+        // out-of-range `drain_time_ms`) is a malformed request, not "not ours":
+        // reply `InvalidField` rather than mis-ACKing it via the default echo
+        // path (mirrors the reference `handle_shutdown_for_reset_req`).
+        if decode_shutdown(buf).is_none() {
+            error!(
+                "idfu",
+                HsmError::InvalidIpcShutdownMessage,
+                "malformed shutdown request"
+            );
+            let reply = encode_shutdown_ack(buf, IpcMessageStatusCode::InvalidField);
+            self.ipc.reply(channel as u8, &reply);
+            return true;
+        }
+
+        // Admin owns the drain (see the docstring): fail closed while any host
+        // IO is still in flight, otherwise acknowledge readiness. This relies
+        // on every received IO eventually reaching `drop_io` (each
+        // `handle_io` task runs to completion, or the core faults into a
+        // reset); a task that hung on an `.await` would keep the count
+        // non-zero and block IDFU.
+        let in_flight = self.io_in_flight();
+        let status = if in_flight != 0 {
+            error!(
+                "idfu",
+                HsmError::IoDrainInProgress,
+                "shutdown requested with {} IO in flight; failing closed",
+                in_flight
+            );
+            IpcMessageStatusCode::OperationFailed
+        } else {
+            IpcMessageStatusCode::Success
+        };
+
+        let reply = encode_shutdown_ack(buf, status);
+        self.ipc.reply(channel as u8, &reply);
+        true
+    }
+
     /// Handle one IPC event notification.
+    ///
+    /// The only event Admin raises on this channel is the PCIe reset
+    /// notification (PERST-down or PF FLR, payload `PcieResetReason`).
+    /// Mirroring the reference firmware's `on_flr`, every partition is reset
+    /// before the event is acknowledged: per-tenant state, vault keys,
+    /// identity, and resource mask are cleared and the partition returns to
+    /// `Unallocated`. A partition whose free fails is quarantined `Faulted`
+    /// (fail-closed) so it cannot serve host IO with stale keys after Admin
+    /// resets its side; the event is still acknowledged because Admin blocks
+    /// its reset completion on the HSM response. Admin resets its own function
+    /// and resource tables once it sees the acknowledgement, so the next
+    /// driver load (PfnEnable, SetResource) starts from the same state as a
+    /// cold boot.
+    ///
+    /// Admin raises this only after its own boot, which waits for the HSM
+    /// to reach `Running`, so GDMA and the admin IO slot used by the vault
+    /// wipe are available. Before `Running` the event is only acknowledged.
+    ///
+    /// Admin does not drain host IO before raising the event, so the HSM
+    /// quiesces it here: inbound IO received during the reset (by `poll_io`,
+    /// or still queued in the ICQ when the free completes) is recycled
+    /// without being dispatched, and partitions are freed only once every
+    /// in-flight IO has finished. Because `part_free` awaits (vault clear,
+    /// GDMA scrub), this keeps host IO from using or creating keys in a
+    /// partition that is being freed, and no IO from before the reset can
+    /// reach a partition re-enabled after the acknowledgement.
     ///
     /// # Parameters
     /// - `self`: PAL instance providing the IPC driver.
     /// - `channel`: IPC event channel to acknowledge.
     /// - `value`: Raw event payload delivered by hardware.
-    ///
-    /// # Returns
-    /// Returns `()`.
-    ///
-    /// # Side Effects
-    /// Acknowledges the event in the IPC block for `channel`.
-    fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
+    async fn handle_ipc_event(&self, channel: IpcChannel, value: u32) {
+        // Admin raises only PERST/FLR on this channel. Reset partitions only
+        // for a recognised reset reason, so a future event type can never
+        // trigger a spurious teardown; anything unrecognised is ignored but
+        // still acked.
+        if self.boot_phase.get() == BootPhase::Running && is_pcie_reset_event(value) {
+            // Quiesce host IO before freeing partitions. In-flight IO waits
+            // only on its own drivers, which `run` keeps waking, never on
+            // this task, so the drain completes.
+            self.io_paused.set(true);
+            while self.io_in_flight() != 0 {
+                embassy_futures::yield_now().await;
+            }
+
+            let mut faulted = 0u16;
+            for pfn in 0..crate::part::NUM_PARTITIONS as u8 {
+                let pid = HsmPartId::from(pfn);
+                if let Err(_e) = self.part_free(pid).await {
+                    // Fail-closed: a partition we could not free still holds its
+                    // previous allocation, keys, and sessions, yet Admin is
+                    // about to reset its own side — leaving the partition
+                    // appearing usable would let host IO reach stale keys after
+                    // the reset. Quarantine it as `Faulted` so the enable gate
+                    // (`partition_enabled`) drops all host IO for it until a
+                    // clean free/realloc (or reboot) clears the fault.
+                    if let Ok(part) = azihsm_fw_uno_drivers_part_store::PartStore::partition(pid) {
+                        part.set_state(azihsm_fw_hsm_pal_traits::PartState::Faulted);
+                    }
+                    faulted += 1;
+                    error!(
+                        "pcie",
+                        _e, "reset event: partition {} free failed; faulted", pfn
+                    );
+                }
+            }
+            // Recycle IO still queued in the ICQ. `poll_io` only takes entries
+            // it has been woken for, so an entry left in the ICQ would be
+            // dispatched once the flag clears and could reach a partition
+            // re-enabled after the acknowledgement. Nothing awaits between
+            // finding the ICQ empty and clearing the flag.
+            while let Some(index) = self.iic.try_recv() {
+                let io = self.accept_io(index);
+                self.recycle_reset_io(io).await;
+            }
+            // Resume normal IO dispatch.
+            self.io_paused.set(false);
+            if faulted == 0 {
+                info!("pcie", "reset event {}: all partitions reset", value);
+            } else {
+                warn!(
+                    "pcie",
+                    "reset event {}: {} partition(s) failed to free and were faulted",
+                    value,
+                    faulted
+                );
+            }
+        } else if self.boot_phase.get() == BootPhase::Running {
+            warn!("pcie", "ignoring unexpected admin event {:#x}", value);
+        }
+        // Admin blocks its PERST/FLR completion on this ack (its pcie FSM stays
+        // Pending until the HSM response arrives), so the event is always
+        // acknowledged — withholding the ack would hang the reset rather than
+        // recover it. Any partition that failed to free was faulted above, so
+        // the acknowledged reset never leaves a stale partition serving IO.
         self.ipc.ack_event(channel as u8, value);
     }
 }
@@ -863,6 +1088,19 @@ impl HsmPal for UnoHsmPal {
             core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_CI_OFFSET) as *mut u32, 0);
             core::ptr::write_volatile((IO_GSRAM_BASE + IPC_HSM_ADMIN_TX_PI_OFFSET) as *mut u32, 0);
         }
+        // The HSM also owns the reply ring of the Admin→HSM request channel
+        // (the channel that carries the boot handshake): reset its producer
+        // and consumer indices on every boot so a reply left unread before a
+        // warm reset is not taken by Admin as the answer to its first boot
+        // request. Admin waits for `Done` (published below) before sending.
+        // Mirrors the reference `admin_to_hsm_ipc_channel_config` (`env.rs`).
+        // SAFETY: both offsets are 4-byte-aligned words in the GSRAM
+        // Admin↔HSM IPC block (`io_gsram`), valid for the device lifetime;
+        // Admin does not access the reply ring until boot status is `Done`.
+        unsafe {
+            ((IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_PI_OFFSET) as *mut u32).write_volatile(0);
+            ((IO_GSRAM_BASE + IPC_ADMIN_HSM_TX_CI_OFFSET) as *mut u32).write_volatile(0);
+        }
         self.ipc.enable(IpcChannel::AdminMessage as u8);
         self.ipc.enable(IpcChannel::AdminEvent as u8);
         self.ipc.enable(IpcChannel::FpMessage as u8);
@@ -891,13 +1129,24 @@ impl HsmPal for UnoHsmPal {
         // constructor selection on `SocInfo::reset_type` (`env.rs`).
         match azihsm_fw_uno_drivers_soc::reset_type() {
             SocResetType::Por => {
+                info!("boot", "init: reset=POR -> partition store init_default");
                 azihsm_fw_uno_drivers_part_store::PartStore::init_default();
+                // FP slot map: SP zeroes GSRAM on POR; kept across
+                // warm/fw-update with the vault.
             }
             SocResetType::WarmReset | SocResetType::FwUpdateWarmReset => {
+                // The SP decides impactless vs impactful updates; an impactful
+                // update resets the SoC (POR path above). Here the store is
+                // preserved as-is and only Gate 1 is re-armed.
+                info!(
+                    "boot",
+                    "init: reset=warm/fwupdate -> keep store, rearm gate1"
+                );
                 azihsm_fw_uno_drivers_part_store::PartStore::rearm_unwrapping_key_required();
             }
         }
         boot_status::set(BootStatus::Done);
+        info!("boot", "init: boot_status=Done published");
     }
 
     /// Cooperative NVIC polling loop.

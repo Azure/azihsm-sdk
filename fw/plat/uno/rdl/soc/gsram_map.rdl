@@ -20,6 +20,7 @@
 //   0x12840 - 0x15064  GDMA queues
 //   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
 //   0x20C58 - 0xA4D60  Heap (IO_META + SRAM_IO_BUF)
+//   0xB8000 - 0xB8041  FP bulk-key slot map (65 × 1-byte table bitmaps)
 //   0xBB000 - 0xEBC00  Partition store
 //   0xEBC00 - 0x200000 Key vault
 //
@@ -449,6 +450,29 @@ mem sram_io_buf_t {
 // Partition Store + Key Vault
 // ══════════════════════════════════════════════════════════════
 
+// ── FP bulk-key slot map ────────────────────────────────────────
+//
+// Mirrors the reference firmware's GsRamMemMap::cdma_key_vault_meta_data
+// at the identical GSRAM offset 0xB8000 (abs 0x610B_8000). One byte per
+// fast-path key table (65); bit i set = slot i of that table is held by a
+// bulk key (only bits 0..=6 are used). Kept in GSRAM, like the key vault
+// whose bulk-key handles reference these slots, so it survives warm and
+// fw-update resets. Byte-granular (memwidth = 8); the bit layout is owned
+// by the vault driver.
+//
+// IDFU contract: an impactless firmware update keeps this
+// region's contents and attaches to the running IO queues. Changing the
+// layout of the partition store, key vault, FP bulk-key slot map, or IO
+// pool (IIC/OIC queues and IO_SQ/IO_CQ buffers) therefore requires bumping
+// `FW_VERSION_IDFU` (manticore `version.h`), so SP performs an impactful
+// update instead.
+
+mem fp_slot_map_t {
+    desc = "FP bulk-key slot occupancy: one 7-bit bitmap byte per FP table.";
+    mementries = 65;
+    memwidth   = 8;
+};
+
 // ── Partition persistent store ──────────────────────────────────
 //
 // Per-partition persistent store, one entry per partition (cardinality
@@ -635,6 +659,9 @@ addrmap io_gsram {
     // ─── Heap (per-IO buffers) — 33 slots: 0..31 host (IIC), 32 admin ───
     io_meta_entry_t  IO_META[33]         @ 0x20C58 += 0x08;
     sram_io_buf_t    SRAM_IO_BUF[33]     @ 0x20D60 += 0x4000;
+
+    // ─── FP bulk-key slot map: 65 × 1-byte table bitmaps ───
+    fp_slot_map_t    FP_SLOT_MAP         @ 0xB8000;   // 0xB8000 - 0xB8041
 
     // ─── Partition persistent store (65 entries, 3072 B each) ───
     part_store_t     PART_STORE[65]      @ 0xBB000 += 0xC00;

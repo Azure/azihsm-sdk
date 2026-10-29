@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(clippy::new_without_default)]
 //! Async firmware driver for the OIC (Outbound IO Controller).
 //!
@@ -26,7 +26,7 @@
 //!     io_meta_base: 0x2003_DC00,
 //!     interrupt: true,
 //! }));
-//! oic.init();
+//! oic.init(); // attach on fw-update, full program otherwise (reads reset reason)
 //! oic.enable();
 //! oic.send(index)?.await?;
 //! ```

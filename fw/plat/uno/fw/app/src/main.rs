@@ -90,8 +90,9 @@ static HSM: OnceLock<Hsm<UnoHsmPal>> = OnceLock::new();
 /// - Schedules per-IO tasks onto the executor when task slots are available.
 #[embassy_executor::task]
 async fn poll_io(spawner: Spawner) -> ! {
+    let hsm = HSM.get().await;
     loop {
-        let Ok(io) = HSM.get().await.pal().poll_io().await else {
+        let Ok(io) = hsm.pal().poll_io().await else {
             continue;
         };
 
@@ -121,7 +122,8 @@ async fn poll_io(spawner: Spawner) -> ! {
 /// - Triggers DMA activity and CQE completion for that IO.
 #[embassy_executor::task(pool_size = 32)]
 async fn handle_io(io: UnoHsmIo) {
-    HSM.get().await.handle_io(io).await;
+    let hsm = HSM.get().await;
+    hsm.handle_io(io).await;
 }
 
 /// Dedicated core-liveliness heartbeat task.
