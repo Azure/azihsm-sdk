@@ -158,12 +158,12 @@ impl HsmIo for UnoHsmIo {
     /// naming no function yields an out-of-range id, which the partition
     /// lookup rejects with `InvalidArg` rather than aliasing a valid slot.
     ///
-    /// The self-test slot ([`SELF_TEST_IO_INDEX`]) has no `IO_META` entry and
-    /// no partition context, so this returns partition `0` for it rather than
-    /// indexing `IO_META` out of bounds.
+    /// The self-test slot ([`SELF_TEST_IO_INDEX`]) has no `IO_META` entry or
+    /// partition context, so it returns the invalid `NO_PARTITION` sentinel
+    /// rather than aliasing a real partition or indexing `IO_META`.
     fn pid(&self) -> HsmPartId {
         if self.index as u32 >= IO_META_COUNT {
-            return HsmPartId::from(0u8);
+            return HsmPartId::from(crate::pal::NO_PARTITION);
         }
         let axi_id = self.io_meta().ctlr.read(IO_META_CTLR::CONTROLLER_ID) as u8;
         HsmPartId::from(crate::pal::axi_id_to_pfn(axi_id).unwrap_or(crate::pal::NO_PARTITION))

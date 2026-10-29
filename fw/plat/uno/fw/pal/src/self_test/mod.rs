@@ -84,20 +84,32 @@ async fn run_rng_periodic(pal: &UnoHsmPal) -> HsmResult<()> {
         return Err(HsmError::IpcResponseFailure);
     }
 
-    with_timeout(Duration::from_millis(RNG_DRAIN_TIMEOUT_MS), async {
-        let mut pause_acknowledged = false;
+    with_timeout(Duration::from_millis(RNG_PAUSE_TIMEOUT_MS), async {
         loop {
-            let drained = pause_acknowledged && pal.host_io_drained();
-            let status =
-                admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, drained).await?;
-            if status == ok && drained {
+            let status = admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, false).await?;
+            if status == ok {
                 return Ok(());
             }
-            if status == ok {
-                pause_acknowledged = true;
-            }
-            if status != pending && status != ok {
+            if status != pending {
                 return Err(HsmError::IpcResponseFailure);
+            }
+            Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
+        }
+    })
+    .await
+    .map_err(|_| HsmError::CryptoTimeout)??;
+
+    with_timeout(Duration::from_millis(RNG_DRAIN_TIMEOUT_MS), async {
+        loop {
+            if pal.host_io_drained() {
+                let status =
+                    admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, true).await?;
+                if status == ok {
+                    return Ok(());
+                }
+                if status != pending {
+                    return Err(HsmError::IpcResponseFailure);
+                }
             }
             Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
         }
@@ -153,7 +165,10 @@ const PKA_TESTS_PER_ENGINE: usize = 4;
 const PERIODIC_TEST_COUNT: usize =
     FIXED_TESTS.len() + PKA_TESTS_PER_ENGINE * pka::PKA_ENGINES as usize + 1;
 
-/// Maximum time to acknowledge the UCD pause and drain accepted host IOs.
+/// Maximum time for Admin to acknowledge the UCD pause and drained HSM SQ credits.
+const RNG_PAUSE_TIMEOUT_MS: u64 = 500;
+
+/// Maximum time to drain accepted host IOs after Admin acknowledges the pause.
 const RNG_DRAIN_TIMEOUT_MS: u64 = 1_500;
 
 /// Delay between Admin `Status` polls.
