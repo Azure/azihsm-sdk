@@ -329,9 +329,9 @@ pub struct UnoHsmPal {
     /// session's engine-side delete (see `vault.rs`).
     pub(crate) fp_bulk_lock: Mutex<NoopRawMutex, ()>,
 
-    /// Count of host IOs currently being processed: incremented when an
-    /// inbound IO is accepted and dispatched to a `handle_io` task, and
-    /// decremented when that task finishes. Read by the IDFU shutdown
+    /// Count of host IOs currently holding an IO_SQ slot: incremented when an
+    /// IO is received from the IIC driver and decremented when `drop_io`
+    /// returns its slot. Read by the IDFU shutdown
     /// handler as the async analog of the reference firmware's
     /// `scheduler.occupancy_list()` — a non-zero value means host IO is
     /// still in flight, so `prepare-for-shutdown` must fail closed. The
@@ -339,10 +339,10 @@ pub struct UnoHsmPal {
     /// partitions.
     io_in_flight: Cell<u32>,
 
-    /// Set while a PCIe reset (PERST / FLR) frees partitions. `poll_io`
-    /// recycles any inbound IO received while it is set without dispatching
-    /// it, so no new host IO starts while partition keys are being deleted
-    /// and no pre-reset IO runs after the reset.
+    /// Set while a PCIe reset (PERST / FLR) frees partitions. IO received
+    /// while it is set is recycled without being dispatched, so no new host
+    /// IO starts while partition keys are being deleted and no pre-reset IO
+    /// runs after the reset.
     io_paused: Cell<bool>,
 }
 
@@ -504,19 +504,19 @@ impl UnoHsmPal {
 
     /// Increment the in-flight IO count.
     ///
-    /// Called when an inbound IO has been accepted and dispatched to a
-    /// `handle_io` task. Saturating so it can never panic across the host
+    /// Called by [`accept_io`](Self::accept_io) for every IO received from
+    /// the IIC driver. Saturating so it can never panic across the host
     /// trust boundary.
-    pub fn io_in_flight_inc(&self) {
+    pub(crate) fn io_in_flight_inc(&self) {
         self.io_in_flight
             .set(self.io_in_flight.get().saturating_add(1));
     }
 
     /// Decrement the in-flight IO count.
     ///
-    /// Called when a `handle_io` task has finished processing (the IO slot
-    /// has been returned to the ISQ). Saturating so it can never panic.
-    pub fn io_in_flight_dec(&self) {
+    /// Called by `drop_io` right after the IO slot is returned to the ISQ.
+    /// Saturating so it can never panic.
+    pub(crate) fn io_in_flight_dec(&self) {
         self.io_in_flight
             .set(self.io_in_flight.get().saturating_sub(1));
     }
@@ -905,9 +905,9 @@ impl UnoHsmPal {
 
         // Admin owns the drain (see the docstring): fail closed while any host
         // IO is still in flight, otherwise acknowledge readiness. This relies
-        // on every spawned `handle_io` task eventually reaching
-        // `io_in_flight_dec` (each runs to completion, or the core faults into
-        // a reset); a task that hung on an `.await` would keep the count
+        // on every received IO eventually reaching `drop_io` (each
+        // `handle_io` task runs to completion, or the core faults into a
+        // reset); a task that hung on an `.await` would keep the count
         // non-zero and block IDFU.
         let in_flight = self.io_in_flight();
         let status = if in_flight != 0 {
@@ -947,12 +947,13 @@ impl UnoHsmPal {
     /// wipe are available. Before `Running` the event is only acknowledged.
     ///
     /// Admin does not drain host IO before raising the event, so the HSM
-    /// quiesces it here: `poll_io` recycles inbound IO received during the
-    /// reset without dispatching it, and partitions are freed only once every
-    /// in-flight `handle_io` task has finished. Because `part_free` awaits
-    /// (vault clear, GDMA scrub), this keeps host IO from using or creating
-    /// keys in a partition that is being freed, and no IO from before the
-    /// reset can reach a partition re-enabled after the acknowledgement.
+    /// quiesces it here: inbound IO received during the reset (by `poll_io`,
+    /// or still queued in the ICQ when the free completes) is recycled
+    /// without being dispatched, and partitions are freed only once every
+    /// in-flight IO has finished. Because `part_free` awaits (vault clear,
+    /// GDMA scrub), this keeps host IO from using or creating keys in a
+    /// partition that is being freed, and no IO from before the reset can
+    /// reach a partition re-enabled after the acknowledgement.
     ///
     /// # Parameters
     /// - `self`: PAL instance providing the IPC driver.
@@ -992,6 +993,15 @@ impl UnoHsmPal {
                         _e, "reset event: partition {} free failed; faulted", pfn
                     );
                 }
+            }
+            // Recycle IO still queued in the ICQ. `poll_io` only takes entries
+            // it has been woken for, so an entry left in the ICQ would be
+            // dispatched once the flag clears and could reach a partition
+            // re-enabled after the acknowledgement. Nothing awaits between
+            // finding the ICQ empty and clearing the flag.
+            while let Some(index) = self.iic.try_recv() {
+                let io = self.accept_io(index);
+                self.recycle_reset_io(io).await;
             }
             // Resume normal IO dispatch.
             self.io_paused.set(false);

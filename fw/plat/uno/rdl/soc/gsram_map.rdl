@@ -459,6 +459,13 @@ mem sram_io_buf_t {
 // whose bulk-key handles reference these slots, so it survives warm and
 // fw-update resets. Byte-granular (memwidth = 8); the bit layout is owned
 // by the vault driver.
+//
+// IDFU contract: an impactless firmware update keeps this
+// region's contents and attaches to the running IO queues. Changing the
+// layout of the partition store, key vault, FP bulk-key slot map, or IO
+// pool (IIC/OIC queues and IO_SQ/IO_CQ buffers) therefore requires bumping
+// `FW_VERSION_IDFU` (manticore `version.h`), so SP performs an impactful
+// update instead.
 
 mem fp_slot_map_t {
     desc = "FP bulk-key slot occupancy: one 7-bit bitmap byte per FP table.";

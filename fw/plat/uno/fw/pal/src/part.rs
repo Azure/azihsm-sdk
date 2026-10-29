@@ -536,11 +536,19 @@ impl UnoHsmPal {
     /// Re-enabling an already-`Enabled` partition preserves its keys and nonce.
     /// Certificates and BK_BOOT are out of scope.
     ///
+    /// A PF left `Faulted` by a failed PCIe-reset free is freed again first,
+    /// because its enable arrives before the `SetResource` whose
+    /// [`part_alloc`] would otherwise recover it; a failed free is returned
+    /// and the partition stays `Faulted`.
+    ///
     /// Returns [`HsmError::InvalidArg`] for an illegal transition.
     ///
     /// [`part_alloc`]: Self::part_alloc
     pub(crate) async fn part_enable(&self, pid: HsmPartId, is_pf: bool) -> HsmResult<()> {
         let part = PartStore::partition(pid)?;
+        if is_pf && part.state()? == PartState::Faulted {
+            self.part_free(pid).await?;
+        }
         match part.state()? {
             PartState::Allocated | PartState::Disabled => {
                 self.provision_enabled_keys(pid).await?;

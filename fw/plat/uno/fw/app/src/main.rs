@@ -100,13 +100,6 @@ async fn poll_io(spawner: Spawner) -> ! {
             continue;
         };
 
-        // Count the accepted IO before it can run; `io_in_flight_dec` in
-        // `handle_io` balances this. The increment is synchronous (no await
-        // between here and `spawn`), so the spawned task cannot decrement
-        // before this executes. The IDFU shutdown handler reads this count to
-        // fail closed while any IO is still in flight, and the PCIe-reset
-        // handler waits for it to reach zero before freeing partitions.
-        hsm.pal().io_in_flight_inc();
         spawner.spawn(token);
     }
 }
@@ -131,9 +124,6 @@ async fn poll_io(spawner: Spawner) -> ! {
 async fn handle_io(io: UnoHsmIo) {
     let hsm = HSM.get().await;
     hsm.handle_io(io).await;
-    // Balance the `io_in_flight_inc` performed in `poll_io` once this IO has
-    // been fully processed and its slot returned to the ISQ.
-    hsm.pal().io_in_flight_dec();
 }
 
 /// Dedicated core-liveliness heartbeat task.

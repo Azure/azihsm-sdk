@@ -32,6 +32,16 @@ struct ChannelState {
     waker: WakerRegistration,
 }
 
+/// Result of consuming one ICQ entry.
+enum IcqPop {
+    /// The ICQ is empty.
+    Empty,
+    /// A failed entry was consumed and its slot recycled.
+    Recycled,
+    /// A successful entry was consumed; holds its IO_SQ slot index.
+    Ready(u16),
+}
+
 /// Async IIC (Inbound IO Controller) driver.
 ///
 /// One instance per (controller, channel) pair. The controller is
@@ -336,54 +346,82 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     /// and grant credit back.
     pub fn recv(&self) -> impl core::future::Future<Output = u16> + '_ {
         poll_fn(move |cx| {
-            self.state.with(|s| {
-                // Read tail from shadow (DTCM)
-                let tail = unsafe { self.icq_tail_shadow.read_volatile() } as u16;
-                if s.icq_head == tail {
+            self.state.with(|s| match self.pop(s) {
+                IcqPop::Ready(index) => Poll::Ready(index),
+                IcqPop::Empty | IcqPop::Recycled => {
                     s.waker.register(cx.waker());
-                    return Poll::Pending;
+                    Poll::Pending
                 }
-
-                let icq_slot = (s.icq_head & Self::MASK) as usize;
-                let entry = unsafe { &*self.icq_ring.add(icq_slot) };
-
-                let success = entry.status.success();
-                let index = self.buf_index(entry.buffer_addr());
-
-                s.icq_head = (s.icq_head + 1) & Self::MASK;
-                self.regs.icq_ch[self.channel as usize]
-                    .head
-                    .write(ICQ_CHANNEL_HEAD::HEAD.val(s.icq_head.into()));
-
-                // Skip failed entries — recycle buffer, return credit, and keep polling
-                if !success {
-                    let _cause = self.regs.interrupt_cause.get();
-                    let queue_id = entry.info.queue_id() as u16;
-                    warn!(
-                        "iic",
-                        "recv FAILED ch={} slot={} addr={:#x} axi_id={} qid={} cause={:#010x}",
-                        self.channel,
-                        index,
-                        entry.buffer_addr(),
-                        entry.info.axi_id(),
-                        queue_id,
-                        _cause
-                    );
-                    self.free_io(index, queue_id);
-                    s.waker.register(cx.waker());
-                    return Poll::Pending;
-                }
-
-                // Persist metadata into IO_META sidecar
-                let meta = unsafe { &mut *self.io_meta.add(index as usize) };
-                meta.controller_id = entry.info.axi_id();
-                meta.queue = IoMetaQueue::new()
-                    .with_queue_id(entry.info.queue_id() as u16)
-                    .with_queue_index(entry.info.queue_index());
-
-                Poll::Ready(index)
             })
         })
+    }
+
+    /// Takes the next successful inbound IO already in the ICQ, without
+    /// waiting.
+    ///
+    /// Returns `None` once the ICQ is empty. Failed entries are recycled as
+    /// in [`recv`](Self::recv). A returned slot must be released with
+    /// [`free_io`](Self::free_io).
+    pub fn try_recv(&self) -> Option<u16> {
+        self.state.with(|s| loop {
+            match self.pop(s) {
+                IcqPop::Ready(index) => return Some(index),
+                IcqPop::Recycled => continue,
+                IcqPop::Empty => return None,
+            }
+        })
+    }
+
+    /// Consumes one ICQ entry, if any.
+    ///
+    /// A successful entry has its metadata persisted into the IO_META
+    /// sidecar and its IO_SQ slot index returned. A failed entry
+    /// (status != 0) is recycled: its buffer returns to the ISQ and its
+    /// credit to the source queue.
+    fn pop(&self, s: &mut ChannelState) -> IcqPop {
+        // Read tail from shadow (DTCM)
+        let tail = unsafe { self.icq_tail_shadow.read_volatile() } as u16;
+        if s.icq_head == tail {
+            return IcqPop::Empty;
+        }
+
+        let icq_slot = (s.icq_head & Self::MASK) as usize;
+        let entry = unsafe { &*self.icq_ring.add(icq_slot) };
+
+        let success = entry.status.success();
+        let index = self.buf_index(entry.buffer_addr());
+
+        s.icq_head = (s.icq_head + 1) & Self::MASK;
+        self.regs.icq_ch[self.channel as usize]
+            .head
+            .write(ICQ_CHANNEL_HEAD::HEAD.val(s.icq_head.into()));
+
+        // Skip failed entries — recycle buffer and return credit
+        if !success {
+            let _cause = self.regs.interrupt_cause.get();
+            let queue_id = entry.info.queue_id() as u16;
+            warn!(
+                "iic",
+                "recv FAILED ch={} slot={} addr={:#x} axi_id={} qid={} cause={:#010x}",
+                self.channel,
+                index,
+                entry.buffer_addr(),
+                entry.info.axi_id(),
+                queue_id,
+                _cause
+            );
+            self.free_io(index, queue_id);
+            return IcqPop::Recycled;
+        }
+
+        // Persist metadata into IO_META sidecar
+        let meta = unsafe { &mut *self.io_meta.add(index as usize) };
+        meta.controller_id = entry.info.axi_id();
+        meta.queue = IoMetaQueue::new()
+            .with_queue_id(entry.info.queue_id() as u16)
+            .with_queue_index(entry.info.queue_index());
+
+        IcqPop::Ready(index)
     }
 
     /// Wake the driver if the ICQ has pending entries.
