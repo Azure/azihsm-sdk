@@ -66,6 +66,12 @@ const INVALID: u8 = 0x01;
 const RSA_MASK: u8 = 0x5C;
 const OTHER_MASK: u8 = 0x3A;
 
+/// The errors `ecdh_derive` returns for an invalid public key.
+const PUBLIC_KEY_VALIDATION_ERRORS: [HsmError; 2] = [
+    HsmError::EccPublicKeyValidationFailed,
+    HsmError::EccPointValidationFailed,
+];
+
 // ── Fake PAL ────────────────────────────────────────────────────────
 
 /// What a fake PAL operation does.
@@ -678,18 +684,29 @@ fn key_agreement_fails_when_a_derivation_writes_nothing() {
     }
 }
 
+/// The second derivation uses the public key under test, so a validation
+/// error there means the key pair is inconsistent.
+#[test]
+fn key_agreement_fails_an_invalid_public_key() {
+    let x = Op::Fill(0x33);
+    for err in PUBLIC_KEY_VALIDATION_ERRORS {
+        let pal = pal_with(|p| p.ecdh_derive = [x, Op::Fail(err)]);
+        check_ecc(&HsmEccPct::KeyAgreement, pal, Ok(false));
+    }
+}
+
+/// The first derivation uses the fixed test public key, so every error from
+/// it is returned. Other errors from the second derivation are returned too.
 #[test]
 fn key_agreement_returns_operation_errors() {
     let x = Op::Fill(0x33);
-    for err in [
-        HsmError::EccPublicKeyValidationFailed,
-        HsmError::EccPointValidationFailed,
-    ] {
-        for ops in [[Op::Fail(err), x], [x, Op::Fail(err)]] {
-            let pal = pal_with(|p| p.ecdh_derive = ops);
-            check_ecc(&HsmEccPct::KeyAgreement, pal, Err(err));
-        }
+    let operation = HsmError::FailedToComputeEcdhSharedSecret;
+    for err in PUBLIC_KEY_VALIDATION_ERRORS.into_iter().chain([operation]) {
+        let pal = pal_with(|p| p.ecdh_derive = [Op::Fail(err), x]);
+        check_ecc(&HsmEccPct::KeyAgreement, pal, Err(err));
     }
+    let pal = pal_with(|p| p.ecdh_derive = [x, Op::Fail(operation)]);
+    check_ecc(&HsmEccPct::KeyAgreement, pal, Err(operation));
 }
 
 #[test]

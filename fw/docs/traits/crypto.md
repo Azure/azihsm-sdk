@@ -99,7 +99,7 @@ Byte order also governs the digest and the ECDH secret:
 **PCT (Pairwise Consistency Test):** A PCT checks that a private key and its public key belong together. `ecc_gen_keypair` and `ecc_gen_keypair_from_root` run the PCT that `pct` selects before they return a key; `HsmEccPct::None` runs none. Callers choose the PCT from the key's use: `SignVerify` for a signing key and `KeyAgreement` for any other ECC key.
 
 - `SignVerify` — hash a fixed message, sign the digest with the private key, and verify the signature with the public key.
-- `KeyAgreement` — run ECDH in both directions with a fixed test key pair: the new private key with the test public key, and the test private key with the new public key. Both must produce the same shared secret (the X coordinate).
+- `KeyAgreement` — run ECDH in both directions with a fixed test key pair: the new private key with the test public key, and the test private key with the new public key. Both must produce the same shared secret (the X coordinate). A new public key that fails validation fails the test.
 
 `HsmRsaPct` selects an RSA PCT the same way:
 

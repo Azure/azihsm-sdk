@@ -8,12 +8,14 @@
 //! - **Key agreement:** Run ECDH in both directions against a fixed test key
 //!   pair, as SP 800-56A allows: the key under test with the test public key,
 //!   and the test private key with the public key under test. Both must give
-//!   the same shared secret. Only the X coordinate is compared.
+//!   the same shared secret. Only the X coordinate is compared. A public key
+//!   under test that fails validation fails the test.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEcc;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
 use azihsm_fw_hsm_pal_traits::HsmEccPct;
+use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmHash;
 use azihsm_fw_hsm_pal_traits::HsmHashAlgo;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -39,7 +41,8 @@ const VERIFY_RESULT_LEN: usize = 4;
 /// # Returns
 ///
 /// - `Ok(true)` — the key pair passed, or `pct` is [`HsmEccPct::None`].
-/// - `Ok(false)` — the key pair is inconsistent.
+/// - `Ok(false)` — the key pair is inconsistent. For the key-agreement test,
+///   that includes a public key under test that fails validation.
 /// - `Err(_)` — an allocation or PAL operation failed, so the test didn't
 ///   finish.
 pub async fn ecc_pct<P: HsmEcc + HsmHash>(
@@ -122,24 +125,34 @@ async fn key_agreement<P: HsmEcc>(
     from_test_key.fill(0xFF);
 
     // Both derivations share one await point, which keeps the compiled
-    // code small.
-    let derived: HsmResult<()> = async {
-        for (d, q, out) in [
-            (priv_key, &*test_pub, &mut *from_key),
-            (&*test_priv, pub_key, &mut *from_test_key),
+    // code small. Only the second uses the public key under test, so only
+    // its validation errors mean the key pair is inconsistent: they fail the
+    // test, as a mismatched secret does. The first uses the fixed test
+    // public key, so any error from it is returned.
+    let derived: HsmResult<bool> = async {
+        for (d, q, out, under_test) in [
+            (priv_key, &*test_pub, &mut *from_key, false),
+            (&*test_priv, pub_key, &mut *from_test_key, true),
         ] {
-            pal.ecdh_derive(io, curve, d, q, out).await?;
+            match pal.ecdh_derive(io, curve, d, q, out).await {
+                Err(
+                    HsmError::EccPublicKeyValidationFailed | HsmError::EccPointValidationFailed,
+                ) if under_test => {
+                    return Ok(false);
+                }
+                result => result?,
+            }
         }
-        Ok(())
+        Ok(true)
     }
     .await;
 
     let secret_len = curve.secret_len();
-    let consistent =
-        derived.is_ok() && crate::ct_eq(&from_key[..secret_len], &from_test_key[..secret_len]);
+    let consistent = matches!(derived, Ok(true))
+        && crate::ct_eq(&from_key[..secret_len], &from_test_key[..secret_len]);
     crate::wipe(from_key);
     crate::wipe(from_test_key);
-    derived.map(|()| consistent)
+    derived.map(|_| consistent)
 }
 
 /// Builds the fixed test private key for `curve` in the Uno PAL's vault
