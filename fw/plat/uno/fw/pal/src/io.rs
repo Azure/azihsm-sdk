@@ -57,6 +57,7 @@ use crate::alloc::reset_io_alloc;
 const IO_Q: StaticRef<IoGsramRegs> = unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
 
 static HOST_IO_IN_FLIGHT: AtomicU32 = AtomicU32::new(0);
+static HOST_IO_COMPLETIONS: AtomicU32 = AtomicU32::new(0);
 
 /// An in-flight IO identified by its IO_SQ slot index.
 ///
@@ -258,6 +259,7 @@ impl HsmIoController for UnoHsmPal {
         self.scrub_io_slot(io.index).await;
         self.iic.free_io(io.index, queue_id);
         assert!(HOST_IO_IN_FLIGHT.fetch_sub(1, Ordering::AcqRel) > 0);
+        HOST_IO_COMPLETIONS.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
 }
@@ -266,6 +268,15 @@ impl UnoHsmPal {
     /// All accepted host IOs have completed and no inbound IO remains unclaimed.
     pub(crate) fn host_io_drained(&self) -> bool {
         !self.iic.has_pending_io() && HOST_IO_IN_FLIGHT.load(Ordering::Acquire) == 0
+    }
+
+    /// State changes used to distinguish drain progress from a stuck host IO.
+    pub(crate) fn host_io_progress(&self) -> (u32, u32, bool) {
+        (
+            HOST_IO_IN_FLIGHT.load(Ordering::Acquire),
+            HOST_IO_COMPLETIONS.load(Ordering::Acquire),
+            self.iic.has_pending_io(),
+        )
     }
 
     /// Runs `f` as an *admin session* over the dedicated admin IO slot

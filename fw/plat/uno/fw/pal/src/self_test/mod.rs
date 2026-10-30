@@ -68,6 +68,15 @@ async fn admin_rng_request(pal: &UnoHsmPal, op: IpcMessageOpCode, drained: bool)
     response_status(&resp, op, drained).map_err(|_| HsmError::IpcResponseDecodeError)
 }
 
+/// Returns false for Pending, true once Admin acknowledges the requested phase.
+async fn admin_rng_status(pal: &UnoHsmPal, drained: bool) -> HsmResult<bool> {
+    match admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, drained).await? {
+        status if status == u32::from(IpcMessageStatusCode::Success) => Ok(true),
+        status if status == u32::from(IpcMessageStatusCode::Pending) => Ok(false),
+        _ => Err(HsmError::IpcResponseFailure),
+    }
+}
+
 /// Runs the DRBG KAT under the Admin quiesce handshake.
 ///
 /// The KAT overwrites the shared DRBG, so Admin must stop its RNG users first:
@@ -77,45 +86,34 @@ async fn admin_rng_request(pal: &UnoHsmPal, op: IpcMessageOpCode, drained: bool)
 /// Admin quiesced and stops the HSM via [`notify_self_test_failure`].
 async fn run_rng_periodic(pal: &UnoHsmPal) -> HsmResult<()> {
     let ok = u32::from(IpcMessageStatusCode::Success);
-    let pending = u32::from(IpcMessageStatusCode::Pending);
 
     let prepare = admin_rng_request(pal, IpcMessageOpCode::RngSelfTestPrepare, false).await?;
     if prepare != ok {
         return Err(HsmError::IpcResponseFailure);
     }
 
-    with_timeout(Duration::from_millis(RNG_PAUSE_TIMEOUT_MS), async {
-        loop {
-            let status = admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, false).await?;
-            if status == ok {
-                return Ok(());
-            }
-            if status != pending {
-                return Err(HsmError::IpcResponseFailure);
-            }
-            Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
-        }
-    })
-    .await
-    .map_err(|_| HsmError::CryptoTimeout)??;
+    while !admin_rng_status(pal, false).await? {
+        Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
+    }
 
-    with_timeout(Duration::from_millis(RNG_DRAIN_TIMEOUT_MS), async {
-        loop {
-            if pal.host_io_drained() {
-                let status =
-                    admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, true).await?;
-                if status == ok {
-                    return Ok(());
-                }
-                if status != pending {
-                    return Err(HsmError::IpcResponseFailure);
-                }
-            }
-            Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
+    let mut last_progress = Instant::now();
+    let mut previous_io = pal.host_io_progress();
+    loop {
+        let current_io = pal.host_io_progress();
+        if current_io != previous_io {
+            previous_io = current_io;
+            last_progress = Instant::now();
         }
-    })
-    .await
-    .map_err(|_| HsmError::CryptoTimeout)??;
+        if pal.host_io_drained() && admin_rng_status(pal, true).await? {
+            break;
+        }
+        if Instant::now().duration_since(last_progress)
+            >= Duration::from_secs(RNG_IO_STALL_TIMEOUT_SECS)
+        {
+            azihsm_fw_uno_fault::explicit_crash(Some("RNG quiesce: host IO stopped progressing"));
+        }
+        Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
+    }
 
     pal.rng.self_test()?;
     let done = admin_rng_request(pal, IpcMessageOpCode::RngSelfTestDone, false).await?;
@@ -165,14 +163,11 @@ const PKA_TESTS_PER_ENGINE: usize = 4;
 const PERIODIC_TEST_COUNT: usize =
     FIXED_TESTS.len() + PKA_TESTS_PER_ENGINE * pka::PKA_ENGINES as usize + 1;
 
-/// Maximum time for Admin to acknowledge the UCD pause and drained HSM SQ credits.
-const RNG_PAUSE_TIMEOUT_MS: u64 = 500;
-
-/// Maximum time to drain accepted host IOs after Admin acknowledges the pause.
-const RNG_DRAIN_TIMEOUT_MS: u64 = 1_500;
-
 /// Delay between Admin `Status` polls.
 const RNG_STATUS_POLL_MS: u64 = 20;
+
+/// Detect a stuck I/O after UCD has paused, not a slow but progressing drain.
+const RNG_IO_STALL_TIMEOUT_SECS: u64 = 30;
 
 /// Time between two periodic tests.
 const PERIODIC_INTERVAL_SECS: u64 = 60;

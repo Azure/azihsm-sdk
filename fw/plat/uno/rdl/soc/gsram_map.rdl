@@ -20,7 +20,7 @@
 //   0x12840 - 0x15064  GDMA queues
 //   0x15064 - 0x1BA38  Crypto command buffers (AES, UPKA, SHA)
 //   0x20C58 - 0xA8D60  Heap (IO_META + SRAM_IO_BUF)
-//   0xA9000 - 0xB7C58  HSM self-test/test-hook code and known-answer vectors
+//   0xA9000 - 0xBB000  HSM self-test/test-hook code and known-answer vectors
 //   0xBB000 - 0xEBC00  Partition store
 //   0xEBC00 - 0x200000 Key vault
 //
@@ -447,7 +447,7 @@ mem sram_io_buf_t {
 
 mem hsm_code_t {
     desc = "Executable HSM self-test/test-hook code and known-answer vectors, loaded by 1SP.";
-    mementries = 60504;
+    mementries = 73728; // 0xA9000..0xBB000; partition store begins at 0xBB000.
     memwidth = 8;
 };
 
