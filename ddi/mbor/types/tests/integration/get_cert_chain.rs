@@ -154,11 +154,7 @@ fn test_get_cert_chain_multithread() {
             // Collect and compare the results
             let mut prev_num_cert = None;
             let mut prev_thumbprint = [0u8; 32];
-            for thread in threads {
-                let result = thread.join();
-                assert!(result.is_ok(), "result {:?}", result);
-                let (num_cert, thumbprint) = result.unwrap();
-
+            for (num_cert, thumbprint) in join_all(threads) {
                 match prev_num_cert {
                     Some(prev) => {
                         assert_eq!(prev, num_cert);
@@ -216,11 +212,7 @@ fn test_get_cert_chain_info_multithread() {
             // Collect and compare the results
             let mut prev_num_cert = None;
             let mut prev_thumbprint = [0u8; 32];
-            for thread in threads {
-                let result = thread.join();
-                assert!(result.is_ok(), "result {:?}", result);
-                let (num_cert, thumbprint) = result.unwrap();
-
+            for (num_cert, thumbprint) in join_all(threads) {
                 match prev_num_cert {
                     Some(prev) => {
                         assert_eq!(prev, num_cert);
