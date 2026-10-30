@@ -151,6 +151,7 @@ fn main() {
         .allowlist_var("EVP_CTRL_.*")
         .allowlist_var("RSA_FLAG_.*")
         .allowlist_var("RSA_PKCS1_.*")
+        .allowlist_var("RSA_PSS_SALTLEN_.*")
         .allowlist_var("ERR_LIB_ENGINE")
         .allowlist_var("ERR_R_.*")
         .allowlist_var("CRYPTO_EX_INDEX_ENGINE")

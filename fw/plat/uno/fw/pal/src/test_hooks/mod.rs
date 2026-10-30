@@ -26,8 +26,9 @@
 //!   the opcode, and hands the request data to the matching handler.
 //! - [`test_action`] — the `TestAction` (`DdiOp` 2004) handler.
 //! - [`get_priv_key`] / [`raw_key_import`] — FIPS-validation action handlers.
+//! - [`get_rng`] — the `GetRng` FIPS-validation action handler.
 //!
-//! # `TestAction` is an in-session command
+//! # Test hooks are in-session commands
 //!
 //! The core classifies any opcode it does not know as
 //! `DdiSessionKind::User`, and the IO layer runs session validation
@@ -50,16 +51,18 @@
 //! `azihsm_ddi_mbor_test_hooks` host crate, which encodes the matching opaque
 //! request. Each action retains its existing typed response.
 //!
-//! The refactor also routes `GetPrivKey` and `RawKeyImport` as TestAction
-//! values 25 and 26. It does not accept their legacy standalone opcodes 2005
-//! and 2008, so the refactor host package and firmware must be updated
-//! together.
+//! `GetPrivKey`, `RawKeyImport`, and `GetRng` use TestAction values 25, 26,
+//! and 27, respectively, enabled only by `fips_validation_hooks`. Their legacy
+//! standalone opcodes 2005, 2008, and 2007 are not accepted. The host package
+//! and firmware must use the same action selectors and payload schemas.
 
 #[cfg(feature = "azihsm_test_hooks")]
 mod clear_user_credentials;
 mod common;
 #[cfg(feature = "fips_validation_hooks")]
 mod get_priv_key;
+#[cfg(feature = "fips_validation_hooks")]
+mod get_rng;
 #[cfg(feature = "fips_validation_hooks")]
 mod raw_key_import;
 #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]

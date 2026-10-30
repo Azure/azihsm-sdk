@@ -506,7 +506,10 @@ impl Partition {
     /// resets via NSSR keeps its provisioning and only re-establishes its
     /// credential. This helper leaves the partition identity,
     /// `Masked_BK_BOOT`, persistent session table, resource mask, generation
-    /// counter, and lifecycle state for the caller to manage. The PAL
+    /// counter, lifecycle state, and the SP-published unwrapping-key slot
+    /// (Gate 1 + backup, wiped only when the partition is freed so a
+    /// re-enabled partition re-imports the same key) for the caller to
+    /// manage. The PAL
     /// preserves established session reservations on disable and releases
     /// all slots on NSSR/migrate or free.
     #[inline(never)]
@@ -580,11 +583,6 @@ impl Partition {
             self.clear_sapota_thumbprint();
             self.clear_sealed_bk3();
             self.set_bk3_initialized(false);
-            // Disarm Gate 1 and wipe the SP-published unwrapping key: the slot
-            // belongs to a partition that is being deallocated. A later
-            // `SetResource` re-arms Gate 1, prompting the SP to stage a fresh
-            // key.
-            self.clear_unwrapping_key();
             let slot = self.slot_mut();
             slot.psk_co = [0u8; PSK_LEN];
             slot.psk_cu = [0u8; PSK_LEN];

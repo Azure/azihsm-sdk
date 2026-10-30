@@ -265,6 +265,11 @@ impl UnoHsmPal {
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
         part.clear_masked_bk_boot();
+        // Disarm Gate 1 and wipe the SP-published unwrapping key. Like the
+        // masked boot key, it persists across enable/disable and belongs to
+        // the allocation; a later `SetResource` re-arms Gate 1 so the SP
+        // stages a fresh key for the next tenant.
+        part.clear_unwrapping_key();
 
         // Release resources and reset lifecycle state.
         part.set_res_mask(0);
