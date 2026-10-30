@@ -51,7 +51,12 @@ use crate::ipc::*;
 ///
 /// A timeout must lead directly to fail-stop: the IPC send future cannot be
 /// cancelled and then reused while its request remains in flight.
-async fn admin_rng_request(pal: &UnoHsmPal, op: IpcMessageOpCode, drained: bool) -> HsmResult<u32> {
+async fn admin_rng_request(
+    pal: &UnoHsmPal,
+    op: IpcMessageOpCode,
+    drained: bool,
+    timeout: Duration,
+) -> HsmResult<u32> {
     let req = if op == IpcMessageOpCode::RngSelfTestStatus {
         encode_rng_self_test_status(drained)
     } else {
@@ -59,7 +64,7 @@ async fn admin_rng_request(pal: &UnoHsmPal, op: IpcMessageOpCode, drained: bool)
     };
     let mut resp = [0u32; IPC_MESSAGE_LENGTH];
     with_timeout(
-        Duration::from_secs(1),
+        timeout,
         pal.ipc
             .send(IpcChannel::AdminRequest as u8, &req, &mut resp),
     )
@@ -68,12 +73,71 @@ async fn admin_rng_request(pal: &UnoHsmPal, op: IpcMessageOpCode, drained: bool)
     response_status(&resp, op, drained).map_err(|_| HsmError::IpcResponseDecodeError)
 }
 
-/// Returns false for Pending, true once Admin acknowledges the requested phase.
-async fn admin_rng_status(pal: &UnoHsmPal, drained: bool) -> HsmResult<bool> {
-    match admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, drained).await? {
-        status if status == u32::from(IpcMessageStatusCode::Success) => Ok(true),
-        status if status == u32::from(IpcMessageStatusCode::Pending) => Ok(false),
+async fn admin_rng_success(
+    pal: &UnoHsmPal,
+    op: IpcMessageOpCode,
+    timeout: Duration,
+) -> HsmResult<()> {
+    if admin_rng_request(pal, op, false, timeout).await? == u32::from(IpcMessageStatusCode::Success)
+    {
+        Ok(())
+    } else {
+        Err(HsmError::IpcResponseFailure)
+    }
+}
+
+enum RngAdminStatus {
+    Acknowledged,
+    Pending,
+    ResourceBusy,
+}
+
+/// Distinguishes a busy Admin CAST resource from a stalled UCD/SQ drain.
+async fn admin_rng_status(pal: &UnoHsmPal, drained: bool) -> HsmResult<RngAdminStatus> {
+    let timeout = if drained {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_secs(RNG_ADMIN_BUSY_IPC_TIMEOUT_SECS)
+    };
+    match IpcMessageStatusCode::from(
+        admin_rng_request(pal, IpcMessageOpCode::RngSelfTestStatus, drained, timeout).await?,
+    ) {
+        IpcMessageStatusCode::Success => Ok(RngAdminStatus::Acknowledged),
+        IpcMessageStatusCode::Pending => Ok(RngAdminStatus::Pending),
+        IpcMessageStatusCode::PendingResource if !drained => Ok(RngAdminStatus::ResourceBusy),
         _ => Err(HsmError::IpcResponseFailure),
+    }
+}
+
+enum RngRunResult {
+    Passed,
+    Deferred,
+}
+
+struct RngQuiesceWatchdog {
+    previous_io: (u32, u32, bool),
+    last_progress: Instant,
+}
+
+impl RngQuiesceWatchdog {
+    fn new(pal: &UnoHsmPal) -> Self {
+        Self {
+            previous_io: pal.host_io_progress(),
+            last_progress: Instant::now(),
+        }
+    }
+
+    fn check(&mut self, pal: &UnoHsmPal, detail: &'static str) {
+        let current_io = pal.host_io_progress();
+        if current_io != self.previous_io {
+            self.previous_io = current_io;
+            self.last_progress = Instant::now();
+        }
+        if Instant::now().duration_since(self.last_progress)
+            >= Duration::from_secs(RNG_IO_STALL_TIMEOUT_SECS)
+        {
+            azihsm_fw_uno_fault::enter_crypto_timeout_error_state(detail);
+        }
     }
 }
 
@@ -82,45 +146,58 @@ async fn admin_rng_status(pal: &UnoHsmPal, drained: bool) -> HsmResult<bool> {
 /// The KAT overwrites the shared DRBG, so Admin must stop its RNG users first:
 /// `Prepare`, wait for Admin's UCD pause acknowledgement and all accepted
 /// host IOs to complete, run the KAT, and send `Done` only on success.
-/// On this single-core executor the KAT is synchronous. Any failure leaves
-/// Admin quiesced and stops the HSM via [`notify_self_test_failure`].
-async fn run_rng_periodic(pal: &UnoHsmPal) -> HsmResult<()> {
-    let ok = u32::from(IpcMessageStatusCode::Success);
+/// A busy Admin defers the attempt without running the KAT. On this single-core
+/// executor the KAT is synchronous; any failure stops the HSM.
+async fn run_rng_periodic(pal: &UnoHsmPal) -> HsmResult<RngRunResult> {
+    admin_rng_success(
+        pal,
+        IpcMessageOpCode::RngSelfTestPrepare,
+        Duration::from_secs(RNG_ADMIN_BUSY_IPC_TIMEOUT_SECS),
+    )
+    .await?;
 
-    let prepare = admin_rng_request(pal, IpcMessageOpCode::RngSelfTestPrepare, false).await?;
-    if prepare != ok {
-        return Err(HsmError::IpcResponseFailure);
-    }
-
-    while !admin_rng_status(pal, false).await? {
+    let mut watchdog = RngQuiesceWatchdog::new(pal);
+    loop {
+        match admin_rng_status(pal, false).await? {
+            RngAdminStatus::Acknowledged => break,
+            RngAdminStatus::ResourceBusy => {
+                admin_rng_success(
+                    pal,
+                    IpcMessageOpCode::RngSelfTestDone,
+                    Duration::from_secs(RNG_ADMIN_BUSY_IPC_TIMEOUT_SECS),
+                )
+                .await?;
+                return Ok(RngRunResult::Deferred);
+            }
+            RngAdminStatus::Pending => watchdog.check(
+                pal,
+                "Periodic RNG quiesce: Admin pause or SQ credits stalled",
+            ),
+        }
         Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
     }
 
-    let mut last_progress = Instant::now();
-    let mut previous_io = pal.host_io_progress();
+    watchdog = RngQuiesceWatchdog::new(pal);
     loop {
-        let current_io = pal.host_io_progress();
-        if current_io != previous_io {
-            previous_io = current_io;
-            last_progress = Instant::now();
+        if pal.host_io_drained() {
+            match admin_rng_status(pal, true).await? {
+                RngAdminStatus::Acknowledged => break,
+                RngAdminStatus::Pending => {}
+                RngAdminStatus::ResourceBusy => return Err(HsmError::IpcResponseFailure),
+            }
         }
-        if pal.host_io_drained() && admin_rng_status(pal, true).await? {
-            break;
-        }
-        if Instant::now().duration_since(last_progress)
-            >= Duration::from_secs(RNG_IO_STALL_TIMEOUT_SECS)
-        {
-            azihsm_fw_uno_fault::explicit_crash(Some("RNG quiesce: host IO stopped progressing"));
-        }
+        watchdog.check(pal, "Periodic RNG quiesce: host IO stopped progressing");
         Timer::after(Duration::from_millis(RNG_STATUS_POLL_MS)).await;
     }
 
     pal.rng.self_test()?;
-    let done = admin_rng_request(pal, IpcMessageOpCode::RngSelfTestDone, false).await?;
-    if done != ok {
-        return Err(HsmError::IpcResponseFailure);
-    }
-    Ok(())
+    admin_rng_success(
+        pal,
+        IpcMessageOpCode::RngSelfTestDone,
+        Duration::from_secs(1),
+    )
+    .await?;
+    Ok(RngRunResult::Passed)
 }
 
 /// One schedulable HSM-core self-test.
@@ -166,7 +243,13 @@ const PERIODIC_TEST_COUNT: usize =
 /// Delay between Admin `Status` polls.
 const RNG_STATUS_POLL_MS: u64 = 20;
 
-/// Detect a stuck I/O after UCD has paused, not a slow but progressing drain.
+/// Admin's iDFU Ready wait may occupy its event loop for up to 25 seconds.
+const RNG_ADMIN_BUSY_IPC_TIMEOUT_SECS: u64 = 30;
+
+/// Retry a deferred RNG test promptly when Admin releases its CAST resource.
+const RNG_RETRY_INTERVAL_SECS: u64 = 1;
+
+/// Detect a stalled UCD/SQ pause or host IO drain, not a progressing phase.
 const RNG_IO_STALL_TIMEOUT_SECS: u64 = 30;
 
 /// Time between two periodic tests.
@@ -271,7 +354,22 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
     Ok(())
 }
 
-/// Runs one test per [`PERIODIC_INTERVAL_SECS`], cycling through the list forever.
+/// Runs a deferred RNG attempt without advancing the normal test schedule.
+async fn attempt_rng(pal: &UnoHsmPal, retry_at: &mut Option<Instant>) -> bool {
+    match run_rng_periodic(pal).await {
+        Ok(RngRunResult::Passed) => {
+            *retry_at = None;
+            true
+        }
+        Ok(RngRunResult::Deferred) => {
+            *retry_at = Some(Instant::now() + Duration::from_secs(RNG_RETRY_INTERVAL_SECS));
+            false
+        }
+        Err(e) => notify_self_test_failure(SelfTest::Rng, e),
+    }
+}
+
+/// Runs one scheduled test per interval, plus retries of a deferred RNG test.
 ///
 /// Tests run one at a time on the dedicated self-test slot, so two periodic
 /// tests can never overlap; PKA engines are shared with live IO through
@@ -280,15 +378,26 @@ pub(crate) async fn run_pre_op(pal: &UnoHsmPal, io: &UnoHsmIo) -> HsmResult<()> 
 pub(crate) async fn run_periodic(pal: &UnoHsmPal) -> ! {
     let io = UnoHsmIo::self_test();
     let mut index = 0;
+    let mut next_test_at = Instant::now() + Duration::from_secs(PERIODIC_INTERVAL_SECS);
+    let mut rng_retry_at: Option<Instant> = None;
 
     loop {
-        Timer::after(Duration::from_secs(PERIODIC_INTERVAL_SECS)).await;
+        Timer::at(rng_retry_at.map_or(next_test_at, |retry| retry.min(next_test_at))).await;
+
+        let rng_ran_this_turn = if rng_retry_at.is_some_and(|retry| Instant::now() >= retry) {
+            attempt_rng(pal, &mut rng_retry_at).await
+        } else {
+            false
+        };
+        if Instant::now() < next_test_at {
+            continue;
+        }
 
         let test = periodic_test(index);
         match test {
             SelfTest::Rng => {
-                if let Err(e) = run_rng_periodic(pal).await {
-                    notify_self_test_failure(test, e);
+                if rng_retry_at.is_none() && !rng_ran_this_turn {
+                    attempt_rng(pal, &mut rng_retry_at).await;
                 }
             }
             _ => {
@@ -328,5 +437,6 @@ pub(crate) async fn run_periodic(pal: &UnoHsmPal) -> ! {
         if index == PERIODIC_TEST_COUNT {
             index = 0;
         }
+        next_test_at = Instant::now() + Duration::from_secs(PERIODIC_INTERVAL_SECS);
     }
 }

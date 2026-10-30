@@ -269,6 +269,9 @@ pub enum IpcMessageStatusCode {
     /// Operation still pending.
     Pending = 6,
 
+    /// Admin is waiting for its self-test resource.
+    PendingResource = 7,
+
     /// Unknown / catch-all status.
     UnknownStatus = 0xF,
 }
@@ -289,6 +292,7 @@ impl From<u32> for IpcMessageStatusCode {
             4 => Self::OperationTimeout,
             5 => Self::OperationFailed,
             6 => Self::Pending,
+            7 => Self::PendingResource,
             _ => Self::UnknownStatus,
         }
     }
@@ -1039,11 +1043,11 @@ mod rng_response_tests {
     fn accepts_matching_response_and_preserves_status() {
         let mut resp = response();
         resp[0] = IpcMessageHeader::from(resp[0])
-            .with_status(u32::from(IpcMessageStatusCode::Pending))
+            .with_status(u32::from(IpcMessageStatusCode::PendingResource))
             .into();
         assert_eq!(
             response_status(&resp, OP, false),
-            Ok(u32::from(IpcMessageStatusCode::Pending))
+            Ok(u32::from(IpcMessageStatusCode::PendingResource))
         );
     }
 

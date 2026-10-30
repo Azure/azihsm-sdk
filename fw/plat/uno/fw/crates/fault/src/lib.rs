@@ -143,7 +143,7 @@ pub fn enter_self_test_error_state(test: u32, engine: u32, reason: HsmError) -> 
     enter_error_state(reason)
 }
 
-/// Reports an AES/SHA hardware timeout without releasing its active DMA slot.
+/// Reports a crypto or IO timeout without releasing any active DMA buffers.
 pub fn enter_crypto_timeout_error_state(detail: &'static str) -> ! {
     Nvic::disable(Interrupt::TCON_WAKEUP1);
     crashdump_save(
