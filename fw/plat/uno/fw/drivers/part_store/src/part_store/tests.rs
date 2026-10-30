@@ -246,3 +246,30 @@ fn sealed_bk3_stays_write_once_after_migrate() {
     p.set_sealed_bk3(buf(&replacement)).unwrap();
     assert_eq!(&p.sealed_bk3()[..], &replacement);
 }
+
+/// Neither reset kind of `clear_state` may touch the SP-published unwrapping
+/// key slot: the key belongs to the allocation and is re-imported after a
+/// disable or NSSR. Only `clear_unwrapping_key` (partition free) wipes it.
+#[test]
+fn clear_state_preserves_unwrapping_key_slot() {
+    let mut p = Partition(12);
+    p.set_unwrapping_key_required(true);
+    {
+        let slot = p.slot_mut();
+        slot.unwrapping_key_bk = [0x3Cu8; UNWRAPPING_KEY_BK_LEN];
+        slot.unwrapping_key_bk_valid = 2;
+    }
+
+    for kind in [PartResetKind::Disable, PartResetKind::Migrate] {
+        p.clear_state(kind);
+        assert!(p.unwrapping_key_required());
+        assert!(p.unwrapping_key_bk_valid());
+        assert!(p.unwrapping_key_bk().iter().all(|&b| b == 0x3C));
+        assert_eq!(p.unwrapping_key_id(), None);
+    }
+
+    p.clear_unwrapping_key();
+    assert!(!p.unwrapping_key_required());
+    assert!(!p.unwrapping_key_bk_valid());
+    assert!(p.unwrapping_key_bk().iter().all(|&b| b == 0));
+}
