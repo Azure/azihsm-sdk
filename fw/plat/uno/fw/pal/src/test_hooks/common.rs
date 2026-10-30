@@ -94,11 +94,20 @@ where
     H: MborEncode,
     D: MborEncode,
 {
+    let mut encoder = encode_resp_hdr(hdr, smem)?;
+    data.mbor_encode(&mut encoder)?;
+    Ok(encoder.position())
+}
+
+/// Encode the envelope and header, leaving the encoder at the response data.
+pub(super) fn encode_resp_hdr<'a, H: MborEncode>(
+    hdr: &H,
+    smem: &'a mut [u8],
+) -> HsmResult<MborEncoder<'a>> {
     let mut encoder = MborEncoder::new(smem);
     MborMap(2).mbor_encode(&mut encoder)?;
     0u8.mbor_encode(&mut encoder)?;
     hdr.mbor_encode(&mut encoder)?;
     1u8.mbor_encode(&mut encoder)?;
-    data.mbor_encode(&mut encoder)?;
-    Ok(encoder.position())
+    Ok(encoder)
 }
