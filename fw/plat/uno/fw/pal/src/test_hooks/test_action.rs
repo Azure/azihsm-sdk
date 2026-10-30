@@ -22,6 +22,8 @@ use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmResult;
 
 #[cfg(feature = "azihsm_test_hooks")]
+use super::aes_gcm;
+#[cfg(feature = "azihsm_test_hooks")]
 use super::clear_user_credentials;
 use super::common::ReqHdr;
 #[cfg(feature = "azihsm_test_hooks")]
@@ -71,6 +73,9 @@ enum SupportedTestAction {
     /// Import raw key material.
     #[cfg(feature = "fips_validation_hooks")]
     RawKeyImport = 26,
+    /// Run one AES-GCM operation on caller-supplied inputs.
+    #[cfg(feature = "azihsm_test_hooks")]
+    AesGcm = 27,
 }
 
 /// Decoded action and field count from the outer TestAction request map.
@@ -101,6 +106,10 @@ impl TryFrom<u32> for SupportedTestAction {
         #[cfg(feature = "fips_validation_hooks")]
         if value == Self::RawKeyImport as u32 {
             return Ok(Self::RawKeyImport);
+        }
+        #[cfg(feature = "azihsm_test_hooks")]
+        if value == Self::AesGcm as u32 {
+            return Ok(Self::AesGcm);
         }
         Err(HsmError::UnsupportedCmd)
     }
@@ -148,6 +157,18 @@ pub(super) async fn dispatch<'p>(
             let payload_len = payload.len();
             let mut payload_decoder = MborDecoder::new(payload);
             raw_key_import::dispatch(pal, io, hdr, &mut payload_decoder, payload_len).await
+        }
+        #[cfg(feature = "azihsm_test_hooks")]
+        SupportedTestAction::AesGcm => {
+            aes_gcm::dispatch(
+                pal,
+                io,
+                hdr,
+                decoder,
+                selector.request_field_count,
+                request_len,
+            )
+            .await
         }
     }
 }

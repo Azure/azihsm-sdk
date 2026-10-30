@@ -3,9 +3,9 @@
 
 //! DDI request, response, and command-envelope wire types for test hooks.
 //!
-//! `GetPrivKey` and `RawKeyImport` have distinct typed responses, but both use
-//! the common TestAction opcode and request envelope. The request type selects
-//! the response decoder through [`DdiOpReq::OpResp`].
+//! `GetPrivKey`, `RawKeyImport`, and `AesGcm` have distinct typed responses,
+//! but all use the common TestAction opcode and request envelope. The request
+//! type selects the response decoder through [`DdiOpReq::OpResp`].
 
 use azihsm_ddi_mbor_codec::*;
 use azihsm_ddi_mbor_derive::Ddi;
@@ -14,6 +14,7 @@ use pastey::paste;
 use zeroize::Zeroize;
 
 use super::encode_action_payload;
+use super::DdiAesGcmOp;
 use super::DdiTestAction;
 use super::DdiTestActionPayload;
 use super::TEST_ACTION_PAYLOAD_MAX;
@@ -197,6 +198,82 @@ pub struct DdiRawKeyImportCmdResp {
 
 impl DdiOpReq for DdiRawKeyImportCmdReq {
     type OpResp = DdiRawKeyImportCmdResp;
+
+    fn get_opcode(&self) -> DdiOp {
+        self.hdr.op
+    }
+
+    fn get_session_id(&self) -> Option<u16> {
+        self.hdr.sess_id
+    }
+}
+
+/// Action-specific request for `AesGcm`.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiAesGcmReq {
+    /// PAL AES-GCM method to run.
+    #[ddi(id = 1)]
+    pub op: DdiAesGcmOp,
+    /// AES key (16, 24, or 32 bytes).
+    #[ddi(id = 2)]
+    pub key: MborByteArray<32>,
+    /// 12-byte IV.
+    #[ddi(id = 3)]
+    pub iv: MborByteArray<12>,
+    /// Additional authenticated data.
+    #[ddi(id = 4)]
+    pub aad: MborByteArray<256>,
+    /// Plaintext to encrypt, or ciphertext to decrypt.
+    #[ddi(id = 5)]
+    pub text: MborByteArray<512>,
+    /// Tag to verify. Required to decrypt, and rejected for encrypt.
+    #[ddi(id = 6)]
+    pub tag: Option<MborByteArray<16>>,
+}
+
+/// Typed response data returned by `AesGcm`.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiAesGcmResp {
+    /// Ciphertext from encrypt, or plaintext from decrypt.
+    #[ddi(id = 1)]
+    pub text: MborByteArray<512>,
+    /// Tag from encrypt; absent for decrypt.
+    #[ddi(id = 2)]
+    pub tag: Option<MborByteArray<16>>,
+}
+
+/// Command envelope for the `AesGcm` TestAction.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiAesGcmCmdReq {
+    #[ddi(id = 0)]
+    pub hdr: DdiReqHdr,
+    #[ddi(id = 1)]
+    pub data: DdiTestActionReq,
+    #[ddi(id = 2)]
+    pub ext: Option<DdiReqExt>,
+}
+
+/// Command response envelope for the `AesGcm` TestAction.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiAesGcmCmdResp {
+    #[ddi(id = 0)]
+    pub hdr: DdiRespHdr,
+    #[ddi(id = 1)]
+    pub data: DdiAesGcmResp,
+    #[ddi(id = 2)]
+    pub ext: Option<DdiRespExt>,
+}
+
+impl DdiOpReq for DdiAesGcmCmdReq {
+    type OpResp = DdiAesGcmCmdResp;
 
     fn get_opcode(&self) -> DdiOp {
         self.hdr.op
