@@ -258,7 +258,8 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     /// - `curve`: ECC curve selector.
     /// - `priv_key`: DMA-capable private key buffer.
     /// - `pub_key`: DMA-capable peer public key buffer.
-    /// - `secret`: DMA-capable output buffer for the derived secret.
+    /// - `secret`: DMA-capable output for the full point `X || Y` (at least
+    ///   `2 * hsm_point_size(curve)` bytes); the shared secret is the X coordinate.
     /// - `prime`: DMA-capable curve prime buffer (LE).
     /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
     ///   constant setup write. Content is not surfaced to the caller.
@@ -268,7 +269,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaDriver<DEPTH, ENGINES> {
     ///
     /// # Returns
     ///
-    /// - `Ok(())`: Shared secret was written to `secret`.
+    /// - `Ok(())`: The shared point was written to `secret`.
     /// - `Err(HsmError::EccPointValidationFailed)`: Peer public key is not on
     ///   the curve.
     /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,

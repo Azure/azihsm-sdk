@@ -48,6 +48,7 @@ mod lock;
 mod pal;
 mod part;
 mod seed;
+mod self_test;
 mod session;
 /// Test-only DDI commands, reached through the `HsmCustomDispatch` hook.
 #[cfg(any(feature = "azihsm_test_hooks", feature = "fips_validation_hooks"))]

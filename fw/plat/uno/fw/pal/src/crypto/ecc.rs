@@ -572,16 +572,18 @@ impl HsmEcc for UnoHsmPal {
         if pub_key.len() < wire * 2 {
             return Err(HsmError::EccDerKeyShorterThanCurve);
         }
+        let secret_len = curve.secret_len();
+        if secret.len() < secret_len {
+            return Err(HsmError::InvalidArg);
+        }
         if !pub_key_in_valid_range(pub_key, pka_curve) {
             return Err(HsmError::EccPublicKeyValidationFailed);
         }
 
         let prime_le = curve_prime_le(pka_curve);
 
-        // Scope the per-call Montgomery scratch (curve prime + result) so it is
-        // freed as soon as the point-multiply completes instead of living for
-        // the whole IO; keeping it IO-bounded needlessly grows DMA-pool
-        // pressure in multi-step flows.
+        // Scope the per-call Montgomery scratch and full point output so they
+        // do not accumulate across multiple operations in the same IO.
         self.alloc_scoped_async(io, async |scope| {
             // The PKA point-multiply requires a per-call Montgomery constant
             // computed from the curve prime.
@@ -592,24 +594,30 @@ impl HsmEcc for UnoHsmPal {
             // Status word for the hardware on-curve validation that runs
             // between the Montgomery-constant setup and the ECDH compute.
             let point_valid = scope.dma_alloc(4)?;
+            let point = scope.dma_alloc(wire * 2)?;
 
-            self.pka
+            let result = self
+                .pka
                 .ecdh_derive(
                     pka_curve,
                     priv_key,
                     pub_key,
-                    secret,
+                    &mut *point,
                     prime,
                     mont_result,
                     point_valid,
                 )
-                .await?;
+                .await;
+            if result.is_ok() {
+                secret[..secret_len].copy_from_slice(&point[..secret_len]);
+            }
+            point.zeroize();
 
             // The shared secret is returned PKA-native little-endian, like
             // pub_key and priv_key. Any byte-order conversion (e.g. LE->BE for
             // an internal HKDF consumer that must match the host's openssl-BE
             // secret) is the DDI handler's responsibility, not the PAL's.
-            Ok(())
+            result
         })
         .await
     }

@@ -20,10 +20,9 @@
 //! ## Async batching strategy
 //!
 //! The PAL acquires the AES core via [`AesDriver::with_exclusive`] for
-//! batches of up to [`BATCH_SIZE`] semiblocks at a time, runs the
-//! batch's ECB operations as fast as the hardware can poll, then
-//! releases the lock and yields. This keeps long KWP wraps from
-//! starving other tasks on the cooperative executor.
+//! batches of up to [`BATCH_SIZE`] semiblocks at a time and awaits each
+//! ECB completion. Releasing the slot between batches lets other
+//! callers use the engine during long KWP operations.
 //!
 //! ## KWP delegation
 //!
@@ -128,8 +127,8 @@ struct UnwrapState<'a, 'o> {
 ///
 /// # Errors
 /// * Any [`HsmError`] surfaced by the AES driver.
-fn kw_wrap_batch<const DEPTH: usize>(
-    ecb: &AesExclusive<'_, DEPTH>,
+async fn kw_wrap_batch<const DEPTH: usize>(
+    ecb: &mut AesExclusive<'_, DEPTH>,
     key: &DmaBuf,
     state: &mut WrapState<'_>,
     j: u64,
@@ -151,7 +150,8 @@ fn kw_wrap_batch<const DEPTH: usize>(
             update_iv: false,
             message: pt,
             result: ct,
-        })?;
+        })
+        .await?;
 
         // A = MSB(64, B) ⊕ t   where t = n*j + i
         let t_bytes = (state.n * j + i).to_be_bytes();
@@ -188,8 +188,8 @@ fn kw_wrap_batch<const DEPTH: usize>(
 ///
 /// # Errors
 /// * Any [`HsmError`] surfaced by the AES driver.
-fn kw_unwrap_batch<const DEPTH: usize>(
-    ecb: &AesExclusive<'_, DEPTH>,
+async fn kw_unwrap_batch<const DEPTH: usize>(
+    ecb: &mut AesExclusive<'_, DEPTH>,
     key: &DmaBuf,
     state: &mut UnwrapState<'_, '_>,
     j: u64,
@@ -217,7 +217,8 @@ fn kw_unwrap_batch<const DEPTH: usize>(
             update_iv: false,
             message: ct,
             result: pt,
-        })?;
+        })
+        .await?;
 
         // A = MSB(64, B);  R[i] = LSB(64, B)
         state.a.copy_from_slice(&pt[..SEMI]);
@@ -246,8 +247,8 @@ fn kw_unwrap_batch<const DEPTH: usize>(
 ///
 /// # Errors
 /// * Any [`HsmError`] surfaced by the AES driver.
-fn ecb_block_in_place<const DEPTH: usize>(
-    ecb: &AesExclusive<'_, DEPTH>,
+async fn ecb_block_in_place<const DEPTH: usize>(
+    ecb: &mut AesExclusive<'_, DEPTH>,
     key: &DmaBuf,
     op: AesOp,
     block: &mut DmaBuf,
@@ -261,7 +262,8 @@ fn ecb_block_in_place<const DEPTH: usize>(
         update_iv: false,
         message: block,
         result: out,
-    })?;
+    })
+    .await?;
     block[..BLOCK].copy_from_slice(&out[..BLOCK]);
     Ok(())
 }
@@ -341,7 +343,7 @@ impl UnoHsmPal {
                 while i <= state.n {
                     let i_end = (i + BATCH_SIZE - 1).min(state.n);
                     self.aes
-                        .with_exclusive(|ecb| {
+                        .with_exclusive(async |ecb| {
                             kw_wrap_batch(
                                 ecb,
                                 key,
@@ -351,6 +353,7 @@ impl UnoHsmPal {
                                 &mut pt_buf[..],
                                 &mut ct_buf[..],
                             )
+                            .await
                         })
                         .await?;
                     i = i_end + 1;
@@ -398,7 +401,7 @@ impl UnoHsmPal {
                         1
                     };
                     self.aes
-                        .with_exclusive(|ecb| {
+                        .with_exclusive(async |ecb| {
                             kw_unwrap_batch(
                                 ecb,
                                 key,
@@ -408,6 +411,7 @@ impl UnoHsmPal {
                                 &mut ct_buf[..],
                                 &mut pt_buf[..],
                             )
+                            .await
                         })
                         .await?;
                     if i_start == 1 {
@@ -583,7 +587,7 @@ impl UnoHsmPal {
                     block[SEMI..SEMI + m].copy_from_slice(input);
 
                     self.aes
-                        .with_exclusive(|ecb| {
+                        .with_exclusive(async |ecb| {
                             ecb_block_in_place(
                                 ecb,
                                 key,
@@ -591,6 +595,7 @@ impl UnoHsmPal {
                                 &mut block[..],
                                 &mut out[..],
                             )
+                            .await
                         })
                         .await?;
 
@@ -662,7 +667,7 @@ impl UnoHsmPal {
                     block[..BLOCK].copy_from_slice(input);
 
                     self.aes
-                        .with_exclusive(|ecb| {
+                        .with_exclusive(async |ecb| {
                             ecb_block_in_place(
                                 ecb,
                                 key,
@@ -670,6 +675,7 @@ impl UnoHsmPal {
                                 &mut block[..],
                                 &mut out[..],
                             )
+                            .await
                         })
                         .await?;
 

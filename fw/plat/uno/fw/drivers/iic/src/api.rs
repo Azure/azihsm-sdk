@@ -317,6 +317,14 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         })
     }
 
+    /// Whether the inbound completion ring still contains an unclaimed host IO.
+    pub fn has_pending_io(&self) -> bool {
+        self.state.with(|s| {
+            let tail = unsafe { self.icq_tail_shadow.read_volatile() } as u16;
+            s.icq_head != tail
+        })
+    }
+
     /// Wake the driver if the ICQ has pending entries.
     pub fn wake(&self, irq: u16) {
         self.state.with(|s| {

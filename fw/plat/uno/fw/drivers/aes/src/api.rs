@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use core::future::poll_fn;
+use core::ops::AsyncFnOnce;
 use core::task::Poll;
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
@@ -16,6 +17,8 @@ use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
 use azihsm_fw_uno_reg_soc::io_gsram::*;
 use bitfield_struct::bitfield;
 use embassy_sync::waitqueue::WakerRegistration;
+use embassy_time::with_timeout;
+use embassy_time::Duration;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
 
@@ -131,6 +134,9 @@ struct WaiterSlot {
     /// True for [`AesDriver::with_exclusive`] slots — prevents
     /// [`AesDriver::wake`] from submitting a command for this slot.
     exclusive: bool,
+
+    /// An exclusive command has been submitted and is awaiting completion.
+    exclusive_in_flight: bool,
 }
 
 struct AesState<const DEPTH: usize> {
@@ -202,6 +208,7 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
                     waker: WakerRegistration::new(),
                     status: 0,
                     exclusive: false,
+                    exclusive_in_flight: false,
                 }),
                 head: 0,
                 active: 0,
@@ -239,24 +246,7 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
                     slot_idx = Some(s.tail);
                     s.tail = s.tail.wrapping_add(1);
 
-                    // Write the command descriptor into DTCM.
-                    let cmd_code = AesCmdCode::new()
-                        .with_tag(0x2)
-                        .with_mode(req.mode as u8)
-                        .with_encrypt(req.op == AesOp::Encrypt)
-                        .with_update_iv(req.update_iv)
-                        .with_key_len(key_len);
-                    let iv_addr = match req.iv.as_deref() {
-                        Some(iv) => iv.as_ptr() as u32,
-                        None => 0,
-                    };
-                    let entry = &AES_Q.aes_cmd[idx];
-                    entry.cmd_code.set(cmd_code.into());
-                    entry.result.set(req.result.as_ptr() as u32);
-                    entry.byte_count.set(req.message.len() as u32);
-                    entry.message.set(req.message.as_ptr() as u32);
-                    entry.key.set(req.key.as_ptr() as u32);
-                    entry.iv.set(iv_addr);
+                    write_cmd(idx, &req, key_len);
 
                     // If we're the only entry, submit to hardware immediately.
                     if was_empty {
@@ -315,6 +305,14 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
             if s.active != s.tail {
                 let idx = (s.active & Self::MASK) as usize;
                 let slot = &mut s.slots[idx];
+                if slot.exclusive {
+                    if slot.exclusive_in_flight {
+                        slot.status = flags as u8;
+                        slot.exclusive_in_flight = false;
+                        slot.waker.wake();
+                    }
+                    return;
+                }
                 slot.status = flags as u8;
                 slot.waker.wake();
 
@@ -326,31 +324,27 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
                     if !s.slots[next].exclusive {
                         submit_cmd(next);
                     } else {
-                        // Exclusive slot — wake it so it can start its
-                        // synchronous work. Don't submit a command.
+                        // The exclusive owner submits its own commands.
                         s.slots[next].waker.wake();
                     }
                 }
             }
         });
     }
-    /// Acquire exclusive synchronous access to the AES engine.
+    /// Acquire exclusive access to the AES engine.
     ///
     /// Allocates a waiter slot and waits (async) for it to become the active
     /// slot — meaning all prior callers have completed and the hardware is
-    /// available. Then runs `f` synchronously with an [`AesExclusive`] handle
-    /// that exposes a busy-polled [`encrypt_decrypt`](AesExclusive::encrypt_decrypt)
-    /// method. The slot is released when the closure returns, waking the next
-    /// queued caller.
+    /// available. Runs `f` with an [`AesExclusive`] handle that awaits each
+    /// command while retaining the slot. The slot is released when the
+    /// closure completes, waking the next queued caller.
     ///
     /// Multiple tasks may call `with_exclusive` concurrently — they queue
     /// behind each other and behind regular [`encrypt_decrypt`](Self::encrypt_decrypt)
     /// calls through the same FIFO slot queue.
     ///
     /// This is designed for multi-invocation patterns (AES-KW, AES-KWP)
-    /// where the overhead of poll/wake per AES-ECB call is undesirable. One
-    /// async boundary to acquire hardware, N synchronous encryptions, one wake
-    /// on release.
+    /// that must keep their FIFO position across several AES-ECB commands.
     ///
     /// # Cancellation safety
     ///
@@ -358,13 +352,25 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
     /// the future after slot allocation but before completion will leave a
     /// dead slot that blocks the queue. Callers must not cancel this future
     /// after the first poll.
+    #[inline(never)]
     pub async fn with_exclusive<F, R>(&self, f: F) -> HsmResult<R>
     where
-        F: FnOnce(&AesExclusive<'_, DEPTH>) -> HsmResult<R>,
+        F: for<'a> AsyncFnOnce(&'a mut AesExclusive<'_, DEPTH>) -> HsmResult<R>,
     {
+        let slot_idx = self.acquire_exclusive().await?;
+        let mut exclusive = AesExclusive {
+            driver: self,
+            slot_idx: (slot_idx & Self::MASK) as usize,
+        };
+        let result = f(&mut exclusive).await;
+        self.release_exclusive(slot_idx);
+        result
+    }
+
+    #[inline(never)]
+    async fn acquire_exclusive(&self) -> HsmResult<u8> {
         let mut slot_idx: Option<u8> = None;
 
-        // Wait for our slot to become the active one.
         poll_fn(|cx| {
             self.state.with(|s| {
                 if slot_idx.is_none() {
@@ -380,7 +386,7 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
                 // Our slot is active when active has reached it — all prior
                 // commands have completed and the hardware is free.
                 if s.active == slot_idx.unwrap() {
-                    Poll::Ready(Ok(()))
+                    Poll::Ready(Ok(slot_idx.unwrap()))
                 } else {
                     let idx = (slot_idx.unwrap() & Self::MASK) as usize;
                     s.slots[idx].waker.register(cx.waker());
@@ -388,21 +394,21 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
                 }
             })
         })
-        .await?;
+        .await
+    }
 
-        let result = f(&AesExclusive {
-            driver: self,
-            slot_idx: (slot_idx.unwrap() & Self::MASK) as usize,
-        });
-
+    #[inline(never)]
+    fn release_exclusive(&self, my: u8) {
         // Release our slot: clear exclusive flag, advance head and active
         // past it, then submit/wake the next queued slot if present.
         self.state.with(|s| {
-            let my = slot_idx.unwrap();
             let idx = (my & Self::MASK) as usize;
             s.slots[idx].exclusive = false;
+            s.slots[idx].status = 0;
             s.active = my.wrapping_add(1);
-            s.head = my.wrapping_add(1);
+            while s.head != s.active && s.slots[(s.head & Self::MASK) as usize].status == 0 {
+                s.head = s.head.wrapping_add(1);
+            }
             if s.active != s.tail {
                 let next = (s.active & Self::MASK) as usize;
                 if !s.slots[next].exclusive {
@@ -412,16 +418,12 @@ impl<const DEPTH: usize> AesDriver<DEPTH> {
                 }
             }
         });
-
-        result
     }
 }
 
-/// Exclusive synchronous handle to the AES engine.
+/// Exclusive handle to the AES engine.
 ///
-/// Provides a busy-polled [`encrypt_decrypt`](Self::encrypt_decrypt) method
-/// that submits a command and spins on the hardware status register instead
-/// of yielding to the async executor.
+/// Awaits each command's completion while retaining the same FIFO slot.
 ///
 /// Cannot be constructed directly — only obtained through
 /// [`AesDriver::with_exclusive`].
@@ -433,63 +435,74 @@ pub struct AesExclusive<'a, const DEPTH: usize> {
     driver: &'a AesDriver<DEPTH>,
 
     /// The ring-buffer slot index (`raw_tail & MASK`) reserved for this
-    /// exclusive session. Passed to `submit_and_spin` so it writes the
+    /// exclusive session. Passed to `submit_and_wait` so it writes the
     /// command descriptor into the correct slot.
     slot_idx: usize,
 }
 
 impl<const DEPTH: usize> AesExclusive<'_, DEPTH> {
-    /// Submit an AES request and busy-poll until completion.
+    /// Submit an AES request and await completion on the held slot.
     ///
-    /// Identical to [`AesDriver::encrypt_decrypt`] but runs synchronously,
-    /// spinning on the hardware status register instead of yielding to
-    /// the executor.
-    pub fn encrypt_decrypt(&self, req: &AesRequest<'_>) -> HsmResult<()> {
-        let status = self.submit_and_spin(req)?;
+    pub async fn encrypt_decrypt(&mut self, req: &AesRequest<'_>) -> HsmResult<()> {
+        let status = self.submit_and_wait(req).await?;
         map_status(status)
     }
 
-    /// Write the command descriptor, submit to hardware, and spin until the
-    /// status register indicates completion. Clears NVIC pending after
-    /// consuming the status to prevent stale pending bits from triggering
-    /// a spurious [`AesDriver::wake`] call when normal polling resumes.
-    fn submit_and_spin(&self, req: &AesRequest<'_>) -> HsmResult<u8> {
+    /// Submit on the reserved descriptor and wait without yielding ownership.
+    async fn submit_and_wait(&mut self, req: &AesRequest<'_>) -> HsmResult<u8> {
         validate(req)?;
         let key_len = key_len_field(req.key.len())?;
         let idx = self.slot_idx & (DEPTH - 1);
 
-        let cmd_code = AesCmdCode::new()
-            .with_tag(0x2)
-            .with_mode(req.mode as u8)
-            .with_encrypt(req.op == AesOp::Encrypt)
-            .with_update_iv(req.update_iv)
-            .with_key_len(key_len);
-        let iv_addr = match req.iv.as_deref() {
-            Some(iv) => iv.as_ptr() as u32,
-            None => 0,
-        };
-        let entry = &AES_Q.aes_cmd[idx];
-        entry.cmd_code.set(cmd_code.into());
-        entry.result.set(req.result.as_ptr() as u32);
-        entry.byte_count.set(req.message.len() as u32);
-        entry.message.set(req.message.as_ptr() as u32);
-        entry.key.set(req.key.as_ptr() as u32);
-        entry.iv.set(iv_addr);
+        write_cmd(idx, req, key_len);
 
+        self.driver.state.with(|s| {
+            let slot = &mut s.slots[self.slot_idx];
+            slot.status = 0;
+            slot.exclusive_in_flight = true;
+        });
         submit_cmd(idx);
 
-        loop {
-            let status = AES.status.get();
-            let flags = status & STATUS_FLAGS_MASK;
-            if flags != 0 {
-                // STATUS is read-only; do not write it (bus-faults). It
-                // auto-clears on the next command doorbell.
-                Nvic::unpend(Interrupt::AES_DONE);
-                Nvic::unpend(Interrupt::AES_ERROR);
-                return Ok(flags as u8);
-            }
+        let completion = poll_fn(|cx| {
+            self.driver.state.with(|s| {
+                let slot = &mut s.slots[self.slot_idx];
+                if slot.status != 0 {
+                    let status = slot.status;
+                    slot.status = 0;
+                    Poll::Ready(status)
+                } else {
+                    slot.waker.register(cx.waker());
+                    Poll::Pending
+                }
+            })
+        });
+        let mut completion = core::pin::pin!(completion);
+        match with_timeout(Duration::from_secs(1), completion.as_mut()).await {
+            Ok(status) => Ok(status),
+            Err(_) => azihsm_fw_uno_fault::enter_crypto_timeout_error_state("AES command timeout"),
         }
     }
+}
+
+#[inline(never)]
+fn write_cmd(slot: usize, req: &AesRequest<'_>, key_len: u8) {
+    let cmd_code = AesCmdCode::new()
+        .with_tag(0x2)
+        .with_mode(req.mode as u8)
+        .with_encrypt(req.op == AesOp::Encrypt)
+        .with_update_iv(req.update_iv)
+        .with_key_len(key_len);
+    let iv_addr = match req.iv.as_deref() {
+        Some(iv) => iv.as_ptr() as u32,
+        None => 0,
+    };
+    let entry = &AES_Q.aes_cmd[slot];
+    entry.cmd_code.set(cmd_code.into());
+    entry.result.set(req.result.as_ptr() as u32);
+    entry.byte_count.set(req.message.len() as u32);
+    entry.message.set(req.message.as_ptr() as u32);
+    entry.key.set(req.key.as_ptr() as u32);
+    entry.iv.set(iv_addr);
 }
 
 fn submit_cmd(slot: usize) {

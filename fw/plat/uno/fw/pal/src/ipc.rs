@@ -170,6 +170,15 @@ pub enum IpcMessageOpCode {
     /// Trigger a crash on a remote core (test hook).
     TriggerCrash = 0x47,
 
+    /// HSM asks Admin to quiesce its RNG users for the RNG self-test.
+    RngSelfTestPrepare = 0x4C,
+
+    /// HSM asks whether Admin is ready for the RNG self-test.
+    RngSelfTestStatus = 0x4D,
+
+    /// HSM tells Admin the RNG self-test is finished (or cancelled).
+    RngSelfTestDone = 0x4E,
+
     /// Set resource.
     SetResource = 0x7f,
 }
@@ -186,6 +195,9 @@ impl TryFrom<u8> for IpcMessageOpCode {
             0x07 => Self::AesKeyUpdate,
             0x09 => Self::FpErrLog,
             0x47 => Self::TriggerCrash,
+            0x4C => Self::RngSelfTestPrepare,
+            0x4D => Self::RngSelfTestStatus,
+            0x4E => Self::RngSelfTestDone,
             0x7F => Self::SetResource,
             _ => return Err(IpcMessageErr::InvalidOpcodeConversion.into()),
         })
@@ -257,6 +269,9 @@ pub enum IpcMessageStatusCode {
     /// Operation still pending.
     Pending = 6,
 
+    /// Admin is waiting for its self-test resource.
+    PendingResource = 7,
+
     /// Unknown / catch-all status.
     UnknownStatus = 0xF,
 }
@@ -277,6 +292,7 @@ impl From<u32> for IpcMessageStatusCode {
             4 => Self::OperationTimeout,
             5 => Self::OperationFailed,
             6 => Self::Pending,
+            7 => Self::PendingResource,
             _ => Self::UnknownStatus,
         }
     }
@@ -964,4 +980,104 @@ pub fn encode_trigger_crash(
         _rsvd: [0; IPC_MESSAGE_PAYLOAD_LEN - IpcMessageTriggerCrash::LEN],
     };
     IpcMessageEncoder::encode(msg).data
+}
+
+// ---------------------------------------------------------------------------
+// RNG self-test handshake (opcodes 0x4C / 0x4D / 0x4E)
+// ---------------------------------------------------------------------------
+
+/// Encodes a zero-payload RNG self-test request (`Prepare` or `Done`).
+pub fn encode_rng_self_test(op: IpcMessageOpCode) -> [u32; IPC_MESSAGE_LENGTH] {
+    let header = IpcMessageHeader::new()
+        .with_msg_op(op as u32)
+        .with_length(0);
+    let mut out = [0u32; IPC_MESSAGE_LENGTH];
+    out[0] = header.into();
+    out
+}
+
+/// Queries UCD pause, or acknowledges the HSM IO drain after UCD paused.
+pub fn encode_rng_self_test_status(drained: bool) -> [u32; IPC_MESSAGE_LENGTH] {
+    let mut out = encode_rng_self_test(IpcMessageOpCode::RngSelfTestStatus);
+    out[0] = IpcMessageHeader::from(out[0]).with_length(4).into();
+    out[1] = u32::from(drained);
+    out
+}
+
+/// Validates an Admin response before treating its status as authoritative.
+pub fn response_status(
+    resp: &[u32; IPC_MESSAGE_LENGTH],
+    expected: IpcMessageOpCode,
+    drained: bool,
+) -> IpcResult<u32> {
+    let header = IpcMessageHeader::from(resp[0]);
+    let expected_length = if expected == IpcMessageOpCode::RngSelfTestStatus {
+        4
+    } else {
+        0
+    };
+    if !header.response()
+        || header.msg_op() != expected as u32
+        || header.tag() != 0
+        || header.length() != expected_length
+        || (expected == IpcMessageOpCode::RngSelfTestStatus && resp[1] != u32::from(drained))
+    {
+        return Err(IpcMessageErr::InvalidInputMessageForDecode.into());
+    }
+    Ok(header.status())
+}
+
+#[cfg(test)]
+mod rng_response_tests {
+    use super::*;
+
+    const OP: IpcMessageOpCode = IpcMessageOpCode::RngSelfTestStatus;
+
+    fn response() -> [u32; IPC_MESSAGE_LENGTH] {
+        let mut resp = encode_rng_self_test_status(false);
+        resp[0] = IpcMessageHeader::from(resp[0]).with_response(true).into();
+        resp
+    }
+
+    #[test]
+    fn accepts_matching_response_and_preserves_status() {
+        let mut resp = response();
+        resp[0] = IpcMessageHeader::from(resp[0])
+            .with_status(u32::from(IpcMessageStatusCode::PendingResource))
+            .into();
+        assert_eq!(
+            response_status(&resp, OP, false),
+            Ok(u32::from(IpcMessageStatusCode::PendingResource))
+        );
+    }
+
+    #[test]
+    fn status_request_and_response_track_the_drain_phase() {
+        let request = encode_rng_self_test_status(true);
+        assert_eq!(IpcMessageHeader::from(request[0]).length(), 4);
+        assert_eq!(request[1], 1);
+
+        let mut resp = response();
+        resp[1] = 1;
+        assert!(response_status(&resp, OP, true).is_ok());
+        assert!(response_status(&resp, OP, false).is_err());
+    }
+
+    #[test]
+    fn rejects_unpopulated_and_mismatched_responses() {
+        assert!(response_status(&[0; IPC_MESSAGE_LENGTH], OP, false).is_err());
+        assert!(response_status(&encode_rng_self_test(OP), OP, false).is_err());
+
+        let mut resp = response();
+        assert!(response_status(&resp, IpcMessageOpCode::RngSelfTestDone, false).is_err());
+
+        resp[0] = IpcMessageHeader::from(resp[0]).with_tag(1).into();
+        assert!(response_status(&resp, OP, false).is_err());
+
+        resp[0] = IpcMessageHeader::from(resp[0])
+            .with_tag(0)
+            .with_length(1)
+            .into();
+        assert!(response_status(&resp, OP, false).is_err());
+    }
 }
