@@ -247,29 +247,61 @@ fn sealed_bk3_stays_write_once_after_migrate() {
     assert_eq!(&p.sealed_bk3()[..], &replacement);
 }
 
+/// The unwrapping-key slot's validity byte decodes to its three states, and
+/// any other byte decodes to `None`, which callers treat as not importable.
+#[test]
+fn unwrapping_key_slot_decodes_validity_byte() {
+    assert_eq!(UnwrappingKeySlot::Empty as u8, 0);
+    assert_eq!(UnwrappingKeySlot::PendingPct as u8, 1);
+    assert_eq!(UnwrappingKeySlot::PctPassed as u8, 2);
+    for byte in [3u8, 0x7F, 0xFF] {
+        assert_eq!(UnwrappingKeySlot::try_from(byte), Err(byte));
+    }
+
+    let pid = 12usize;
+    let mut p = Partition(pid);
+    p.slot_mut().unwrapping_key_bk_valid = UnwrappingKeySlot::PendingPct as u8;
+    assert_eq!(
+        Partition(pid).unwrapping_key_slot(),
+        Some(UnwrappingKeySlot::PendingPct)
+    );
+    Partition(pid).mark_unwrapping_key_pct_passed();
+    assert_eq!(
+        Partition(pid).unwrapping_key_slot(),
+        Some(UnwrappingKeySlot::PctPassed)
+    );
+    Partition(pid).discard_unwrapping_key();
+    assert_eq!(
+        Partition(pid).unwrapping_key_slot(),
+        Some(UnwrappingKeySlot::Empty)
+    );
+    p.slot_mut().unwrapping_key_bk_valid = 7;
+    assert_eq!(Partition(pid).unwrapping_key_slot(), None);
+}
+
 /// Neither reset kind of `clear_state` may touch the SP-published unwrapping
 /// key slot: the key belongs to the allocation and is re-imported after a
 /// disable or NSSR. Only `clear_unwrapping_key` (partition free) wipes it.
 #[test]
 fn clear_state_preserves_unwrapping_key_slot() {
-    let mut p = Partition(12);
+    let mut p = Partition(13);
     p.set_unwrapping_key_required(true);
     {
         let slot = p.slot_mut();
         slot.unwrapping_key_bk = [0x3Cu8; UNWRAPPING_KEY_BK_LEN];
-        slot.unwrapping_key_bk_valid = 2;
+        slot.unwrapping_key_bk_valid = UnwrappingKeySlot::PctPassed as u8;
     }
 
     for kind in [PartResetKind::Disable, PartResetKind::Migrate] {
         p.clear_state(kind);
         assert!(p.unwrapping_key_required());
-        assert!(p.unwrapping_key_bk_valid());
+        assert_eq!(p.unwrapping_key_slot(), Some(UnwrappingKeySlot::PctPassed));
         assert!(p.unwrapping_key_bk().iter().all(|&b| b == 0x3C));
         assert_eq!(p.unwrapping_key_id(), None);
     }
 
     p.clear_unwrapping_key();
     assert!(!p.unwrapping_key_required());
-    assert!(!p.unwrapping_key_bk_valid());
+    assert_eq!(p.unwrapping_key_slot(), Some(UnwrappingKeySlot::Empty));
     assert!(p.unwrapping_key_bk().iter().all(|&b| b == 0));
 }

@@ -43,6 +43,8 @@ use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_uno_drivers_part_store::PartStore;
+use azihsm_fw_uno_drivers_part_store::Partition;
+use azihsm_fw_uno_drivers_part_store::UnwrappingKeySlot;
 
 use super::common::ReqHdr;
 use super::common::encode_resp;
@@ -237,6 +239,11 @@ async fn dispatch_request<'p>(
 /// command may still be reading and avoids leaking an unreferenced vault
 /// entry.
 ///
+/// `vault_key_create` runs the unwrapping key's pairwise consistency test
+/// before it stores the key, so the key must be a consistent RSA-2048 key in
+/// the vault layout, `d ‖ n ‖ e`. A key that fails the test sends the module
+/// to the FIPS error state.
+///
 /// The response carries a masked envelope tagged [`DdiKeyType::RsaUnwrap`]
 /// — matching how the unwrapping key is masked elsewhere — so the
 /// credential-establishment re-import path recognizes it as the partition
@@ -339,6 +346,18 @@ struct UnwrappingKeySourceState {
     backup_valid: bool,
 }
 
+/// Whether the HSP has published an unwrapping key into the slot, whether or
+/// not the key has passed its pairwise consistency test yet, so a key that
+/// passes the test during an import doesn't trip the recheck in
+/// [`publish_initial_unwrapping_key`].
+///
+/// A key that fails the test is wiped from the slot only as the module enters
+/// the FIPS error state, so no check here sees a slot that a failed test
+/// emptied.
+fn backup_published(partition: Partition) -> bool {
+    partition.unwrapping_key_slot() != Some(UnwrappingKeySlot::Empty)
+}
+
 /// Admit the partition for a validation-only raw unwrapping-key import.
 ///
 /// An already materialized vault key is never replaced because another
@@ -357,7 +376,7 @@ fn prepare_initial_unwrapping_key_import(io: &impl HsmIo) -> HsmResult<Unwrappin
 
     let state = UnwrappingKeySourceState {
         required: partition.unwrapping_key_required(),
-        backup_valid: partition.unwrapping_key_bk_valid(),
+        backup_valid: backup_published(partition),
     };
 
     // The SP is armed but has not completed publication. Do not race it.
@@ -392,7 +411,7 @@ fn publish_initial_unwrapping_key(
 
     if partition.unwrapping_key_id().is_some()
         || partition.unwrapping_key_required() != expected.required
-        || partition.unwrapping_key_bk_valid() != expected.backup_valid
+        || backup_published(partition) != expected.backup_valid
     {
         return Err(HsmError::InvalidArg);
     }

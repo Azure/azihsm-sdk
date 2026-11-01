@@ -101,11 +101,13 @@ impl HsmRsa for StdHsmPal {
         _io: &impl HsmIo,
         der: &'a mut DmaBuf,
         crt: bool,
+        _pct: HsmRsaPct,
     ) -> HsmResult<(&'a DmaBuf, usize)> {
         // Parse the recovered DER and re-serialize it in place into the vault
         // HSM byte format: the CRT layout (`n|e|d|p|q|dp|dq|qinv`) when `crt`,
         // else non-CRT (`n|e|p|q`). Both HSM layouts are no larger than the
         // source DER, so `der` doubles as the vault buffer (no second buffer).
+        // Like key generation here, it runs no PCT.
         let pk = RsaPrivateKey::from_bytes(der).map_err(|_| HsmError::InvalidArg)?;
         let modulus_len = pk.size();
         let hsm_len = if crt {

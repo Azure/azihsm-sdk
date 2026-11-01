@@ -26,6 +26,8 @@ use azihsm_crypto::*;
 use azihsm_ddi_tbor_test_harness::TestCtx;
 use azihsm_ddi_tbor_types::*;
 
+use crate::commands::common::import_ok;
+use crate::commands::common::rsa_aes_wrap;
 use crate::commands::sd_sealing_key_gen::finalized_co_session;
 
 /// `KeyScope::Local` discriminant — masks the recovered key under the
@@ -33,41 +35,6 @@ use crate::commands::sd_sealing_key_gen::finalized_co_session;
 const SCOPE_LOCAL: u8 = 0b011;
 /// `HsmVaultKeyKind::VarLenHmacSha256` discriminant.
 const KIND_HMAC_SHA256: u8 = 32;
-
-/// RSA-AES-wrap `data` against the HSM-format unwrapping public key
-/// (`n_le ‖ e_le`): RSA-OAEP an ephemeral 32-byte KEK with `oaep_hash`, then
-/// AES-KWP the data under it, and concatenate.
-fn rsa_aes_wrap(hsm_pub: &[u8], data: &[u8], oaep_hash: HashAlgo) -> Vec<u8> {
-    // `GetUnwrappingKey` returns the modulus / exponent little-endian
-    // (`n_le(256) ‖ e_le(4)`), but `RsaPublicKey::from_hsm_bytes` parses
-    // each component big-endian — reverse them per-component.
-    assert_eq!(hsm_pub.len(), 260, "RSA-2048 HSM pubkey is 260 bytes");
-    let mut be = Vec::with_capacity(260);
-    be.extend(hsm_pub[..256].iter().rev());
-    be.extend(hsm_pub[256..260].iter().rev());
-
-    let ephemeral_kek = [0xA7u8; 32];
-    let pub_key = RsaPublicKey::from_hsm_bytes(&be).expect("from_hsm_bytes");
-    let mut enc_kek = Encrypter::encrypt_vec(
-        &mut RsaEncryptAlgo::with_oaep_padding(oaep_hash, None),
-        &pub_key,
-        &ephemeral_kek,
-    )
-    .expect("RSA-OAEP wrap KEK");
-    // The device expects the OAEP ciphertext in wire-LE (it flips it to
-    // big-endian internally for OpenSSL); OpenSSL emits big-endian, so
-    // reverse the modulus-sized RSA ciphertext.
-    enc_kek.reverse();
-
-    let kek = AesKey::from_bytes(&ephemeral_kek).expect("AES KEK");
-    let mut enc_data = Encrypter::encrypt_vec(&mut AesKeyWrapPadAlgo::default(), &kek, data)
-        .expect("AES-KWP wrap data");
-
-    let mut wrapped = Vec::with_capacity(enc_kek.len() + enc_data.len());
-    wrapped.append(&mut enc_kek);
-    wrapped.append(&mut enc_data);
-    wrapped
-}
 
 /// Canonical valid `KeyUsage` for a wrapped-key `class`, used by the test
 /// `unwrap` helper so callers need not spell out permissions.
@@ -102,17 +69,7 @@ pub(crate) fn unwrap_with_usage(
         .tbor(&TborGetUnwrappingKeyReq { session_id })
         .expect("GetUnwrappingKey")
         .pub_key;
-    let wrapped = rsa_aes_wrap(&hsm_pub, key, HashAlgo::sha256());
-    ctx.tbor(&TborUnwrapKeyReq {
-        session_id,
-        scope: SCOPE_LOCAL,
-        key_class: class,
-        key_usage: usage,
-        oaep_hash_algo: HASH_ALGO_SHA256,
-        wrapped_blob: wrapped,
-        key_label: b"imported-key".to_vec(),
-    })
-    .expect("UnwrapKey")
+    import_ok(ctx, session_id, &hsm_pub, class, usage, key)
 }
 
 /// Import a host-generated RSA-4096 key via `UnwrapKey` and check its

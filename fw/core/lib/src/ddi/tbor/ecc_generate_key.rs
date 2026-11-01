@@ -21,9 +21,9 @@ use azihsm_fw_ddi_tbor_types::EccCurve;
 use azihsm_fw_ddi_tbor_types::KeyUsage;
 use azihsm_fw_ddi_tbor_types::TborEccGenerateKeyReq;
 use azihsm_fw_ddi_tbor_types::TborEccGenerateKeyResp;
+use azihsm_fw_hsm_key_decode::ecc_pct_for;
 use azihsm_fw_hsm_pal_traits::DmaBuf;
 use azihsm_fw_hsm_pal_traits::HsmEccCurve;
-use azihsm_fw_hsm_pal_traits::HsmEccPct;
 use azihsm_fw_hsm_pal_traits::HsmError;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmKeyScope;
@@ -119,7 +119,7 @@ pub(crate) async fn handle<'p, P: HsmPal>(
                     a,
                     curve,
                     Some((&mut *priv_key, &mut *pub_key)),
-                    HsmEccPct::SignVerify,
+                    ecc_pct_for(attrs),
                 )
                 .await
             })
