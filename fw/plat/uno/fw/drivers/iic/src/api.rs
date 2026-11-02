@@ -6,6 +6,8 @@ use core::task::Poll;
 
 use azihsm_fw_single_cell::SingleCell;
 use azihsm_fw_static_ref::StaticRef;
+use azihsm_fw_uno_drivers_soc::reset_type;
+use azihsm_fw_uno_drivers_soc::SocResetType;
 use azihsm_fw_uno_reg_soc::iic::regs::IicRegs;
 use azihsm_fw_uno_reg_soc::iic::IIC_BASE;
 use azihsm_fw_uno_reg_soc::iic::*;
@@ -28,6 +30,16 @@ struct ChannelState {
 
     /// Waker for async recv — woken by IRQ or polling.
     waker: WakerRegistration,
+}
+
+/// Result of consuming one ICQ entry.
+enum IcqPop {
+    /// The ICQ is empty.
+    Empty,
+    /// A failed entry was consumed and its slot recycled.
+    Recycled,
+    /// A successful entry was consumed; holds its IO_SQ slot index.
+    Ready(u16),
 }
 
 /// Async IIC (Inbound IO Controller) driver.
@@ -145,13 +157,79 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         let regs = self.regs;
         let ch = config.channel as usize;
 
-        // Detect if channel was already programmed by another core
+        // An impactless (fw-update) warm reset resumes the queues the previous
+        // firmware left running; every other reset type fully programs them.
+        // The reset reason is read here rather than taken as a parameter, so
+        // the queue-init API stays unchanged for callers.
+        let fw_update = reset_type() == SocResetType::FwUpdateWarmReset;
+
+        // Read the current enable state of both queues once. It also drives
+        // the fw-update attach decision below.
         let icq_ctrl = regs.icq_ch[ch].ctrl.get();
         let isq_ctrl = regs.isq_ch[ch].ctrl.get();
+        let already_enabled = (icq_ctrl & 0x1 != 0) && (isq_ctrl & 0x1 != 0);
+        // The queue must also already be programmed exactly as this firmware
+        // would program it: same ring bases, depths, tail-shadow address/mode
+        // and buffer length. A fw-update from a different image (or firmware
+        // family) can leave the channel enabled with foreign or differently
+        // sized rings; attaching to that would read/write the wrong memory or
+        // wrap the indices at the wrong depth, so require a full match before
+        // adopting the hardware state.
+        //
+        // Attach also keeps the receive-buffer addresses the previous firmware
+        // posted in the ISQ, so the buffer pool (`io_pool_base`, `io_size`,
+        // `DEPTH`) is part of the impactless-update contract. These come from
+        // fixed IO_GSRAM layout constants; an update that changes them must be
+        // impactful (full reprogram). Every retained ISQ entry is checked to
+        // address a buffer in this firmware's pool, so a mismatched layout
+        // reprograms instead of attaching.
+        let icq = &regs.icq_ch[ch];
+        let isq = &regs.isq_ch[ch];
+        let ours = icq.base_lo.get() == config.icq_base
+            && icq.base_hi.get() == 0
+            && icq.tail_shadow_lo.get() == config.icq_tail_shadow
+            && icq.tail_shadow_hi.get() == 0
+            && icq.ctrl.is_set(ICQ_CHANNEL_CTRL::SHADOW_EN)
+            && icq.ctrl.read(ICQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && isq.base_lo.get() == config.isq_base
+            && isq.base_hi.get() == 0
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::DEPTH) == Self::ENCODED_DEPTH
+            && isq.ctrl.read(ISQ_CHANNEL_CTRL::BUF_LEN) == config.io_size >> 4
+            && self.isq_entries_ours();
+
+        // ── Impactless (fw-update) warm reset: attach, do not reprogram ──
+        // On a FwUpdateWarmReset the queues were programmed and enabled by the
+        // previous firmware and must survive the update, so the host's
+        // in-flight position is preserved. Resetting the ring indices,
+        // re-prefilling the ISQ, or re-enabling would desync the host and lose
+        // in-flight IO. Instead resume: adopt the hardware's current ICQ
+        // consumer index into the driver's software state so `recv` continues
+        // from the right completion slot. Mirrors the reference firmware's
+        // `open_channel` (attach) path on fw-update (`hsm/src/env.rs`).
+        //
+        // Attach only when the queue is genuinely running AND programmed by
+        // this firmware. Any other fw-update case (fresh flash, foreign image,
+        // partially-initialised queue) falls through to the full program, so
+        // attach can never adopt foreign or uninitialised hardware state.
+        if should_attach(fw_update, already_enabled, ours) {
+            let hw_head = regs.icq_ch[ch].head.read(ICQ_CHANNEL_HEAD::HEAD) as u16;
+            self.state.with(|s| s.icq_head = hw_head);
+            // The completion IRQ enable does not survive the core reset even
+            // though the queue programming does; re-arm it (idempotent).
+            if config.interrupt {
+                let val = regs.irq_enable.read(IRQ_ENABLE::IRQ_EN) | (1 << config.channel);
+                regs.irq_enable.write(IRQ_ENABLE::IRQ_EN.val(val));
+            }
+            return;
+        }
+
+        // Full program path (POR / plain warm reset / fw-update with queues not
+        // enabled). Warn if a queue is unexpectedly already enabled, since the
+        // full reprogram below will reset a running queue.
         if icq_ctrl & 0x1 != 0 || isq_ctrl & 0x1 != 0 {
             warn!(
                 "iic",
-                "ch={} ALREADY ENABLED before init! icq_ctrl={:#x} isq_ctrl={:#x}",
+                "ch={} ALREADY ENABLED before full init! icq_ctrl={:#x} isq_ctrl={:#x}",
                 config.channel,
                 icq_ctrl,
                 isq_ctrl
@@ -159,8 +237,9 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
         }
 
         // ── Step 1: Pre-fill ISQ with buffer addresses ──────────────
-        // IDFU resume is not implemented; initialize the free list together
-        // with the queue pointers below rather than partially retaining it.
+        // The free list is initialized together with the queue pointers
+        // below; it is never partially retained. A fw-update attach returns
+        // before this point and leaves the free list and its indices intact.
         for i in 0..DEPTH {
             let buf_addr = config.io_pool_base + (i as u32) * config.io_size;
             let entry = unsafe { &mut *self.isq_ring.add(i) };
@@ -267,54 +346,82 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     /// and grant credit back.
     pub fn recv(&self) -> impl core::future::Future<Output = u16> + '_ {
         poll_fn(move |cx| {
-            self.state.with(|s| {
-                // Read tail from shadow (DTCM)
-                let tail = unsafe { self.icq_tail_shadow.read_volatile() } as u16;
-                if s.icq_head == tail {
+            self.state.with(|s| match self.pop(s) {
+                IcqPop::Ready(index) => Poll::Ready(index),
+                IcqPop::Empty | IcqPop::Recycled => {
                     s.waker.register(cx.waker());
-                    return Poll::Pending;
+                    Poll::Pending
                 }
-
-                let icq_slot = (s.icq_head & Self::MASK) as usize;
-                let entry = unsafe { &*self.icq_ring.add(icq_slot) };
-
-                let success = entry.status.success();
-                let index = self.buf_index(entry.buffer_addr());
-
-                s.icq_head = (s.icq_head + 1) & Self::MASK;
-                self.regs.icq_ch[self.channel as usize]
-                    .head
-                    .write(ICQ_CHANNEL_HEAD::HEAD.val(s.icq_head.into()));
-
-                // Skip failed entries — recycle buffer, return credit, and keep polling
-                if !success {
-                    let _cause = self.regs.interrupt_cause.get();
-                    let queue_id = entry.info.queue_id() as u16;
-                    warn!(
-                        "iic",
-                        "recv FAILED ch={} slot={} addr={:#x} axi_id={} qid={} cause={:#010x}",
-                        self.channel,
-                        index,
-                        entry.buffer_addr(),
-                        entry.info.axi_id(),
-                        queue_id,
-                        _cause
-                    );
-                    self.free_io(index, queue_id);
-                    s.waker.register(cx.waker());
-                    return Poll::Pending;
-                }
-
-                // Persist metadata into IO_META sidecar
-                let meta = unsafe { &mut *self.io_meta.add(index as usize) };
-                meta.controller_id = entry.info.axi_id();
-                meta.queue = IoMetaQueue::new()
-                    .with_queue_id(entry.info.queue_id() as u16)
-                    .with_queue_index(entry.info.queue_index());
-
-                Poll::Ready(index)
             })
         })
+    }
+
+    /// Takes the next successful inbound IO already in the ICQ, without
+    /// waiting.
+    ///
+    /// Returns `None` once the ICQ is empty. Failed entries are recycled as
+    /// in [`recv`](Self::recv). A returned slot must be released with
+    /// [`free_io`](Self::free_io).
+    pub fn try_recv(&self) -> Option<u16> {
+        self.state.with(|s| loop {
+            match self.pop(s) {
+                IcqPop::Ready(index) => return Some(index),
+                IcqPop::Recycled => continue,
+                IcqPop::Empty => return None,
+            }
+        })
+    }
+
+    /// Consumes one ICQ entry, if any.
+    ///
+    /// A successful entry has its metadata persisted into the IO_META
+    /// sidecar and its IO_SQ slot index returned. A failed entry
+    /// (status != 0) is recycled: its buffer returns to the ISQ and its
+    /// credit to the source queue.
+    fn pop(&self, s: &mut ChannelState) -> IcqPop {
+        // Read tail from shadow (DTCM)
+        let tail = unsafe { self.icq_tail_shadow.read_volatile() } as u16;
+        if s.icq_head == tail {
+            return IcqPop::Empty;
+        }
+
+        let icq_slot = (s.icq_head & Self::MASK) as usize;
+        let entry = unsafe { &*self.icq_ring.add(icq_slot) };
+
+        let success = entry.status.success();
+        let index = self.buf_index(entry.buffer_addr());
+
+        s.icq_head = (s.icq_head + 1) & Self::MASK;
+        self.regs.icq_ch[self.channel as usize]
+            .head
+            .write(ICQ_CHANNEL_HEAD::HEAD.val(s.icq_head.into()));
+
+        // Skip failed entries — recycle buffer and return credit
+        if !success {
+            let _cause = self.regs.interrupt_cause.get();
+            let queue_id = entry.info.queue_id() as u16;
+            warn!(
+                "iic",
+                "recv FAILED ch={} slot={} addr={:#x} axi_id={} qid={} cause={:#010x}",
+                self.channel,
+                index,
+                entry.buffer_addr(),
+                entry.info.axi_id(),
+                queue_id,
+                _cause
+            );
+            self.free_io(index, queue_id);
+            return IcqPop::Recycled;
+        }
+
+        // Persist metadata into IO_META sidecar
+        let meta = unsafe { &mut *self.io_meta.add(index as usize) };
+        meta.controller_id = entry.info.axi_id();
+        meta.queue = IoMetaQueue::new()
+            .with_queue_id(entry.info.queue_id() as u16)
+            .with_queue_index(entry.info.queue_index());
+
+        IcqPop::Ready(index)
     }
 
     /// Wake the driver if the ICQ has pending entries.
@@ -348,5 +455,77 @@ impl<const DEPTH: usize> IicDriver<DEPTH> {
     #[inline]
     fn buf_index(&self, addr: u32) -> u16 {
         ((addr - self.buf_pool_base) / self.buf_size) as u16
+    }
+
+    /// Returns `true` if every ISQ entry addresses a receive buffer in this
+    /// firmware's pool.
+    fn isq_entries_ours(&self) -> bool {
+        (0..DEPTH).all(|i| {
+            // SAFETY: `isq_ring` is the `DEPTH`-entry ISQ ring at
+            // `config.isq_base`, owned by this driver; `i < DEPTH`.
+            let entry = unsafe { self.isq_ring.add(i).read_volatile() };
+            isq_addr_in_pool(
+                entry.addr_lo,
+                entry.addr_hi,
+                self.buf_pool_base,
+                self.buf_size,
+                DEPTH as u32,
+            )
+        })
+    }
+}
+
+/// Whether an ISQ entry address is the start of one of the `depth` receive
+/// buffers of `size` bytes at `base`.
+#[inline]
+fn isq_addr_in_pool(addr_lo: u32, addr_hi: u32, base: u32, size: u32, depth: u32) -> bool {
+    if addr_hi != 0 {
+        return false;
+    }
+    let Some(off) = addr_lo.checked_sub(base) else {
+        return false;
+    };
+    off.checked_rem(size) == Some(0) && off.checked_div(size).is_some_and(|i| i < depth)
+}
+
+/// Whether queue init should ATTACH to the running hardware instead of
+/// reprogramming it: only on a fw-update warm reset, and only when the queues
+/// are already enabled AND still programmed with this firmware's rings and
+/// receive-buffer pool.
+/// Any other combination reprograms, so attach can never adopt foreign or
+/// uninitialised hardware state.
+#[inline]
+fn should_attach(fw_update: bool, already_enabled: bool, ours: bool) -> bool {
+    fw_update && already_enabled && ours
+}
+
+#[cfg(test)]
+mod tests {
+    use super::isq_addr_in_pool;
+    use super::should_attach;
+
+    /// Only buffer-start addresses inside the `depth`-entry pool are accepted.
+    #[test]
+    fn isq_addr_must_be_in_pool() {
+        let (base, size, depth) = (0x6100_E740, 64, 32);
+        assert!(isq_addr_in_pool(base, 0, base, size, depth));
+        assert!(isq_addr_in_pool(base + 31 * size, 0, base, size, depth));
+        assert!(!isq_addr_in_pool(base + 32 * size, 0, base, size, depth)); // past pool
+        assert!(!isq_addr_in_pool(base - size, 0, base, size, depth)); // below pool
+        assert!(!isq_addr_in_pool(base + 16, 0, base, size, depth)); // misaligned
+        assert!(!isq_addr_in_pool(base, 1, base, size, depth)); // high bits set
+        assert!(!isq_addr_in_pool(base, 0, base, 0, depth)); // zero size
+    }
+
+    /// Attach is permitted only when all three preconditions hold; any missing
+    /// one must fall through to a full reprogram so foreign or uninitialised
+    /// queue state is never adopted across a fw-update warm reset.
+    #[test]
+    fn attach_only_on_fw_update_enabled_and_ours() {
+        assert!(should_attach(true, true, true));
+        assert!(!should_attach(false, true, true)); // not a fw-update reset
+        assert!(!should_attach(true, false, true)); // queues not running
+        assert!(!should_attach(true, true, false)); // foreign ring base
+        assert!(!should_attach(false, false, false));
     }
 }
