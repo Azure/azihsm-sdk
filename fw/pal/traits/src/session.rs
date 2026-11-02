@@ -257,18 +257,25 @@ pub trait HsmSessionManager {
     /// - `id` — `None` to allocate a new slot; `Some(existing)` to
     ///   re-key an already-open session in place (post-migration
     ///   renegotiation).  The existing session must currently be in
-    ///   [`HsmSessionState::NeedsRenegotiation`]; any other state is
-    ///   rejected with `InvalidArg` before any vault state is touched.
+    ///   [`HsmSessionState::NeedsRenegotiation`]; other states and
+    ///   out-of-range IDs are rejected before any vault state is
+    ///   touched (see the errors below).
     ///
     /// # Returns
     ///
     /// - `Ok(sess_id)` — the new session's [`HsmSessId`].
     /// - `Err(HsmError::VaultSessionLimitReached)` — `id == None` and
     ///   no slots are free (see
-    ///   [`session_limit_reached`](Self::session_limit_reached)).
-    /// - `Err(HsmError::InvalidArg)` — `id == Some(_)` and the slot
-    ///   is not awaiting renegotiation, or `api_rev`/`masking_key` is
-    ///   the wrong length.
+    ///   [`session_limit_reached`](Self::session_limit_reached)), or
+    ///   `id == Some(_)` and the ID is out of range.
+    /// - `Err(HsmError::SessionNotFound)` — `id == Some(_)` and the
+    ///   slot is not allocated.
+    /// - `Err(HsmError::ProcessedIoEventInInvalidState)` — `id == Some(_)`
+    ///   and the slot is Active or Pending rather than awaiting
+    ///   renegotiation.
+    /// - `Err(HsmError::InvalidArg)` — `api_rev` or `masking_key` is
+    ///   the wrong length. Lengths are checked before the session ID
+    ///   or state.
     /// - `Err(HsmError::NotEnoughSpace)` — vault is full and cannot
     ///   store the masking blob.
     async fn session_create(
