@@ -1,6 +1,8 @@
 /* Copyright (c) Microsoft Corporation. */
 /* Licensed under the MIT License. */
 
+INCLUDE gsram-memory.x
+
 MEMORY
 {
     FLASH : ORIGIN = 0x00000000, LENGTH = 512K
@@ -14,3 +16,6 @@ MEMORY
     RAM   : ORIGIN = 0x20000000, LENGTH = 187K
 }
 
+/* Include before link.x consumes the .text/.rodata self-test inputs. */
+INCLUDE gsram.x
+ASSERT(SIZEOF(.gsram_text) <= LENGTH(GSRAM_CODE), "Self-tests exceed GSRAM_CODE");

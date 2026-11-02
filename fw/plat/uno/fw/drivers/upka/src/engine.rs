@@ -302,7 +302,8 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     /// - `curve`: ECC curve selector.
     /// - `priv_key`: DMA-capable private key buffer.
     /// - `pub_key`: DMA-capable peer public key buffer.
-    /// - `secret`: DMA-capable output buffer for the derived secret.
+    /// - `secret`: DMA-capable output for the full point `X || Y` (at least
+    ///   `2 * hsm_point_size(curve)` bytes); the shared secret is the X coordinate.
     /// - `prime`: DMA-capable curve prime buffer (LE).
     /// - `mont_result`: DMA-capable transient scratch for the Montgomery-
     ///   constant setup write. Its contents are consumed by the engine as
@@ -312,7 +313,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
     ///
     /// # Returns
     ///
-    /// - `Ok(())`: Shared secret was written to `secret`.
+    /// - `Ok(())`: The shared point was written to `secret`.
     /// - `Err(UpkaError::CMD_ERROR)`: Input or output buffer shape is invalid,
     ///   or hardware rejected the command.
     #[allow(clippy::too_many_arguments)]
@@ -329,7 +330,7 @@ impl<const DEPTH: usize, const ENGINES: usize> UpkaEngine<'_, DEPTH, ENGINES> {
         Self::ensure_cmd_input(
             priv_key.len() >= hsm_point_size(curve)
                 && pub_key.len() >= hsm_point_size(curve) * 2
-                && secret.len() >= point_size(curve)
+                && secret.len() >= hsm_point_size(curve) * 2
                 && prime.len() >= hsm_point_size(curve)
                 && mont_result.len() >= hsm_point_size(curve),
         )?;

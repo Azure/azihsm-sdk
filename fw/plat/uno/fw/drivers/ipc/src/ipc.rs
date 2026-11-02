@@ -423,6 +423,11 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
     /// in-flight sender holds a slot — queued senders wait on the
     /// pair waker without consuming a slot. This ensures no slot is
     /// leaked if a future is dropped while waiting in the queue.
+    ///
+    /// Dropping a future after it sends a request leaves the pair and its
+    /// slot occupied. Callers may only time out an in-flight send if they
+    /// immediately halt the core; recovering and reusing the pair requires
+    /// a protocol for discarding late responses and resetting both peers.
     pub fn send<'a>(
         &'a self,
         pair: u8,
@@ -479,15 +484,18 @@ impl<const MAX_PAIRS: usize> IpcDriver<MAX_PAIRS> {
                     return Poll::Pending;
                 }
 
-                // Response arrived — read from RX ring
+                // A descriptor interrupt alone is not a response: the RX
+                // producer must have published a slot before we complete.
                 let pi = unsafe { p.rx_pi.read_volatile() } as u16;
                 let ci = unsafe { p.rx_ci.read_volatile() } as u16;
-
-                if pi != ci {
-                    unsafe { p.copy_from_rx(ci, resp) };
-                    let new_ci = (ci + 1) % p.depth;
-                    unsafe { p.rx_ci.write_volatile(new_ci as u32) };
+                if pi == ci {
+                    slot.completed = false;
+                    slot.waker.register(cx.waker());
+                    return Poll::Pending;
                 }
+                unsafe { p.copy_from_rx(ci, resp) };
+                let new_ci = (ci + 1) % p.depth;
+                unsafe { p.rx_ci.write_volatile(new_ci as u32) };
 
                 // Clear pending
                 let pend_clr = &self.regs.pend_clr[self.int_block as usize];

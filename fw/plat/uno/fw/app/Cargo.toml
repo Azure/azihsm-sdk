@@ -32,6 +32,9 @@ embassy-futures = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
 
+[build-dependencies]
+azihsm_fw_uno_reg_soc = { workspace = true }
+
 [features]
 #default = ["trace-uart"]
 default = []

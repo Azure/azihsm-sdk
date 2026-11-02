@@ -450,6 +450,16 @@ pub enum HsmError {
     /// exhaustion.
     DmaAllocLenOverrun = 0x0870010C,
 
+    /// A cryptographic algorithm self-test (CAST) produced output that
+    /// did not match its known-answer vector.
+    SelfTestKatMismatch = 0x0870010D,
+
+    /// Admin did not answer a periodic RNG self-test quiesce request in time.
+    RngSelfTestAdminTimeout = 0x0870010E,
+
+    /// Admin could not quiesce host IO for the periodic RNG test after all retries.
+    RngSelfTestRetriesExhausted = 0x0870010F,
+
     // Firmware-internal diagnostic codes logged by the CPU fault and panic
     // exception handlers (`azihsm_fw_uno_fault`). These are not DDI protocol
     // statuses: they use the PAL diagnostic facility (`0x08F`) to stay clear of

@@ -17,13 +17,11 @@
 //!
 //! Diagnostics are emitted through `azihsm_fw_hsm_core_tracing` (`error!`),
 //! the same facade the rest of the firmware uses, rather than a bespoke
-//! sink. This keeps faults on one logging path: they share the backend,
-//! formatting, and (future) debug-log/token routing as every other trace.
+//! sink. This keeps faults on one logging path: they share the backend
+//! and formatting with every other trace.
 //! As with all tracing, the messages are present only when a trace level is
 //! enabled in the final image (e.g. the `trace-uart` bring-up build); a
-//! trace-disabled production build emits nothing here until an always-on
-//! logging backend (HSP debug-log) is brought up — at which point faults
-//! gain it uniformly with the rest of the firmware.
+//! trace-disabled production build emits nothing here.
 //!
 //! Each handler logs at error level with an exception-specific `HsmError`
 //! code — [`HsmError::Panic`], [`HsmError::HardFault`],
@@ -77,6 +75,7 @@ use azihsm_fw_hsm_core_tracing::error;
 use azihsm_fw_static_ref::StaticRef;
 use azihsm_fw_uno_crashdump::crash_format::CpuRegisterContext;
 use azihsm_fw_uno_crashdump::crashdump_save;
+use azihsm_fw_uno_crashdump::crashdump_save_fmt;
 use azihsm_fw_uno_crashdump::failure_code::FailureCode;
 use azihsm_fw_uno_drivers_nvic::Nvic;
 use azihsm_fw_uno_drivers_tcon::Tcon;
@@ -129,6 +128,34 @@ fn halt() -> ! {
     loop {
         cortex_m::asm::nop();
     }
+}
+
+/// Records the failed periodic self-test, notifies the peer, and enters the
+/// FIPS error state. The dump tail preserves the test and engine identifiers.
+pub fn enter_self_test_error_state(test: u32, engine: u32, reason: HsmError) -> ! {
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+    crashdump_save_fmt(
+        &capture_register_context(),
+        FailureCode::ExplicitFailure,
+        format_args!(
+            "Self-test {test}, engine {engine}, error {:#x}",
+            u32::from(reason)
+        ),
+    );
+    Tcon::fire_wakeup_timer1();
+    enter_error_state(reason)
+}
+
+/// Reports a crypto or IO timeout without releasing any active DMA buffers.
+pub fn enter_crypto_timeout_error_state(detail: &'static str) -> ! {
+    Nvic::disable(Interrupt::TCON_WAKEUP1);
+    crashdump_save(
+        &capture_register_context(),
+        FailureCode::ExplicitFailure,
+        Some(detail),
+    );
+    Tcon::fire_wakeup_timer1();
+    enter_error_state(HsmError::CryptoTimeout)
 }
 
 /// Capture the calling core's `sp` and `pc` for a crash dump.

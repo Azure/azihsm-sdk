@@ -85,9 +85,13 @@ pub const HSM_SEED_TABLE_COUNT: u32 = 2;
 pub const HSM_SEED_TABLE_STRIDE: u32 = 0x30;
 pub const HSM_SEED_TABLE_SIZE: u32 = 0x30;
 pub const SRAM_IO_BUF_OFFSET: u32 = 0x20D60;
-pub const SRAM_IO_BUF_COUNT: u32 = 33;
+pub const SRAM_IO_BUF_COUNT: u32 = 34;
 pub const SRAM_IO_BUF_STRIDE: u32 = 0x4000;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4000;
+pub const HSM_CODE_OFFSET: u32 = 0xA9000;
+pub const HSM_CODE_COUNT: u32 = 1;
+pub const HSM_CODE_STRIDE: u32 = 0xF000;
+pub const HSM_CODE_SIZE: u32 = 0xF000;
 pub const FP_SLOT_MAP_OFFSET: u32 = 0xB8000;
 pub const FP_SLOT_MAP_COUNT: u32 = 1;
 pub const FP_SLOT_MAP_STRIDE: u32 = 0x41;
@@ -401,8 +405,9 @@ pub mod regs {
             (0x154a4 => pub sha_cmd: [super::ShaCmdEntry; 32]),
             (0x158a4 => _reserved7),
             (0x20c58 => pub io_meta: [super::IoMetaEntry; 33]),
-            (0x20d60 => pub sram_io_buf: [u8; 540672]),
-            (0xa4d60 => _reserved8),
+            (0x20d60 => pub sram_io_buf: [u8; 557056]),
+            (0xa8d60 => _reserved8),
+            (0xa9000 => pub hsm_code: [u8; 61440]),
             (0xb8000 => pub fp_slot_map: [u8; 65]),
             (0xb8041 => @END),
         }

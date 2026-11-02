@@ -4,9 +4,10 @@
 //
 // Memory map:
 //   0x0000_0000  ITCM            512 KB  (code + vector table)
-//   0x2000_0000  DTCM            189 KB  (stack + .bss, CPU-only)
-//     0x2002_F400  DTCM_IO_BUF[32] (64 KB per-IO NonDma scratch)
-//     0x2003_F400  CRASHDUMP_BASE + CORE_RUN_STATUS
+//   0x2000_0000  DTCM            187 KB  (stack + .bss, CPU-only)
+//     0x2002_EC00  DTCM_IO_BUF[33] (49.5 KB per-IO NonDma scratch)
+//     0x2003_B400  DEV_ID_CERT_BLOB (16 KB)
+//     0x2003_F400  CRASHDUMP_BASE (1 KB) + CORE_RUN_STATUS
 //   0x6100_0000  SRAM              2 MB  (GSRAM: queues, DMA, key vault)
 //   0xA3E0_0000  PSRAM            32 KB  (persistent; IPC rings + reset reason)
 //   0x4000_2000  TraceMailbox      4 KB  (debug-only)
@@ -35,6 +36,7 @@
 `include "upka.rdl"
 `include "rng.rdl"
 `include "intc.rdl"
+`include "sys_mbx.rdl"
 `include "tcon.rdl"
 `include "sys_mbx.rdl"
 `include "dual_cp_m7.rdl"
@@ -71,7 +73,6 @@ addrmap uno {
 
     // GSRAM — all queues, buffers, stores, vault
     io_gsram IO_GSRAM       @ 0x6100_0000;
-
     // PSRAM — HSM↔backend IPC rings and persistent reset-reason word
     psram    PSRAM           @ 0xA3E0_0000;
 
