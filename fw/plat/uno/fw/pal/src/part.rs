@@ -542,14 +542,16 @@ impl UnoHsmPal {
     ///
     /// - **VF / re-enable** (`Allocated | Disabled → Enabled`): the
     ///   establish-credential and session-encryption ECC P-384 key pairs are
-    ///   generated here with a fresh nonce, then host IO is accepted.
+    ///   generated here with a fresh nonce and default PSKs are installed,
+    ///   then host IO is accepted. Each role must rotate its PSK again.
     /// - **PF enable-before-SetResource** (`Unallocated → Enabled`, only when
     ///   `is_pf`): `res_mask` is not yet assigned, so the enable-time keys
     ///   cannot be provisioned (the vault has no table). The enable is
     ///   recorded and key provisioning is *deferred* to [`part_alloc`], which
     ///   runs when `SetResource` arrives.
     ///
-    /// Re-enabling an already-`Enabled` partition preserves its keys and nonce.
+    /// Re-enabling an already-`Enabled` partition preserves its keys, PSKs,
+    /// and nonce.
     /// Certificates and BK_BOOT are out of scope.
     ///
     /// A PF left `Faulted` by a failed PCIe-reset free is freed again first,
@@ -568,6 +570,7 @@ impl UnoHsmPal {
         match part.state()? {
             PartState::Allocated | PartState::Disabled => {
                 self.provision_enabled_keys(pid).await?;
+                part.bake_default_psks();
                 part.set_state(PartState::Enabled);
                 Ok(())
             }

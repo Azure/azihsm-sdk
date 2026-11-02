@@ -21,6 +21,44 @@ fn buf(bytes: &[u8]) -> &DmaBuf {
     unsafe { DmaBuf::from_raw(bytes) }
 }
 
+#[test]
+fn disable_zeroizes_psks_and_default_baking_restores_bootstrap() {
+    let p = Partition(14);
+    p.reset();
+    p.bake_default_psks();
+
+    for round in 0..2u8 {
+        let psk_co = [0xA1 + round; PSK_LEN];
+        let psk_cu = [0xB1 + round; PSK_LEN];
+        p.set_psk_co(buf(&psk_co)).unwrap();
+        p.set_psk_cu(buf(&psk_cu)).unwrap();
+        assert_eq!(&p.psk_co()[..], &psk_co);
+        assert_eq!(&p.psk_cu()[..], &psk_cu);
+
+        p.clear_state(PartResetKind::Disable);
+        assert_eq!(&p.psk_co()[..], &[0u8; PSK_LEN]);
+        assert_eq!(&p.psk_cu()[..], &[0u8; PSK_LEN]);
+
+        p.bake_default_psks();
+        assert_eq!(&p.psk_co()[..], &DEFAULT_PSK_CO);
+        assert_eq!(&p.psk_cu()[..], &DEFAULT_PSK_CU);
+
+        p.set_psk_co(buf(&psk_co)).unwrap();
+        assert_eq!(&p.psk_co()[..], &psk_co);
+        assert_eq!(&p.psk_cu()[..], &DEFAULT_PSK_CU);
+        p.set_psk_cu(buf(&psk_cu)).unwrap();
+        assert_eq!(&p.psk_co()[..], &psk_co);
+        assert_eq!(&p.psk_cu()[..], &psk_cu);
+    }
+
+    p.reset();
+    assert_eq!(&p.psk_co()[..], &[0u8; PSK_LEN]);
+    assert_eq!(&p.psk_cu()[..], &[0u8; PSK_LEN]);
+    p.bake_default_psks();
+    assert_eq!(&p.psk_co()[..], &DEFAULT_PSK_CO);
+    assert_eq!(&p.psk_cu()[..], &DEFAULT_PSK_CU);
+}
+
 /// `clear_state(Migrate)` must wipe per-tenant runtime state while keeping the
 /// partition's provisioning material intact (mirrors the reference
 /// `state.migrate()`). This is the regression guard for that split.

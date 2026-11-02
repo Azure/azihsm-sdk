@@ -189,20 +189,35 @@ impl SessionTable {
         Ok(HsmKeyId::from(self.phys_id(slot)))
     }
 
+    /// Validates recreation before allocating a replacement vault key.
+    ///
+    /// Matches the reference firmware's `recreate_session` errors without
+    /// changing the slot or its key mapping.
+    #[inline(never)]
+    pub fn validate_recreation(&self, id: HsmSessId) -> HsmResult<()> {
+        if u16::from(id) as usize >= MAX_SESSIONS {
+            return Err(HsmError::VaultSessionLimitReached);
+        }
+        match self.state(id) {
+            HsmSessionState::NeedsRenegotiation => Ok(()),
+            HsmSessionState::Invalid => Err(HsmError::SessionNotFound),
+            _ => Err(HsmError::ProcessedIoEventInInvalidState),
+        }
+    }
+
     /// Re-keys a session that needs renegotiation with a new physical vault
     /// key ID, clearing its renegotiation flag.
     ///
     /// # Errors
     ///
-    /// - [`HsmError::SessionNotFound`] — `id` is not an allocated slot.
-    /// - [`HsmError::InvalidArg`] — the session is not in the
+    /// - [`HsmError::VaultSessionLimitReached`] — `id` is out of range.
+    /// - [`HsmError::SessionNotFound`] — `id` is an unallocated slot.
+    /// - [`HsmError::ProcessedIoEventInInvalidState`] — the session is not in the
     ///   [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation) state.
     #[inline(never)]
     pub fn recreate(&mut self, id: HsmSessId, new_physical: HsmKeyId) -> HsmResult<HsmSessId> {
-        let slot = self.active_slot(id)?;
-        if (self.renego_mask() & (1 << slot)) == 0 {
-            return Err(HsmError::InvalidArg);
-        }
+        self.validate_recreation(id)?;
+        let slot = u16::from(id) as usize;
         self.region_mut()[RENEGO_MASK] &= !(1u8 << slot);
         self.set_phys_id(slot, u16::from(new_physical));
         Ok(id)

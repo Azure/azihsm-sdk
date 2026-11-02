@@ -60,6 +60,7 @@ fn migrate_retains_established_ids_and_releases_pending_handshakes() {
     ));
 
     let new_key = HsmKeyId::from(2u16);
+    assert_eq!(table.validate_recreation(active), Ok(()));
     assert_eq!(table.recreate(active, new_key).unwrap(), active);
     assert!(matches!(table.state(active), HsmSessionState::Active));
     assert_eq!(table.physical_id(active).unwrap(), new_key);
@@ -82,19 +83,70 @@ fn recreate_rejects_non_renegotiating_slots_without_changing_the_table() {
     let replacement = HsmKeyId::from(2u16);
 
     assert_eq!(
+        table.validate_recreation(active),
+        Err(HsmError::ProcessedIoEventInInvalidState)
+    );
+    assert_eq!(
         table.recreate(active, replacement),
-        Err(HsmError::InvalidArg)
+        Err(HsmError::ProcessedIoEventInInvalidState)
+    );
+    assert_eq!(
+        table.validate_recreation(pending),
+        Err(HsmError::ProcessedIoEventInInvalidState)
     );
     assert_eq!(
         table.recreate(pending, replacement),
-        Err(HsmError::InvalidArg)
+        Err(HsmError::ProcessedIoEventInInvalidState)
     );
     assert_eq!(
         table.recreate(HsmSessId::from(7u16), replacement),
         Err(HsmError::SessionNotFound)
     );
+    assert_eq!(
+        table.validate_recreation(HsmSessId::from(7u16)),
+        Err(HsmError::SessionNotFound)
+    );
+    for raw_id in [8u16, 9, u16::MAX] {
+        let id = HsmSessId::from(raw_id);
+        assert_eq!(
+            table.validate_recreation(id),
+            Err(HsmError::VaultSessionLimitReached)
+        );
+        assert_eq!(
+            table.recreate(id, replacement),
+            Err(HsmError::VaultSessionLimitReached)
+        );
+    }
     assert_eq!(part.session_table(), &before);
     assert_eq!(part.session_meta(), &meta_before);
+}
+
+#[test]
+fn recreate_retained_sessions_when_the_table_is_full() {
+    let pid = HsmPartId::from(55u8);
+    let part = PartStore::partition(pid).unwrap();
+    part.reset();
+    let mut table = SessionStore::partition(pid).unwrap();
+    for raw_id in 0..8u16 {
+        assert_eq!(
+            table.create(HsmKeyId::from(raw_id)).unwrap(),
+            HsmSessId::from(raw_id)
+        );
+    }
+    table.mark_all_needs_renego();
+    assert!(table.limit_reached());
+
+    for raw_id in 0..8u16 {
+        let id = HsmSessId::from(raw_id);
+        let replacement = HsmKeyId::from(raw_id + 8);
+        let before = *part.session_table();
+        assert_eq!(table.validate_recreation(id), Ok(()));
+        assert_eq!(part.session_table(), &before);
+        assert_eq!(table.recreate(id, replacement), Ok(id));
+        assert!(matches!(table.state(id), HsmSessionState::Active));
+        assert_eq!(table.physical_id(id).unwrap(), replacement);
+    }
+    assert!(table.limit_reached());
 }
 
 #[test]

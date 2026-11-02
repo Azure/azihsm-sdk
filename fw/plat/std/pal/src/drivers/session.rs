@@ -251,16 +251,29 @@ impl SessionTable {
         Ok(HsmKeyId::from(self.phys_ids[slot]))
     }
 
+    /// Validate recreation before allocating a replacement vault key.
+    ///
+    /// Matches the reference firmware's `recreate_session` errors without
+    /// changing the slot or its key mapping.
+    pub fn validate_recreation(&self, id: HsmSessId) -> HsmResult<()> {
+        if u16::from(id) as usize >= MAX_SESSIONS {
+            return Err(HsmError::VaultSessionLimitReached);
+        }
+        match self.state(id) {
+            HsmSessionState::NeedsRenegotiation => Ok(()),
+            HsmSessionState::Invalid => Err(HsmError::SessionNotFound),
+            _ => Err(HsmError::ProcessedIoEventInInvalidState),
+        }
+    }
+
     /// Re-key an existing session with a new physical vault key ID.
     ///
     /// The session must be in [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation)
     /// state.  On success, clears the renegotiation bit and updates the
     /// physical mapping.
     pub fn recreate(&mut self, id: HsmSessId, new_physical: HsmKeyId) -> HsmResult<HsmSessId> {
-        let slot = self.active_slot(id)?;
-        if (self.renego_mask & (1 << slot)) == 0 {
-            return Err(HsmError::InvalidArg);
-        }
+        self.validate_recreation(id)?;
+        let slot = u16::from(id) as usize;
         self.renego_mask &= !(1u8 << slot);
         // Fresh key material → fresh one-shot PSK-change budget.
         self.psk_change_mask &= !(1u8 << slot);
@@ -566,7 +579,38 @@ mod tests {
         let id = table.create(HsmKeyId::from(10)).unwrap();
         // Active, not NeedsRenegotiation — should fail.
         let err = table.recreate(id, HsmKeyId::from(20)).unwrap_err();
-        assert_eq!(err, HsmError::InvalidArg);
+        assert_eq!(err, HsmError::ProcessedIoEventInInvalidState);
+        assert!(matches!(table.state(id), HsmSessionState::Active));
+        assert_eq!(u16::from(table.physical_id(id).unwrap()), 10);
+    }
+
+    #[test]
+    fn recreate_rejects_missing_and_out_of_range_sessions() {
+        let mut table = SessionTable::new();
+        for (raw_id, expected) in [
+            (0u16, HsmError::SessionNotFound),
+            (7, HsmError::SessionNotFound),
+            (8, HsmError::VaultSessionLimitReached),
+            (9, HsmError::VaultSessionLimitReached),
+            (u16::MAX, HsmError::VaultSessionLimitReached),
+        ] {
+            let id = HsmSessId::from(raw_id);
+            assert_eq!(table.validate_recreation(id), Err(expected));
+            assert_eq!(table.recreate(id, HsmKeyId::from(20)), Err(expected));
+        }
+        assert_eq!(table.alloc_mask, 0);
+        assert_eq!(table.renego_mask, 0);
+        assert_eq!(table.phys_ids, [0; MAX_SESSIONS]);
+    }
+
+    #[test]
+    fn recreate_status_codes_match_reference_firmware() {
+        assert_eq!(u32::from(HsmError::VaultSessionLimitReached), 0x08700001);
+        assert_eq!(u32::from(HsmError::SessionNotFound), 0x08700004);
+        assert_eq!(
+            u32::from(HsmError::ProcessedIoEventInInvalidState),
+            0x08700087
+        );
     }
 
     #[test]

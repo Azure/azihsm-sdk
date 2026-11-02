@@ -84,12 +84,7 @@ impl HsmSessionManager for StdHsmPal {
         // in `recreate` would leave the slot pointing at a deleted key,
         // so it could never be closed.
         if let Some(reopen_id) = id {
-            if !matches!(
-                entry.session_table.state(reopen_id),
-                HsmSessionState::NeedsRenegotiation
-            ) {
-                return Err(HsmError::InvalidArg);
-            }
+            entry.session_table.validate_recreation(reopen_id)?;
         }
 
         // Build 88-byte session blob: [api_rev(8) || masking_key(80)].
@@ -327,6 +322,156 @@ impl HsmSessionManager for StdHsmPal {
     fn session_try_consume_psk_change(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
         let entry = self.active_part_mut(io.pid())?;
         entry.session_table.try_consume_psk_change(id)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod session_reopen_tests {
+    use super::*;
+    use crate::drivers::vault::KeyVault;
+
+    fn test_pal() -> (StdHsmPal, StdHsmIo) {
+        let (_tx, rx) = async_channel::bounded(1);
+        let mut pal = StdHsmPal::new(rx, tokio::runtime::Handle::current());
+        let entry = &mut pal.part_table.get_mut().entries[0];
+        entry.state = PartState::Enabled;
+        entry.vault = KeyVault::new(1);
+        let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
+        let io = StdHsmIo::admin(HsmPartId::from(0u8), 0, reply_tx);
+        (pal, io)
+    }
+
+    #[tokio::test]
+    async fn session_reopen_errors_preserve_existing_slots_and_vault_keys() {
+        let (pal, io) = test_pal();
+        let api_rev = [1u8; SESSION_API_REV_SIZE];
+        let masking_key = [2u8; SESSION_MASKING_KEY_SIZE];
+        let active = pal
+            .session_create(&io, &api_rev, &masking_key, None)
+            .await
+            .unwrap();
+        let pending = pal
+            .active_part_mut(io.pid())
+            .unwrap()
+            .session_table
+            .create_pending(SessionRole::CryptoUser, &[])
+            .unwrap();
+        let physical_id = pal
+            .active_part(io.pid())
+            .unwrap()
+            .session_table
+            .physical_id(active)
+            .unwrap();
+        let original_key = pal
+            .active_part(io.pid())
+            .unwrap()
+            .vault
+            .key(physical_id)
+            .unwrap()
+            .to_vec();
+
+        for (id, expected) in [
+            (active, HsmError::ProcessedIoEventInInvalidState),
+            (pending, HsmError::ProcessedIoEventInInvalidState),
+            (HsmSessId::from(7u16), HsmError::SessionNotFound),
+            (HsmSessId::from(8u16), HsmError::VaultSessionLimitReached),
+            (
+                HsmSessId::from(u16::MAX),
+                HsmError::VaultSessionLimitReached,
+            ),
+        ] {
+            assert_eq!(
+                pal.session_create(&io, &api_rev, &masking_key, Some(id))
+                    .await,
+                Err(expected)
+            );
+            let entry = pal.active_part(io.pid()).unwrap();
+            assert_eq!(
+                entry.session_table.physical_id(active).unwrap(),
+                physical_id
+            );
+            assert_eq!(entry.vault.key(physical_id).unwrap(), original_key);
+            assert!(matches!(
+                entry.session_table.state(active),
+                HsmSessionState::Active
+            ));
+            assert!(matches!(
+                entry.session_table.state(pending),
+                HsmSessionState::Pending
+            ));
+        }
+
+        let next = pal
+            .session_create(&io, &api_rev, &masking_key, None)
+            .await
+            .unwrap();
+        assert_eq!(u16::from(next), 2);
+        assert_eq!(
+            u16::from(
+                pal.active_part(io.pid())
+                    .unwrap()
+                    .session_table
+                    .physical_id(next)
+                    .unwrap()
+            ),
+            1
+        );
+        pal.session_destroy(&io, active).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_reopen_succeeds_when_all_slots_need_renegotiation() {
+        let (pal, io) = test_pal();
+        let api_rev = [1u8; SESSION_API_REV_SIZE];
+        let masking_key = [2u8; SESSION_MASKING_KEY_SIZE];
+        for _ in 0..8 {
+            pal.session_create(&io, &api_rev, &masking_key, None)
+                .await
+                .unwrap();
+        }
+        let entry = pal.active_part_mut(io.pid()).unwrap();
+        let retained = entry.session_table.backup();
+        entry.vault.clear();
+        entry.session_table.restore(retained);
+        assert!(pal.session_limit_reached(&io));
+
+        for raw_id in 0..8u16 {
+            let id = HsmSessId::from(raw_id);
+            assert_eq!(
+                pal.session_create(&io, &api_rev, &masking_key, Some(id))
+                    .await,
+                Ok(id)
+            );
+            assert!(matches!(
+                pal.session_state(&io, id),
+                HsmSessionState::Active
+            ));
+        }
+        assert!(pal.session_limit_reached(&io));
+    }
+
+    #[tokio::test]
+    async fn session_reopen_invalid_lengths_still_return_invalid_arg() {
+        let (pal, io) = test_pal();
+        let api_rev = [1u8; SESSION_API_REV_SIZE];
+        let masking_key = [2u8; SESSION_MASKING_KEY_SIZE];
+        for id in [
+            None,
+            Some(HsmSessId::from(0u16)),
+            Some(HsmSessId::from(8u16)),
+        ] {
+            assert_eq!(
+                pal.session_create(&io, &api_rev[..7], &masking_key, id)
+                    .await,
+                Err(HsmError::InvalidArg)
+            );
+            assert_eq!(
+                pal.session_create(&io, &api_rev, &masking_key[..79], id)
+                    .await,
+                Err(HsmError::InvalidArg)
+            );
+        }
     }
 }
 

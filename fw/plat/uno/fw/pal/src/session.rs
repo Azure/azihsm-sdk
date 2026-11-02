@@ -96,10 +96,8 @@ impl HsmSessionManager for UnoHsmPal {
         // its slot pointing at a deleted key, so a later close/flush could
         // never free it (leaking the slot). Mirrors the std PAL and the
         // reference firmware's `recreate_session`.
-        if let Some(reopen_id) = id
-            && !matches!(table.state(reopen_id), HsmSessionState::NeedsRenegotiation)
-        {
-            return Err(HsmError::InvalidArg);
+        if let Some(reopen_id) = id {
+            table.validate_recreation(reopen_id)?;
         }
 
         // Build the 88-byte session blob in a DMA buffer:

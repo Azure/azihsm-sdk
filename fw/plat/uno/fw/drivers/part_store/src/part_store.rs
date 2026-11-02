@@ -563,7 +563,7 @@ impl Partition {
 
         // ── Write-once provisioning material ──
         // Preserved by `Migrate` (NSSR keeps provisioning); wiped by `Disable`
-        // (partition deallocation).
+        // (partition disable or deallocation).
         // An NSSR (`Migrate`) returns the partition to its just-allocated
         // state as far as the session PSKs are concerned: `part_psk` is
         // `RequiredPresent` and default-baked at allocation, so the slots
@@ -572,7 +572,7 @@ impl Partition {
         // never drift apart. Mirrors the std PAL, whose migrated entry
         // resets `psk_co`/`psk_cu` to `None` and therefore reads back as
         // `DEFAULT_PSK_CO` / `DEFAULT_PSK_CU`. `Disable` instead zeroes
-        // them below, because the slot is being deallocated.
+        // them below; the PAL restores defaults on a subsequent enable.
         if matches!(kind, PartResetKind::Migrate) {
             self.bake_default_psks();
         }
@@ -602,11 +602,12 @@ impl Partition {
     /// uses the default, so the derived export secrets diverge and the
     /// Phase-1 confirm MAC fails.
     ///
-    /// Called from `part_alloc`. The reset paths seed their own slots:
+    /// Called from `part_alloc` and actual `part_enable` transitions. The
+    /// reset paths seed their own slots:
     /// `clear_state([`PartResetKind::Migrate`])` re-bakes these same
     /// defaults on an NSSR (so a rotated PSK does not survive the reset),
-    /// and [`PartResetKind::Disable`] zeroes them because the slot is being
-    /// deallocated.
+    /// and [`PartResetKind::Disable`] zeroes them until the partition is
+    /// enabled or allocated again.
     #[inline(never)]
     pub fn bake_default_psks(mut self) {
         let slot = self.slot_mut();
