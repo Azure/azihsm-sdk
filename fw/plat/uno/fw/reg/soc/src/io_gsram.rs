@@ -90,8 +90,12 @@ pub const SRAM_IO_BUF_STRIDE: u32 = 0x4000;
 pub const SRAM_IO_BUF_SIZE: u32 = 0x4000;
 pub const HSM_CODE_OFFSET: u32 = 0xA9000;
 pub const HSM_CODE_COUNT: u32 = 1;
-pub const HSM_CODE_STRIDE: u32 = 0x12000;
-pub const HSM_CODE_SIZE: u32 = 0x12000;
+pub const HSM_CODE_STRIDE: u32 = 0xF000;
+pub const HSM_CODE_SIZE: u32 = 0xF000;
+pub const FP_SLOT_MAP_OFFSET: u32 = 0xB8000;
+pub const FP_SLOT_MAP_COUNT: u32 = 1;
+pub const FP_SLOT_MAP_STRIDE: u32 = 0x41;
+pub const FP_SLOT_MAP_SIZE: u32 = 0x41;
 
 tock_registers::register_bitfields! [u32,
     /// 'FIPS provisioned-keys flag (byte 0) plus 3 reserved bytes.'
@@ -403,8 +407,9 @@ pub mod regs {
             (0x20c58 => pub io_meta: [super::IoMetaEntry; 33]),
             (0x20d60 => pub sram_io_buf: [u8; 557056]),
             (0xa8d60 => _reserved8),
-            (0xa9000 => pub hsm_code: [u8; 73728]),
-            (0xbb000 => @END),
+            (0xa9000 => pub hsm_code: [u8; 61440]),
+            (0xb8000 => pub fp_slot_map: [u8; 65]),
+            (0xb8041 => @END),
         }
     }
 }

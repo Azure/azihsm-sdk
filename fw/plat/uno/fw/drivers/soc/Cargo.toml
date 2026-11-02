@@ -8,7 +8,6 @@ version = "0.1.0"
 [lib]
 bench = false
 doctest = false
-test = false
 
 [dependencies]
 azihsm_fw_uno_reg_soc = { workspace = true }

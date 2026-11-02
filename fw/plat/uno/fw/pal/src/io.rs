@@ -26,8 +26,6 @@
 
 use core::mem;
 use core::ops::AsyncFnOnce;
-use core::sync::atomic::AtomicU32;
-use core::sync::atomic::Ordering;
 
 use azihsm_fw_hsm_pal_traits::HsmCqe;
 use azihsm_fw_hsm_pal_traits::HsmIo;
@@ -44,6 +42,7 @@ use azihsm_fw_uno_reg_soc::io_gsram::IoCqEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::IoMetaEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::IoSqEntry;
 use azihsm_fw_uno_reg_soc::io_gsram::regs::IoGsramRegs;
+use azihsm_fw_uno_trace::tracing::*;
 use tock_registers::interfaces::Readable;
 use tock_registers::interfaces::Writeable;
 
@@ -55,8 +54,6 @@ use crate::alloc::reset_io_alloc;
 
 /// Typed overlay of the IO GSRAM region.
 const IO_Q: StaticRef<IoGsramRegs> = unsafe { StaticRef::new(IO_GSRAM_BASE as *const IoGsramRegs) };
-
-static HOST_IO_IN_FLIGHT: AtomicU32 = AtomicU32::new(0);
 
 /// An in-flight IO identified by its IO_SQ slot index.
 ///
@@ -226,11 +223,17 @@ impl HsmIoController for UnoHsmPal {
     type Io = UnoHsmIo;
 
     /// Awaits the next inbound IO from the IIC driver.
+    ///
+    /// Every IO handed out is counted in flight until
+    /// [`drop_io`](HsmIoController::drop_io) returns its slot.
     async fn poll_io(&self) -> HsmResult<Self::Io> {
-        let index = self.iic.recv().await;
-        reset_io_alloc(self, index);
-        HOST_IO_IN_FLIGHT.fetch_add(1, Ordering::AcqRel);
-        Ok(UnoHsmIo { index })
+        loop {
+            let io = self.accept_io(self.iic.recv().await);
+            if !self.io_paused() {
+                return Ok(io);
+            }
+            self.recycle_reset_io(io).await;
+        }
     }
 
     /// Posts the completion (CQE) to the host via OIC.
@@ -249,7 +252,8 @@ impl HsmIoController for UnoHsmPal {
     /// This is the universal IO teardown point (the core dispatch loop
     /// calls it on both the completed and the dropped paths), so the
     /// per-IO buffer scrub lives here. See
-    /// [`scrub_io_slot`](UnoHsmPal::scrub_io_slot).
+    /// [`scrub_io_slot`](UnoHsmPal::scrub_io_slot). It also ends the IO's
+    /// in-flight count, in the same step that returns the slot.
     async fn drop_io(&self, io: Self::Io) -> HsmResult<()> {
         let queue_id = io.queue_id();
         // Scrub both per-IO scratch buffers *before* returning the slot to
@@ -257,15 +261,39 @@ impl HsmIoController for UnoHsmPal {
         // next IO that reuses the slot.
         self.scrub_io_slot(io.index).await;
         self.iic.free_io(io.index, queue_id);
-        assert!(HOST_IO_IN_FLIGHT.fetch_sub(1, Ordering::AcqRel) > 0);
+        self.io_in_flight_dec();
         Ok(())
+    }
+}
+
+impl UnoHsmPal {
+    /// Turns IO_SQ slot `index` received from the IIC driver into an IO:
+    /// counts it in flight (balanced by [`drop_io`](HsmIoController::drop_io))
+    /// and resets the slot's scratch allocator.
+    pub(crate) fn accept_io(&self, index: u16) -> UnoHsmIo {
+        self.io_in_flight_inc();
+        reset_io_alloc(self, index);
+        UnoHsmIo { index }
+    }
+
+    /// Recycles an IO received during a PCIe reset without dispatching it:
+    /// the slot is scrubbed and returned, and no CQE is posted. Such an IO
+    /// belongs to the host state being torn down. See
+    /// [`handle_ipc_event`](UnoHsmPal::handle_ipc_event).
+    pub(crate) async fn recycle_reset_io(&self, io: UnoHsmIo) {
+        if let Err(_e) = self.drop_io(io).await {
+            error!(
+                "pcie",
+                _e, "reset: failed to recycle IO received during reset"
+            );
+        }
     }
 }
 
 impl UnoHsmPal {
     /// All accepted host IOs have completed and no inbound IO remains unclaimed.
     pub(crate) fn host_io_drained(&self) -> bool {
-        !self.iic.has_pending_io() && HOST_IO_IN_FLIGHT.load(Ordering::Acquire) == 0
+        self.io_in_flight() == 0 && !self.iic.has_pending_io()
     }
 
     /// Runs `f` as an *admin session* over the dedicated admin IO slot

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(clippy::new_without_default)]
 //! Async firmware driver for the IIC (Inbound IO Controller).
 //!
@@ -35,7 +35,7 @@
 //!     io_meta_base: 0x6109_0C00,
 //!     interrupt: true,
 //! });
-//! iic.init();
+//! iic.init(); // attach on fw-update, full program otherwise (reads reset reason)
 //! iic.enable();
 //! let slot = iic.recv().await;
 //! iic.free_io(slot, queue_id);

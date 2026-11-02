@@ -94,8 +94,9 @@ static HSM: OnceLock<Hsm<UnoHsmPal>> = OnceLock::new();
 /// - Schedules per-IO tasks onto the executor when task slots are available.
 #[embassy_executor::task]
 async fn poll_io(spawner: Spawner) -> ! {
+    let hsm = HSM.get().await;
     loop {
-        let Ok(io) = HSM.get().await.pal().poll_io().await else {
+        let Ok(io) = hsm.pal().poll_io().await else {
             continue;
         };
 
