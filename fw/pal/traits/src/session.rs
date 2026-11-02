@@ -257,17 +257,25 @@ pub trait HsmSessionManager {
     /// - `id` — `None` to allocate a new slot; `Some(existing)` to
     ///   re-key an already-open session in place (post-migration
     ///   renegotiation).  The existing session must currently be in
-    ///   either [`HsmSessionState::Active`] or
-    ///   [`HsmSessionState::NeedsRenegotiation`].
+    ///   [`HsmSessionState::NeedsRenegotiation`]; other states and
+    ///   out-of-range IDs are rejected before any vault state is
+    ///   touched (see the errors below).
     ///
     /// # Returns
     ///
     /// - `Ok(sess_id)` — the new session's [`HsmSessId`].
     /// - `Err(HsmError::VaultSessionLimitReached)` — `id == None` and
     ///   no slots are free (see
-    ///   [`session_limit_reached`](Self::session_limit_reached)).
-    /// - `Err(HsmError::InvalidArg)` — `id == Some(_)` and the slot
-    ///   is free, or `api_rev`/`masking_key` is the wrong length.
+    ///   [`session_limit_reached`](Self::session_limit_reached)), or
+    ///   `id == Some(_)` and the ID is out of range.
+    /// - `Err(HsmError::SessionNotFound)` — `id == Some(_)` and the
+    ///   slot is not allocated.
+    /// - `Err(HsmError::ProcessedIoEventInInvalidState)` — `id == Some(_)`
+    ///   and the slot is Active or Pending rather than awaiting
+    ///   renegotiation.
+    /// - `Err(HsmError::InvalidArg)` — `api_rev` or `masking_key` is
+    ///   the wrong length. Lengths are checked before the session ID
+    ///   or state.
     /// - `Err(HsmError::NotEnoughSpace)` — vault is full and cannot
     ///   store the masking blob.
     async fn session_create(
@@ -300,6 +308,42 @@ pub trait HsmSessionManager {
     /// - `Err(HsmError::SessionNotFound)` — `id` does not refer to an allocated
     ///   session in the caller's partition.
     async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()>;
+
+    /// Rolls back an in-place re-key performed by
+    /// [`session_create`](Self::session_create) with `id == Some(_)`
+    /// (the post-migration `ReopenSession` path).
+    ///
+    /// A `ReopenSession` re-keys a
+    /// [`NeedsRenegotiation`](HsmSessionState::NeedsRenegotiation) slot:
+    /// it installs a fresh masking-key vault entry and clears the slot's
+    /// renegotiation flag, flipping it to [`Active`](HsmSessionState::Active).
+    /// If a later step of the same command fails (e.g. the response
+    /// cannot be encoded), the host never learns the session was
+    /// re-keyed and will retry the reopen — but the now-`Active` slot
+    /// would reject that retry.  This call undoes the re-key so the slot
+    /// returns to a freshly-migrated `NeedsRenegotiation` state:
+    ///
+    /// 1. Deletes the fresh masking-key vault entry that
+    ///    [`session_create`](Self::session_create) installed.
+    /// 2. Restores the slot's renegotiation flag and clears its physical
+    ///    vault mapping.
+    ///
+    /// The slot itself is **not** freed (it still represents a migrated
+    /// session awaiting renegotiation), mirroring the reference
+    /// firmware's `rollback_open_session` reopen branch
+    /// (`session_table().rollback_recreation(id)`).
+    ///
+    /// # Parameters
+    ///
+    /// - `io` — caller's I/O context (partition scope).
+    /// - `id` — session that was just re-keyed and must be restored.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` on success.
+    /// - `Err(HsmError::SessionNotFound)` — `id` does not refer to a
+    ///   live slot in the caller's partition.
+    async fn session_rollback_reopen(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()>;
 
     /// Queries the lifecycle state of a session slot.
     ///

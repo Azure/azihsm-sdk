@@ -112,6 +112,12 @@ bootstrap session.
 2. Issue `PskChange` as the first in-session command.
 3. (Optional) `SessionClose`; subsequent sessions are unrestricted.
 
+Disabling a partition erases its configured CO and CU PSKs. Re-enabling
+installs the public defaults again, so each role must repeat this bootstrap
+sequence before normal in-session commands are permitted. Previously
+rotated PSKs no longer authenticate. An enable retry on an already-enabled
+partition must not reset its PSKs.
+
 The gate is **safe-by-default** in code: future opcodes added to the
 dispatcher are gated unless explicitly placed on the
 `allowed_with_default_psk` allow-list in

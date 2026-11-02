@@ -2030,6 +2030,65 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn psk_reset_on_disable_and_reenable() {
+        let (_tx, rx) = async_channel::bounded(1);
+        let mut pal = StdHsmPal::new(rx, tokio::runtime::Handle::current());
+        let entry = &mut pal.part_table.get_mut().entries[0];
+        entry.state = PartState::Allocated;
+        entry.res_mask = 1;
+        entry.vault = KeyVault::new(1);
+        pal.part_enable_internal(0).await.unwrap();
+
+        for round in 0..2u8 {
+            let psk_co = [0xA1 + round; PSK_LEN];
+            let psk_cu = [0xB1 + round; PSK_LEN];
+            let entry = &mut pal.table_mut().entries[0];
+            entry.prop_set_bytes(PartPropId::PSK_CO, &psk_co).unwrap();
+            assert_eq!(
+                entry.prop_get_bytes(PartPropId::PSK_CU).unwrap(),
+                DEFAULT_PSK_CU.as_slice()
+            );
+            entry.prop_set_bytes(PartPropId::PSK_CU, &psk_cu).unwrap();
+
+            assert_eq!(pal.part_enable_internal(0).await, Err(HsmError::InvalidArg));
+            let entry = &pal.table().entries[0];
+            assert_eq!(entry.prop_get_bytes(PartPropId::PSK_CO).unwrap(), &psk_co);
+            assert_eq!(entry.prop_get_bytes(PartPropId::PSK_CU).unwrap(), &psk_cu);
+
+            pal.part_disable_internal(0).unwrap();
+            let entry = &pal.table().entries[0];
+            assert_eq!(entry.state, PartState::Disabled);
+            assert!(entry.psk_co.is_none());
+            assert!(entry.psk_cu.is_none());
+
+            pal.part_enable_internal(0).await.unwrap();
+            let entry = &pal.table().entries[0];
+            assert_eq!(entry.state, PartState::Enabled);
+            assert_eq!(
+                entry.prop_get_bytes(PartPropId::PSK_CO).unwrap(),
+                DEFAULT_PSK_CO.as_slice()
+            );
+            assert_eq!(
+                entry.prop_get_bytes(PartPropId::PSK_CU).unwrap(),
+                DEFAULT_PSK_CU.as_slice()
+            );
+        }
+
+        let entry = &mut pal.table_mut().entries[0];
+        entry
+            .prop_set_bytes(PartPropId::PSK_CO, &[0xA3; PSK_LEN])
+            .unwrap();
+        entry
+            .prop_set_bytes(PartPropId::PSK_CU, &[0xB3; PSK_LEN])
+            .unwrap();
+        pal.part_free_internal(0).unwrap();
+        let entry = &pal.table().entries[0];
+        assert_eq!(entry.state, PartState::Unallocated);
+        assert!(entry.psk_co.is_none());
+        assert!(entry.psk_cu.is_none());
+    }
+
     // ── Phase A new-id coverage ────────────────────────────────────
 
     #[test]

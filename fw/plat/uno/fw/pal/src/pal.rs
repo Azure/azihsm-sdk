@@ -876,7 +876,8 @@ impl UnoHsmPal {
         let result = if mask == 0 {
             self.part_free(pid).await
         } else {
-            self.part_alloc(pid, mask, is_pf).await
+            self.part_alloc(pid, mask, &msg.info.vm_launch_guid, is_pf)
+                .await
         };
         let (status, count) = match result {
             Ok(()) => (IpcMessageStatusCode::Success, mask.count_ones() as u8),
