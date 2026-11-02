@@ -100,7 +100,7 @@ azihsm_fw_hsm_pal_traits = { path = "../../../pal/traits" }
 
 bitfield-struct = "0.13.0"
 cfg-if = "1.0.0"
-cortex-m = { version = "0.7.7", features = ["inline-asm"] }
+cortex-m = { features = ["inline-asm"], version = "0.7.7" }
 cortex-m-rt = "0.7.5"
 critical-section = "1.2.0"
 darling = "0.20"
