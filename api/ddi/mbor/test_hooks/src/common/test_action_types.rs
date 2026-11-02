@@ -82,6 +82,8 @@ pub enum DdiTestAction {
     GetPrivKey = 25,
     /// Import raw key material.
     RawKeyImport = 26,
+    /// Generate random bytes for validation.
+    GetRng = 27,
 }
 
 /// Crash type used by [`DdiTestAction::TriggerCrash`].

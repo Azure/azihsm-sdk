@@ -18,7 +18,7 @@
 //   0xA0B0_0000  DummyPeripheral  16 KB  (read-as-zero AXI window; GDMA zero source)
 //   0xA128_0000  IIC              16 KB  (controller 0)
 //   0xA12C_0000  OIC              16 KB  (controller 0)
-//   0xB000_0000  SysMbx           32 B   (Mailbox0 to SP; FIPS error state)
+//   0xB000_0000  SysMbx           32 B   (Mailbox0 to the SP; FIPS error state)
 //   0xB000_5000  TCON             4 KB   (timer ctrl; wakeup1 crash-notify)
 //   0xB000_6000  INTC            272 B   (IPC interrupt controller)
 //   0xB000_9000  UART            4 KB    (debug console; silicon-only)
@@ -38,6 +38,7 @@
 `include "intc.rdl"
 `include "sys_mbx.rdl"
 `include "tcon.rdl"
+`include "sys_mbx.rdl"
 `include "dual_cp_m7.rdl"
 `include "uart.rdl"
 `include "gsram_map.rdl"

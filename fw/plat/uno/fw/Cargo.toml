@@ -10,6 +10,7 @@ members = [
   "crates/error",
   "crates/fault",
   "crates/key_vault",
+  "crates/pct",
   "crates/single_cell",
   "crates/static_init",
   "crates/static_ref",
@@ -77,6 +78,7 @@ azihsm_fw_uno_fault = { path = "crates/fault" }
 azihsm_fw_uno_key_vault = { path = "crates/key_vault" }
 azihsm_fw_uno_pac = { path = "drivers/pac" }
 azihsm_fw_uno_pal = { path = "pal" }
+azihsm_fw_uno_pct = { path = "crates/pct" }
 azihsm_fw_uno_reg_soc = { path = "reg/soc" }
 azihsm_fw_uno_trace = { path = "crates/trace" }
 
@@ -98,7 +100,7 @@ azihsm_fw_hsm_pal_traits = { path = "../../../pal/traits" }
 
 bitfield-struct = "0.13.0"
 cfg-if = "1.0.0"
-cortex-m = "0.7.7"
+cortex-m = { version = "0.7.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7.5"
 critical-section = "1.2.0"
 darling = "0.20"

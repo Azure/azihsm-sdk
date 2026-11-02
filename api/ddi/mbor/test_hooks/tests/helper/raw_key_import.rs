@@ -68,9 +68,16 @@ fn normalized_key_type(key_type: DdiKeyType) -> DdiKeyType {
     }
 }
 
-pub(super) fn rsa2k_private_key() -> [u8; 516] {
-    let mut key = [0x5au8; 516];
-    key[512..].copy_from_slice(&65_537u32.to_le_bytes());
+/// Generates an RSA-2048 private key in the Uno vault layout that
+/// `RawKeyImport` takes: `d ‖ n ‖ e`, each little-endian, with a 4-byte `e`.
+///
+/// It must be a real key, because the firmware runs the unwrapping key's
+/// pairwise consistency test before it stores the key.
+pub(super) fn rsa2k_private_key() -> Vec<u8> {
+    let parts = RsaParts::generate(256);
+    let mut key: Vec<u8> = parts.d.iter().rev().copied().collect();
+    key.extend(parts.n.iter().rev());
+    key.extend(parts.e.iter().rev());
     key
 }
 

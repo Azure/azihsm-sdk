@@ -40,6 +40,7 @@ use azihsm_ddi_tbor_types::KEY_USAGE_VERIFY;
 use azihsm_ddi_tbor_types::PSK_LEN;
 use azihsm_ddi_tbor_types::TBOR_KEY_LABEL_MAX_LEN;
 
+use crate::commands::common::derive;
 pub(crate) use crate::commands::common::CO;
 pub(crate) use crate::commands::common::CU;
 use crate::commands::common::SCOPE_EPHEMERAL;
@@ -76,26 +77,6 @@ fn generate_in_scope(ctx: &TestCtx, session_id: u16, scope: u8, curve: u8) -> (V
         })
         .expect("EccGenerateKey");
     (resp.masked_key, resp.pub_key)
-}
-
-/// Derive a shared secret from local key `masked_key` against `peer_pub`
-/// under `scope`.
-fn derive(
-    ctx: &TestCtx,
-    session_id: u16,
-    scope: u8,
-    masked_key: Vec<u8>,
-    peer_pub: Vec<u8>,
-) -> Vec<u8> {
-    ctx.tbor(&TborEcdhDeriveReq {
-        session_id,
-        scope,
-        masked_key,
-        peer_pub_key: peer_pub,
-        key_label: Vec::new(),
-    })
-    .expect("EcdhDerive")
-    .masked_secret
 }
 
 /// Derives well-formed masked shared secrets in both directions for every supported ECC curve.
