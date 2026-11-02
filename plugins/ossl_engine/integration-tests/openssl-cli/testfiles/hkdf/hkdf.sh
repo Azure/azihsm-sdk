@@ -62,11 +62,10 @@ for cfg in \
 done
 
 # Buffer mode: the masked blob comes back in -out. kdflen must be at least the
-# blob length; the armed size query reports MASKED_KEY_MAX_BUFFER (8192 bytes,
-# the shared masked-blob buffer size), so pass that.
+# blob length; the armed size query reports MASKED_KEY_MAX_BUFFER, so pass that.
 buf="$KEYDIR/hkdf_buffer_mode.bin"
 rm -f "$buf"
-"$OPENSSL_BIN" pkeyutl -kdf HKDF -kdflen 8192 -engine azihsm -engine_impl \
+"$OPENSSL_BIN" pkeyutl -kdf HKDF -kdflen "$MASKED_KEY_MAX_BUFFER" -engine azihsm -engine_impl \
     -pkeyopt "md:SHA256" \
     -pkeyopt "azihsm.ikm_file:$secret" \
     -pkeyopt "derived_key_type:aes" \

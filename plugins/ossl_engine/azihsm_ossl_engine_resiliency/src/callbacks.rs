@@ -24,7 +24,7 @@ use zeroize::Zeroizing;
 /// Minimum length of the masked OBK accepted on load. The native bridge
 /// enforces `len >= OBK_SIZE` (a masked blob may be larger), so anything
 /// shorter is rejected.
-const OBK_LEN: usize = 48;
+pub const OBK_LEN: usize = 48;
 
 /// POTA endorsement that signs the device's PID public key with a
 /// caller-owned P-384 private key loaded from disk. Mirrors the provider's

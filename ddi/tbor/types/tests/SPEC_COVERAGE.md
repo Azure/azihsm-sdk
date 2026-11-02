@@ -17,7 +17,7 @@ Source of truth for the `TborStatus` enum:
 [`ddi/tbor/types/src/status.rs`](../src/status.rs).
 
 Test counts:
-* emu: 223 tests
+* emu: 273 tests
 * mock: 6 tests
 
 ## Legend
@@ -59,6 +59,10 @@ All test names below are relative to the
 | `suite_id` not in `{0x01}` → `UnsupportedSessionSuite` | ✅ 🔁 | `open_session::open_session_unsupported_suite_id_emu` | Loop over `[0x00, 0x02, 0xff]` |
 | Default-PSK gate bypass (E3, both roles) | ✅ | `default_psk_gate::default_psk_gate_session_open_init_bypass_emu` |  |
 | Multiple concurrent sessions return distinct session ids | ✅ | `open_session::open_session_multiple_concurrent_emu` |  |
+| Rejected role/type request does not poison the fd | ✅ | `open_session::rejected_role_type_does_not_poison_fd` | Valid session succeeds after rejected CU + Authenticated Phase-1 |
+| Rejected session suite does not consume session state | ✅ | `open_session::rejected_suite_does_not_consume_session_slot` | Valid session succeeds after unsupported suite rejection |
+| Rejected public key does not consume session state | ✅ | `open_session::rejected_pk_init_does_not_consume_session_slot` | Valid session succeeds after invalid `pk_init` rejection |
+| Pending Phase-1 session blocks a second open on the same fd | ✅ | `open_session::pending_session_blocks_second_open_on_same_fd` | Pending session counts toward the per-fd session limit |
 | Malformed `pk_init` (length / curve) | ⚠️ | — | Spec arm exists in handler; no negative test |
 
 ## `SessionOpenFinish` (opcode out-of-session, phase 2 of handshake)
@@ -69,6 +73,11 @@ All test names below are relative to the
 | Phase-2 `seed_envelope` tamper → `SessionAuthFailure` | ✅ | `open_session::session_open_finish_seed_envelope_tampered_emu` | Syntactically valid header, bogus IV/CT/tag |
 | Unknown `session_id` → FW rejection | 🟡 | `open_session::session_open_finish_unknown_session_id_emu` | Asserts `DdiError::DdiError(_)`; specific status not pinned |
 | Second `Finish` against an already-completed slot → FW rejection | 🟡 | `open_session::open_session_double_finish_emu` | Asserts `DdiError::DdiError(_)` |
+| Failed Phase-2 MAC authentication reclaims the pending CU slot | ✅ | `open_session::failed_finish_mac_reclaims_session_state` | Exhausts all CU slots on fresh fds to prove the failed pending slot did not leak |
+| MAC from one pending session cannot authenticate another | ✅ | `open_session::session_open_finish_rejects_mac_from_another_session` | Cross-session MAC substitution is rejected without damaging the source session |
+| Unknown Finish request does not destroy another pending session | ✅ | `open_session::unknown_finish_does_not_destroy_pending_session` | Valid pending session remains finishable after unrelated unknown-session rejection |
+| Authenticated-session MAC key derivation is deterministic | ✅ | `open_session::authenticated_session_mac_key_derivation_is_stable` | Repeated TX/RX derivation from one handshake is stable and direction-specific |
+| Failed Phase-2 leaves the original fd session-bound | ✅ | `open_session::failed_finish_mac_keeps_original_fd_session_bound` | Original fd continues enforcing the per-fd session limit after authentication failure |
 | Finish against a pending slot whose Init was for a different role | ⚠️ | — | Spec arm exists; not exercised |
 
 ## `SessionClose` (opcode in-session, allow-listed)
@@ -210,7 +219,6 @@ responses byte-for-byte against `azihsm_crypto`. Supported discriminants are
 | Maximum 2048-byte Hash message succeeds | ✅ 🔁 | `hash::hash_max_message_length_matches_host` | Exercises the protocol maximum for all four supported algorithms |
 | 2049-byte Hash message is rejected | ✅ 🔁 | `hash::hash_over_max_message_length_rejected` | Exercises all four algorithms; accepts rejection at the TBOR/firmware boundary without pinning where length validation occurs |
 
-
 ## `GetCertChainInfo` (opcode out-of-session)
 
 Integration and host-side response-codec coverage for the TBOR
@@ -345,6 +353,50 @@ masked-key integrity, and unsupported SHA-1 generation.
 | Mismatched session ID while a valid CO session is active → `FileHandleSessionIdDoesNotMatch` | ✅ | `hmac_generate_key::hmac_generate_key_active_session_id_mismatch_rejected` | Sends `u16::MAX` while a rotated CO session remains active; verifies the valid session remains usable afterward |
 
 
+## `Hmac` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `Hmac` command.
+Tests compute HMAC tags using SHA-256, SHA-384, and SHA-512
+with generated and imported masked keys under Crypto-Officer (CO)
+and Crypto-User (CU) sessions.
+
+Coverage includes hash correctness, key scopes, session lifecycle,
+key labels, message-length boundaries, masked-key integrity,
+invalid requests, and CU authorization. SHA-1 HMAC is unsupported.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| SHA-256/384/512 generate valid deterministic HMAC tags | ✅ 🔁 | `hmac::hmac_roundtrip_all_hashes` | Verifies tag lengths, nonzero tags, determinism, and different-message separation |
+| Session-scoped HMAC key computes a valid tag | ✅ | `hmac::hmac_session_scope_roundtrip` | SHA-256 using Session scope |
+| Imported HMAC key produces consistent tags after repeated unwrap | ✅ | `hmac::hmac_unwrapped_key_roundtrip` | Verifies UnwrapKey-to-Hmac integration |
+| Empty message is accepted | ✅ | `hmac::hmac_empty_message` | SHA-256 returns a 32-byte tag |
+| Tampered masked-key authentication tag is rejected | ✅ | `hmac::hmac_rejects_tampered_key` | Expects `AesGcmDecryptTagDoesNotMatch` |
+| HMAC tags match host computation at message boundaries | ✅ 🔁 | `hmac::hmac_matches_host_at_message_boundaries` | SHA-256/384/512; includes padding boundaries and maximum message length |
+| Session-scoped HMAC works before partition finalization | ✅ 🔁 | `hmac::hmac_session_scope_before_finalize` | Exercises all three SHA-2 algorithms |
+| Non-HMAC masked key is rejected | ✅ | `hmac::hmac_rejects_non_hmac_key` | AES key produces `InvalidKeyType` |
+| Variable key lengths work across supported scopes | ✅ 🔁 | `hmac::hmac_variable_key_lengths_all_scopes` | SHA-256/384/512 across Session, Ephemeral, and Local scopes |
+| Invalid session ID is rejected | ✅ | `hmac::hmac_rejects_invalid_session` | Expects `FileHandleSessionIdDoesNotMatch` |
+| Session keys expire while Ephemeral/Local keys survive reopening | ✅ 🔁 | `hmac::hmac_scope_behavior_after_session_reopen` | Verifies key lifetime across CO sessions |
+| Message exceeding maximum supported length is rejected | ✅ | `hmac::hmac_rejects_oversized_message` | Expects `TborInvalidFixedLength` |
+| Out-of-range masked-key lengths are rejected | ✅ 🔁 | `hmac::hmac_rejects_out_of_range_masked_key_lengths` | Covers zero, below-minimum, and above-maximum lengths |
+| Tampered masked-key IV is rejected | ✅ | `hmac::hmac_rejects_tampered_iv` | Expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Tampered masked-key ciphertext is rejected | ✅ | `hmac::hmac_rejects_tampered_ciphertext` | Expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Rotated CU session supports all hashes and provisioned scopes | ✅ 🔁 | `hmac::hmac_crypto_user_all_hashes_and_scopes` | SHA-256/384/512 across Session, Ephemeral, and Local; distinct keys produce distinct tags |
+| Closed session rejects subsequent HMAC operations | ✅ | `hmac::hmac_rejects_closed_session` | Expects `SessionNotFound` |
+| Masked HMAC key remains reusable across repeated operations | ✅ 🔁 | `hmac::hmac_masked_key_reusable_after_multiple_calls` | Verifies determinism and unchanged host-side key bytes |
+| Arbitrary binary message matches host HMAC | ✅ | `hmac::hmac_all_byte_values_matches_host` | Tests every byte value from `0x00` through `0xff` |
+| Corrupted masked-key header is rejected | ✅ | `hmac::hmac_rejects_corrupted_masked_key_header` | Corrupts the first header byte and expects `InvalidArg`; original key remains usable |
+| Switching HMAC algorithms does not retain stale state | ✅ 🔁 | `hmac::hmac_alternating_hashes_do_not_leak_state` | Alternates SHA-256/384/512 and verifies earlier tags remain stable |
+| Non-empty HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_non_empty_key_label` | Generated labeled SHA-256 key successfully computes HMAC |
+| Labeled HMAC keys work with every supported hash | ✅ 🔁 | `hmac::hmac_generate_key_with_label_all_hashes` | SHA-256/384/512; verifies tag lengths and key reuse |
+| Binary HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_binary_key_label` | Includes null and non-ASCII label bytes |
+| Maximum-length HMAC key label is accepted | ✅ | `hmac::hmac_generate_key_accepts_max_length_key_label` | Uses `TBOR_KEY_LABEL_MAX_LEN` |
+| Labeled Session-scoped key expires after session reopening | ✅ | `hmac::hmac_labeled_session_key_rejected_after_session_reopen` | Expects `AesGcmDecryptTagDoesNotMatch` |
+| CU accepts labeled HMAC keys across all hashes and scopes | ✅ 🔁 | `hmac::hmac_cu_labeled_keys_all_hashes_and_scopes` | Rotated CU; SHA-256/384/512 across Session, Ephemeral, and Local; verifies deterministic reuse |
+| CU handles empty, boundary-length, and maximum-length messages | ✅ 🔁 | `hmac::hmac_cu_message_boundaries_all_hashes` | Rotated CU; SHA-256/384/512 at padding/block boundaries and `HMAC_MSG_MAX_LEN` |
+| Imported HMAC keys with SIGN and VERIFY permissions compute valid MACs | ✅ 🔁 | `hmac::hmac_accepts_key_with_sign_permission` | Tests SHA-256, SHA-384, and SHA-512 using `UnwrapKey` with `KEY_USAGE_SIGN \| KEY_USAGE_VERIFY`; verifies correct MAC tag lengths |
+
+
 ## `EccGenerateKey` (opcode in-session, gated)
 
 Firmware integration coverage for the TBOR `EccGenerateKey` command. These tests exercise
@@ -377,6 +429,49 @@ the dispatcher and firmware through `TestCtx::tbor` / `expect_fw_reject`.
 | Defined but invalid ECC key usages are rejected | ✅ | `ecc_generate_key::ecc_generate_key_known_invalid_usages_rejected` | Covers ENCRYPT, DECRYPT, VERIFY, WRAP, UNWRAP, and invalid usage combinations. |
 | Closed session is rejected | ✅ | `ecc_generate_key::ecc_generate_key_closed_session_rejected` | Attempts generation after session close on P-256, P-384, and P-521 and expects `SessionNotFound`. |
 | Session-scoped generation succeeds after closing and reopening the CO session | ✅ | `ecc_generate_key::ecc_generate_key_session_scope_after_reopen` | Confirms a newly opened authenticated CO session can generate a Session-scoped key. |
+
+
+
+## `KeyReport` (opcode in-session, gated)
+
+Firmware integration coverage for the TBOR `KeyReport` command. Tests validate PID-signed COSE_Sign1 attestation reports, public-key binding, report-data integrity, ECC key types and scopes, key labels, usage flags, session authorization, and masked-key tampering.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Ephemeral-scoped sealing key produces a valid signed attestation report | ✅ | `key_report::key_report_ephemeral_roundtrip` | Verifies COSE_Sign1 signature, public-key binding, and report-data roundtrip |
+| Local-scoped sealing key produces a valid signed attestation report | ✅ | `key_report::key_report_local_roundtrip` | Verifies COSE_Sign1 signature and embedded COSE_Key coordinates |
+| Tampered masked-key authentication tag is rejected | ✅ | `key_report::key_report_rejects_tampered_masked_key` | Expects `AesGcmDecryptTagDoesNotMatch` |
+| KeyReport before partition finalization is rejected | ✅ | `key_report::key_report_rejects_before_finalize` | Expects `InvalidArg` |
+| Crypto-User session is rejected | ✅ | `key_report::key_report_rejected_on_cu_session` | Expects `InvalidPermissions` |
+| Default CO PSK is rejected | ✅ | `key_report::key_report_rejected_on_default_psk` | Expects `DefaultPskMustRotate` |
+| Different report-data patterns are preserved in signed reports | ✅ 🔁 | `key_report::key_report_report_data_patterns` | Covers zero-filled, 0xFF-filled, and patterned report data under Ephemeral and Local scopes |
+| Generated ECC keys on all supported curves can be attested | ✅ 🔁 | `key_report::key_report_generated_ecc_all_curves` | Tests P-256, P-384, and P-521 under Ephemeral and Local scopes; verifies Generated and Sign flags |
+| Symmetric key classes are rejected | ✅ 🔁 | `key_report::key_report_rejects_all_symmetric_key_classes` | AES and HMAC-SHA256/384/512; expects `UnsupportedKeyType` |
+| Session-scoped ECC key produces a valid signed attestation report | ✅ | `key_report::key_report_session_scope_roundtrip` | Emulator-only; P-384 Session scope, verifies COSE_Sign1 signature, public-key binding, report data, and Generated/Sign flags (0x24) |
+| Oversized masked-key envelope is rejected | ✅ | `key_report::key_report_rejects_oversized_masked_key` | Uses `KEY_REPORT_MASKED_KEY_MAX_LEN + 1`; expects `TborInvalidFixedLength` |
+| Invalid session ID is rejected | ✅ | `key_report::key_report_rejects_invalid_session` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch` |
+| Tampered IV and ciphertext are rejected without affecting the original key | ✅ 🔁 | `key_report::key_report_rejects_tampered_iv_and_ciphertext` | Expects `AesGcmDecryptTagDoesNotMatch`; original masked key remains attestable |
+| Imported ECC keys on all supported curves can be attested | ✅ 🔁 | `key_report::key_report_imported_ecc_all_curves` | P-256, P-384, and P-521; verifies Imported, Sign, and Verify flags |
+| Crypto-User cannot attest a valid Local-scoped key after finalization | ✅ | `key_report::key_report_rejects_cu_with_valid_key_after_finalize` | Expects `InvalidPermissions` |
+| Generated ECC key with a non-empty label can be attested | ✅ | `key_report::key_report_generated_ecc_non_empty_label` | Verifies Generated and Sign flags |
+| Generated ECC key with maximum-length label can be attested | ✅ | `key_report::key_report_generated_ecc_max_label` | Uses `TBOR_KEY_LABEL_MAX_LEN` |
+| Generated DERIVE-only ECC key can be attested | ✅ | `key_report::key_report_generated_ecc_derive_usage` | Verifies Generated and Derive flags |
+| Generated DERIVE-only ECC key with non-empty label can be attested | ✅ | `key_report::key_report_generated_ecc_derive_with_label` | Verifies Generated and Derive flags |
+| Generated ECC key with binary label can be attested | ✅ | `key_report::key_report_generated_ecc_binary_label` | Includes 0x00, 0x80, and 0xFF label bytes |
+| P-521 ECC key with maximum-length label can be attested | ✅ | `key_report::key_report_p521_with_max_label` | Exercises largest supported ECC curve and maximum key-label length |
+| Imported RSA-2048 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_roundtrip` | Verifies RSA COSE_Key modulus/exponent against host-generated key, report data, signature, and Imported/Sign/Verify flags |
+| Imported RSA-3072 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_3072_roundtrip` | Verifies 384-byte modulus, host-key binding, report data, and PID signature |
+| Imported RSA-4096 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_4096_roundtrip` | Exercises maximum supported RSA modulus size (512 bytes) and RSA COSE_Key encoding |
+| Imported RSA-CRT-2048 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_crt_roundtrip` | Verifies imported CRT key, independent host public-key binding, and signature |
+| Imported RSA-CRT-3072 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_crt_3072_roundtrip` | Verifies 384-byte modulus and CRT private-key import path |
+| Imported RSA-CRT-4096 key produces a valid PID-signed report | ✅ (emu) | `key_report::key_report_imported_rsa_crt_4096_roundtrip` | Tests maximum supported RSA-CRT size and 512-byte modulus attestation |
+| Imported RSA masked-key IV, ciphertext, and tag tampering is rejected | ✅ 🔁 (emu) | `key_report::key_report_imported_rsa_tampering_rejected` | Three corruption cases expect `AesGcmDecryptTagDoesNotMatch`; original key remains attestable |
+| Imported RSA-CRT masked-key IV, ciphertext, and tag tampering is rejected | ✅ 🔁 (emu) | `key_report::key_report_imported_rsa_crt_tampering_rejected` | Three corruption cases expect `AesGcmDecryptTagDoesNotMatch`; original key remains attestable |
+| Imported RSA masked-key metadata tampering is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_metadata_tampering_rejected` | Authenticated AAD corruption; expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Imported RSA-CRT masked-key metadata tampering is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_crt_metadata_tampering_rejected` | Authenticated AAD corruption; expects `AesGcmDecryptTagDoesNotMatch`; original key remains usable |
+| Imported RSA invalid session is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_invalid_session_rejected` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch`; valid session remains usable |
+| Imported RSA-CRT invalid session is rejected | ✅ (emu) | `key_report::key_report_imported_rsa_crt_invalid_session_rejected` | Uses `u16::MAX`; expects `FileHandleSessionIdDoesNotMatch`; valid session remains usable |
+  
 
 ## `EcdhDerive` (opcode in-session, gated)
 
@@ -457,6 +552,32 @@ scopes, salt/info handling, deterministic derivation, and invalid requests.
 | Invalid HKDF request does not corrupt the active CU session | ✅ | `hkdf_derive::hkdf_derive_cu_invalid_request_preserves_session` | Invalid hash returns `InvalidArg`; subsequent valid HKDF derivation succeeds |
 
 ---
+
+## FIPS 140-3 key assurance (cross-cutting)
+
+FIPS 140-3 key assurance for keys that `UnwrapKey` imports, plus key-generation
+and unwrapping-key round trips, in the `key_assurance` module. Only hardware
+firmware checks an imported ECC key's structure and runs pairwise consistency
+tests (PCTs), so the tests that need either are ignored under `emu`, `mock`,
+and `sock`.
+
+| Requirement | Status | Test | Notes |
+|---|---|---|---|
+| Imported ECC keys work on every curve, for signing and derivation | ✅ | `key_assurance::import_ecc_p256_sign` through `key_assurance::import_ecc_p521_derive` | Six tests; each signs or derives with the imported key |
+| Imported RSA keys work for every size, layout, and usage | ✅ | `key_assurance::import_rsa_2k_plain_sign` through `key_assurance::import_rsa_4k_crt_decrypt` | Twelve tests: 2048, 3072, and 4096 bits, plain and CRT, sign and decrypt |
+| An ECC key whose embedded public key doesn't match is rejected with `KeyStructuralValidationFailed` | ✅ | `key_assurance::reject_ecc_mismatched_q_p256_sign`, `_p384_derive`, `_p521_sign` | Hardware only (`n/a` on emu, mock, and sock) |
+| An ECC key with no embedded public key is rejected with `KeyDecodeFailed` | ✅ | `key_assurance::reject_ecc_missing_q_p256_derive`, `_p384_sign`, `_p521_derive` | Hardware only |
+| An ECC key with a compressed or hybrid point is rejected with `KeyStructuralValidationFailed` | ✅ | `key_assurance::reject_ecc_compressed_q_02_p256`, `reject_ecc_compressed_q_03_p384`, `reject_ecc_hybrid_q_06_p256`, `reject_ecc_hybrid_q_07_p521` | Hardware only |
+| An ECC key with `[0]` curve parameters is rejected with `KeyDecodeFailed` | ✅ | `key_assurance::reject_ecc_params_p256_sign`, `_p384_derive`, `_p521_sign` | Hardware only |
+| An ECC key whose private value is 0 or the curve order is rejected with `InvalidArg` | ✅ | `key_assurance::reject_ecc_d_zero_p256_sign`, `_p384_derive`, `_p521_sign`, and `key_assurance::reject_ecc_d_order_p256_derive`, `_p384_sign`, `_p521_derive` | All platforms |
+| An RSA key with an inconsistent private component is rejected with `PctValidationRsaUnwrapRsaKeyFailed` | ✅ | `key_assurance::reject_rsa_2k_plain_d_sign` and eight more `reject_rsa_*` tests that change `d`, `dp`, `dq`, `p`, or `q` | Hardware only (`n/a` on emu, mock, and sock) |
+| An RSA key whose operations return their input unchanged (`e = d = 1`) is rejected with `PctValidationRsaUnwrapRsaKeyFailed` | ✅ | `key_assurance::reject_rsa_2k_plain_identity_sign`, `key_assurance::reject_rsa_2k_crt_identity_decrypt` | Hardware only |
+| An RSA decryption key with `e = 0`, whose public operation maps the test value to 1, is rejected with `InvalidArg`, which the PCT's private operation returns | ✅ | `key_assurance::reject_rsa_2k_plain_zero_e_decrypt`, `key_assurance::reject_rsa_2k_crt_zero_e_decrypt` | Hardware only |
+| A wrong CRT coefficient is either rejected by the PCT or harmless | ✅ | `key_assurance::rsa_2k_crt_qinv_corrupted` | All platforms |
+| Rejected imports consume no device resources | ✅ | `key_assurance::reject_repeated_then_valid`, `key_assurance::reject_repeated_then_ecc_valid` | Hardware only; 330 RSA-4096 CRT rejections, more than the vault holds, then valid imports |
+| Every malformed import, back to back in one session | 🔁 | `key_assurance::reject_matrix` | Hardware only; ECC 3 curves × 2 usages × 9 variants, RSA 3 sizes × 2 usages × 6 errors |
+| Generated ECC keys work on every curve, for signing and derivation | ✅ | `key_assurance::generate_ecc_p256_sign` through `key_assurance::generate_ecc_p521_derive` | Six tests |
+| The unwrapping key is available and stable | ✅ | `key_assurance::unwrapping_key_available_and_stable` | Waits up to `UNWRAP_KEY_WAIT_SECS` (default 900) for the SP to publish the key |
 
 ## Known gaps (summary)
 

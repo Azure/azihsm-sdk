@@ -51,7 +51,7 @@ fn pubkey_der(pkey: *const ffi::EVP_PKEY) -> EngineResult<Vec<u8>> {
             return Err(EngineError::Other("i2d_PUBKEY failed".into()));
         }
         let der = std::slice::from_raw_parts(buf, len).to_vec();
-        ffi::CRYPTO_free(buf.cast::<c_void>(), c"".as_ptr(), 0);
+        azihsm_ossl_engine_core::mem::openssl_free(buf.cast::<c_void>());
         Ok(der)
     }
 }

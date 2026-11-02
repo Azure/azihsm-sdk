@@ -162,7 +162,7 @@ impl Engine {
         // records the pointer on the engine.
         ossl_check(
             unsafe { ffi::ENGINE_set_EC(self.ptr, method) },
-            EngineError::Other("ENGINE_set_EC failed".into()),
+            "ENGINE_set_EC failed",
         )
     }
 
@@ -204,7 +204,7 @@ impl Engine {
         // records the pointer on the engine.
         ossl_check(
             unsafe { ffi::ENGINE_set_RSA(self.ptr, method) },
-            EngineError::Other("ENGINE_set_RSA failed".into()),
+            "ENGINE_set_RSA failed",
         )
     }
 

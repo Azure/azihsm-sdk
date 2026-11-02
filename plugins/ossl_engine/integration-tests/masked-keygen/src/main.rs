@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o600)
+        .mode(azihsm_ossl_engine::integration::SECRET_FILE_MODE)
         .open(&out)?;
     f.write_all(&blob)?;
     Ok(())

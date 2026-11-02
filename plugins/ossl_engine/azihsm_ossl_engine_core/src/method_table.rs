@@ -35,13 +35,18 @@ use parking_lot::Mutex;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::RetCode;
 
 /// Buffer size an armed size query reports for a masked-key-blob output (the
 /// blob length is unknown until the operation runs). Shared by every method
 /// whose output is a masked blob — the ECDH derive and HKDF today — mirroring
 /// the 3.x provider's `MASKED_KEY_MAX_BUFFER`. Callers pass at least this many
 /// bytes (e.g. `pkeyutl -kdf … -kdflen`) so the copy always fits.
-pub(crate) const MASKED_KEY_MAX_BUFFER: usize = 8192;
+pub const MASKED_KEY_MAX_BUFFER: usize = 8192;
+
+/// Size an armed size query reports in `output_file` mode, where the blob goes
+/// to a file and nothing is copied out (the provider's convention).
+pub const FILE_OUTPUT_SIZE_HINT: usize = 1;
 
 thread_local! {
     /// The ENGINE that most recently resolved one of our methods on this
@@ -185,15 +190,15 @@ pub(crate) unsafe fn dispatch<M>(
     let (method, rc) = match resolved {
         Some(Lookup::Stored(m)) => {
             on_stored(e);
-            (m, 1)
+            (m, RetCode::Success)
         }
-        Some(Lookup::Throwaway(m)) => (m, 1),
-        None => (std::ptr::null_mut(), 0),
+        Some(Lookup::Throwaway(m)) => (m, RetCode::Success),
+        None => (std::ptr::null_mut(), RetCode::Fail),
     };
     // SAFETY: meth is the method out-param; a non-NULL method lives until the
     // framework frees it at this ENGINE's destruction.
     unsafe { *meth = method };
-    rc
+    rc.into()
 }
 
 #[cfg(test)]

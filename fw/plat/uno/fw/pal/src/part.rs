@@ -34,6 +34,7 @@ use azihsm_fw_hsm_pal_traits::PartPropId;
 use azihsm_fw_hsm_pal_traits::PartState;
 use azihsm_fw_uno_drivers_part_store::PartResetKind;
 use azihsm_fw_uno_drivers_part_store::PartStore;
+use azihsm_fw_uno_drivers_part_store::UnwrappingKeySlot;
 use azihsm_fw_uno_drivers_session_store::SessionStore;
 
 use crate::UnoHsmPal;
@@ -285,6 +286,11 @@ impl UnoHsmPal {
         // The masked boot key persists across enable/disable; it is wiped
         // only here, on free.
         part.clear_masked_bk_boot();
+        // Disarm Gate 1 and wipe the SP-published unwrapping key. Like the
+        // masked boot key, it persists across enable/disable and belongs to
+        // the allocation; a later `SetResource` re-arms Gate 1 so the SP
+        // stages a fresh key for the next tenant.
+        part.clear_unwrapping_key();
 
         // Release resources and reset lifecycle state.
         part.set_res_mask(0);
@@ -727,9 +733,10 @@ impl UnoHsmPal {
     }
 
     /// Materialise the partition's RSA-2048 unwrapping key into the vault on
-    /// first use, if the HSP has published it into the GSRAM backup slot but it
-    /// is not yet imported. No-op if it is already imported or not yet
-    /// published.
+    /// first use, if the HSP has published it into the GSRAM backup slot and
+    /// it passed its pairwise consistency test, but it is not yet imported.
+    /// No-op if it is already imported, not yet published, or not yet tested
+    /// (see [`certify_pending_unwrapping_key`](Self::certify_pending_unwrapping_key)).
     ///
     /// Runs synchronously — a CPU-copy vault insert via
     /// [`create_sync`](azihsm_fw_uno_key_vault::KeyVault::create_sync), with no
@@ -744,13 +751,14 @@ impl UnoHsmPal {
             if part.unwrapping_key_id().is_some() {
                 return Ok(());
             }
-            if !part.unwrapping_key_bk_valid() {
+            if part.unwrapping_key_slot() != Some(UnwrappingKeySlot::PctPassed) {
                 // The HSP has not published a key into this partition's GSRAM
-                // slot yet. Leave the id absent so the read surfaces
+                // slot yet, or the key hasn't passed its pairwise consistency
+                // test yet. Leave the id absent so the read surfaces
                 // `PartPropNotFound` → `PendingKeyGeneration` and the host
                 // retries once the key is available. `unwrapping_key_bk` returns
                 // `&'static` GSRAM memory that stays valid while the slot is
-                // marked valid.
+                // occupied.
                 return Ok(());
             }
             part.unwrapping_key_bk()

@@ -146,11 +146,12 @@ impl HsmRsaKey {
     }
 }
 
-/// Pairwise Consistency Test (PCT) mode for RSA key generation.
+/// Pairwise Consistency Test (PCT) mode for RSA key generation and key
+/// import.
 ///
-/// FIPS 140-3 requires a PCT after key generation to verify the key
-/// pair is functional. The test mode determines which operation is
-/// used for verification.
+/// FIPS 140-3 requires a PCT after key generation and key import to
+/// verify the key pair is functional. The test mode determines which
+/// operation is used for verification.
 pub enum HsmRsaPct {
     /// No PCT — skip the consistency test.
     None,
@@ -327,14 +328,20 @@ pub trait HsmRsa {
     /// material it leaves behind (e.g. the recovered DER when it is not reused
     /// as the vault buffer).
     ///
+    /// A PAL that checks imported keys runs the pairwise consistency test
+    /// that `pct` selects on the converted key pair before it returns.
+    ///
     /// # Returns
     /// - `Ok((vault, modulus_len))` — `vault` holds the vault-format private key.
     /// - `Err(HsmError::InvalidArg)` — `der` is not a valid RSA private key.
+    /// - `Err(HsmError::PctValidationRsaUnwrapRsaKeyFailed)` — the key pair
+    ///   failed its PCT.
     async fn rsa_priv_der_to_vault<'a>(
         &'a self,
         io: &impl HsmIo,
         der: &'a mut DmaBuf,
         crt: bool,
+        pct: HsmRsaPct,
     ) -> HsmResult<(&'a DmaBuf, usize)>;
 
     /// PKCS#1 v1.5 encrypt (EME-PKCS1-v1_5).

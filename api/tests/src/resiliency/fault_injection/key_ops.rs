@@ -565,6 +565,36 @@ fn test_aes_cbc_encrypt_recovers_from_compound_fault() {
     );
 }
 
+/// A retried AES-CBC `encrypt` that spans several device requests restarts
+/// from the caller's IV: a retryable fault on its last request, after the
+/// earlier requests succeeded, must not change the ciphertext.
+#[api_test]
+fn test_aes_cbc_encrypt_retry_after_partial_success_restarts_from_iv() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let key = generate_aes_key(&session);
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
+        // Longer than one 1024-byte device request.
+        let plaintext = crypto::Rng::rand_vec(3 * 1024 + 100).expect("plaintext");
+
+        let before = op_call_count(DdiOp::AesEncryptDecrypt);
+        let expected = cbc_encrypt(&key, &iv, &plaintext).expect("fault-free encrypt");
+        let calls = op_call_count(DdiOp::AesEncryptDecrypt) - before;
+        assert!(calls > 1, "the input must span several device requests");
+
+        let last = op_call_count(DdiOp::AesEncryptDecrypt) + calls;
+        inject_fault(FaultRule::fail_nth(DdiOp::AesEncryptDecrypt, last, *error));
+        let result = cbc_encrypt(&key, &iv, &plaintext);
+        clear_faults();
+
+        let ciphertext = result.unwrap_or_else(|e| panic!("encrypt after {error:?}: {e:?}"));
+        assert_eq!(
+            ciphertext, expected,
+            "a retried {error:?} on the last request must not change the ciphertext"
+        );
+    }
+}
+
 // =========================================================================
 // AES-CBC encrypt — reset-triggered tests
 // =========================================================================
@@ -3650,6 +3680,38 @@ fn test_aes_cbc_decrypt_recovers_from_compound_fault() {
         "AES-CBC decrypt should recover from compound faults on \
          AesEncryptDecrypt + InitBk3, got: {result:?}"
     );
+}
+
+/// A retried AES-CBC `decrypt` that spans several device requests restarts
+/// from the caller's IV: a retryable fault on its last request, after the
+/// earlier requests succeeded, must not change the plaintext.
+#[api_test]
+fn test_aes_cbc_decrypt_retry_after_partial_success_restarts_from_iv() {
+    for error in super::KEY_OP_RETRYABLE_ERRORS {
+        let (_part, session, _ctx) = init_with_resiliency_and_session();
+        let key = generate_aes_key(&session);
+        let iv = crypto::Rng::rand_vec(16).expect("IV");
+        // Longer than one 1024-byte device request.
+        let plaintext = crypto::Rng::rand_vec(3 * 1024 + 100).expect("plaintext");
+        let ciphertext = cbc_encrypt(&key, &iv, &plaintext).expect("encrypt failed");
+
+        let before = op_call_count(DdiOp::AesEncryptDecrypt);
+        let expected = cbc_decrypt(&key, &iv, &ciphertext).expect("fault-free decrypt");
+        assert_eq!(expected, plaintext);
+        let calls = op_call_count(DdiOp::AesEncryptDecrypt) - before;
+        assert!(calls > 1, "the input must span several device requests");
+
+        let last = op_call_count(DdiOp::AesEncryptDecrypt) + calls;
+        inject_fault(FaultRule::fail_nth(DdiOp::AesEncryptDecrypt, last, *error));
+        let result = cbc_decrypt(&key, &iv, &ciphertext);
+        clear_faults();
+
+        let decrypted = result.unwrap_or_else(|e| panic!("decrypt after {error:?}: {e:?}"));
+        assert_eq!(
+            decrypted, plaintext,
+            "a retried {error:?} on the last request must not change the plaintext"
+        );
+    }
 }
 
 // =========================================================================

@@ -1,17 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Parser for `azihsm://` key URIs used by `ENGINE_load_private_key`.
+//! Parser for `azihsm://` key URIs, used by `ENGINE_load_private_key` and the
+//! AES ciphers' key control.
 //!
 //! Grammar (mirrors the OpenSSL 3.x provider's STORE):
 //!
 //! ```text
-//! azihsm://<masked-key-file-path>;type=<ec|rsa|rsa-pss>
+//! azihsm://<masked-key-file-path>;type=<ec|rsa|rsa-pss|aes>
 //! ```
 //!
 //! The identifier is a filesystem path to a masked-key blob; `type=` is
-//! mandatory. `aes` is a valid provider key type but is not loadable as a
-//! private key here, so it is rejected.
+//! mandatory. `aes` keys are not private keys: they are attached to a cipher
+//! context (see [`crate::aes`]), and `ENGINE_load_private_key` rejects them.
 //!
 //! Note: unlike the provider's STORE — which ignores unrecognized attributes —
 //! this parser is stricter and rejects unknown or malformed attributes, so a
@@ -31,23 +32,20 @@ pub enum KeyType {
     Ec,
     Rsa,
     RsaPss,
+    Aes,
 }
 
 impl FromStr for KeyType {
     type Err = EngineError;
 
     /// Parse a URI `type=` value into a [`KeyType`]. Case-insensitive, mirroring
-    /// the provider's STORE (which compares with `strcasecmp`). `aes` is a valid
-    /// provider key type but cannot be loaded as a private key here, so it is
-    /// rejected with a distinct error rather than an "unknown type".
+    /// the provider's STORE (which compares with `strcasecmp`).
     fn from_str(value: &str) -> EngineResult<Self> {
         match value.to_ascii_lowercase().as_str() {
             "ec" => Ok(KeyType::Ec),
             "rsa" => Ok(KeyType::Rsa),
             "rsa-pss" => Ok(KeyType::RsaPss),
-            "aes" => Err(EngineError::Other(
-                "aes keys cannot be loaded via load_private_key".into(),
-            )),
+            "aes" => Ok(KeyType::Aes),
             _ => Err(EngineError::Other(format!(
                 "unknown azihsm key type: {value}"
             ))),
@@ -166,8 +164,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_aes() {
-        assert!(parse("azihsm://k;type=aes").is_err());
+    fn parses_aes() {
+        assert_eq!(parse("azihsm://k;type=AES").unwrap().key_type, KeyType::Aes);
     }
 
     #[test]

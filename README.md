@@ -64,6 +64,29 @@ Use cargo-nextest (recommended):
 cargo xtask nextest --features mock --package <package-name>
 ```
 
+### C++ Session Modes
+
+The C++ algorithm fixtures select the session API at compile time. Use
+`session-ex-tests` for EX/TBOR sessions on the emulator:
+
+```bash
+cargo nextest run --package azihsm_api_tests --features emu,session-ex-tests --test cpp
+```
+
+Omit `session-ex-tests` for legacy/MBOR sessions, or use `--features mock` for the
+legacy mock backend. Mock and `session-ex-tests` cannot be combined. Run builds
+for different backends or session modes sequentially because they share native
+build outputs.
+
+EX coverage includes SHA, ECC, RSA, HMAC, HKDF, AES-CBC, and plain-AES key management.
+Standalone unmask cases assert that EX returns an unsupported-operation error;
+their successful unmask workflows remain legacy-only. AES-GCM/XTS, KBKDF,
+generic-secret unmask, and legacy partition/session, cross-partition wrapping-key,
+persistence, and resiliency workflows remain in the legacy build.
+
+**EX algorithm fixtures reset and finalize every discovered partition, including
+hardware partitions. Use only dedicated test partitions.**
+
 ## Linting and Formatting
 
 Before running any commands below, ensure you have finished the initial setup steps.

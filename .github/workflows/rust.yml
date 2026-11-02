@@ -85,11 +85,15 @@ jobs:
       id: test-api
       run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
       continue-on-error: true
+    - name: Run azihsm_api_tests with EX sessions against emu
+      id: test-api-ex
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F emu,session-ex-tests --profile ci-api-ex
+      continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-api.outcome == 'failure' }}
+      if: ${{ steps.test-api.outcome == 'failure' || steps.test-api-ex.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1
@@ -268,11 +272,15 @@ jobs:
       id: test-api
       run: cargo xtask precheck --nextest -p azihsm_api_tests -F mock --profile ci-api
       continue-on-error: true
+    - name: Run azihsm_api_tests with EX sessions against emu
+      id: test-api-ex
+      run: cargo xtask precheck --nextest -p azihsm_api_tests -F emu,session-ex-tests --profile ci-api-ex
+      continue-on-error: true
     - name: Generate nextest report
       id: nextest-report
       run: cargo xtask precheck --nextest-report
     - name: Fail if any tests failed
-      if: ${{ steps.test-api.outcome == 'failure' }}
+      if: ${{ steps.test-api.outcome == 'failure' || steps.test-api-ex.outcome == 'failure' }}
       run: |
         echo "One or more tests failed."
         exit 1

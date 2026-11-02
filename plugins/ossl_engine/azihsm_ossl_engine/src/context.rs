@@ -48,9 +48,13 @@ use crate::SECRET_FILE_MODE;
 /// production build has no default, so an unset `AZIHSM_CREDENTIALS_*` is a
 /// hard error rather than a silent authentication with a well-known PIN.
 #[cfg(feature = "mock")]
-const DEFAULT_CRED_ID: [u8; 16] = [1u8; 16];
+const DEFAULT_CRED_ID: [u8; CREDENTIALS_SIZE] = [1u8; CREDENTIALS_SIZE];
 #[cfg(feature = "mock")]
-const DEFAULT_CRED_PIN: [u8; 16] = [2u8; 16];
+const DEFAULT_CRED_PIN: [u8; CREDENTIALS_SIZE] = [2u8; CREDENTIALS_SIZE];
+
+/// Length of a credential id or PIN (`HsmCredentials`), and of its hex form.
+const CREDENTIALS_SIZE: usize = 16;
+const CREDENTIALS_HEX_SIZE: usize = CREDENTIALS_SIZE * 2;
 
 const ENV_CREDENTIALS_ID: &str = "AZIHSM_CREDENTIALS_ID";
 const ENV_CREDENTIALS_PIN: &str = "AZIHSM_CREDENTIALS_PIN";
@@ -260,20 +264,23 @@ impl Drop for EngineData {
     }
 }
 
-/// Fetch the HSM's RSA unwrapping key pair (2048-bit, unwrap/wrap usage), the
-/// props matching the api's `HsmRsaKeyUnwrappingKeyGenAlgo` requirements.
+/// Size of the HSM's RSA unwrapping key pair, which the HSM fixes.
+pub(crate) const RSA_UNWRAPPING_KEY_BITS: u32 = 2048;
+
+/// Fetch the HSM's RSA unwrapping key pair (unwrap/wrap usage), the props
+/// matching the api's `HsmRsaKeyUnwrappingKeyGenAlgo` requirements.
 fn fetch_unwrapping_key(session: &HsmSession) -> EngineResult<UnwrappingKey> {
     let priv_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Private)
         .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
+        .bits(RSA_UNWRAPPING_KEY_BITS)
         .can_unwrap(true)
         .build()
         .map_err(|e| EngineError::wrap("build unwrapping private props", e))?;
     let pub_props = HsmKeyPropsBuilder::default()
         .class(HsmKeyClass::Public)
         .key_kind(HsmKeyKind::Rsa)
-        .bits(2048)
+        .bits(RSA_UNWRAPPING_KEY_BITS)
         .can_wrap(true)
         .build()
         .map_err(|e| EngineError::wrap("build unwrapping public props", e))?;
@@ -548,7 +555,10 @@ fn credentials_from_env() -> EngineResult<HsmCredentials> {
     #[cfg(feature = "mock")]
     let (def_id, def_pin) = (Some(DEFAULT_CRED_ID), Some(DEFAULT_CRED_PIN));
     #[cfg(not(feature = "mock"))]
-    let (def_id, def_pin): (Option<[u8; 16]>, Option<[u8; 16]>) = (None, None);
+    let (def_id, def_pin): (
+        Option<[u8; CREDENTIALS_SIZE]>,
+        Option<[u8; CREDENTIALS_SIZE]>,
+    ) = (None, None);
 
     let mut id = cred_field(ENV_CREDENTIALS_ID, def_id)?;
     let mut pin = cred_field(ENV_CREDENTIALS_PIN, def_pin)?;
@@ -559,35 +569,40 @@ fn credentials_from_env() -> EngineResult<HsmCredentials> {
     Ok(creds)
 }
 
-/// Read a 16-byte credential from `var` (32 hex chars). Falls back to
-/// `default` when the var is unset; in non-mock builds `default` is `None`,
-/// so a missing credential is a hard error rather than a silent well-known PIN.
-fn cred_field(var: &'static str, default: Option<[u8; 16]>) -> EngineResult<[u8; 16]> {
+/// Read a credential from `var` (hex). Falls back to `default` when the var is
+/// unset; in non-mock builds `default` is `None`, so a missing credential is a
+/// hard error rather than a silent well-known PIN.
+fn cred_field(
+    var: &'static str,
+    default: Option<[u8; CREDENTIALS_SIZE]>,
+) -> EngineResult<[u8; CREDENTIALS_SIZE]> {
     match std::env::var(var) {
         Ok(s) => {
             // The source hex string holds the secret; scrub it on drop.
             let s = Zeroizing::new(s);
-            hex_decode_16(&s, var)
+            decode_credential_hex(&s, var)
         }
         // Only a truly-unset var falls back to the default; a present but
         // non-UTF-8 value is an error, not "unset".
-        Err(std::env::VarError::NotPresent) => {
-            default.ok_or_else(|| EngineError::Other(format!("{var} must be set (32 hex chars)")))
-        }
+        Err(std::env::VarError::NotPresent) => default.ok_or_else(|| {
+            EngineError::Other(format!(
+                "{var} must be set ({CREDENTIALS_HEX_SIZE} hex chars)"
+            ))
+        }),
         Err(std::env::VarError::NotUnicode(_)) => {
             Err(EngineError::Other(format!("{var} is not valid UTF-8")))
         }
     }
 }
 
-fn hex_decode_16(s: &str, var: &'static str) -> EngineResult<[u8; 16]> {
-    if s.len() != 32 {
+fn decode_credential_hex(s: &str, var: &'static str) -> EngineResult<[u8; CREDENTIALS_SIZE]> {
+    if s.len() != CREDENTIALS_HEX_SIZE {
         return Err(EngineError::Other(format!(
-            "{var} must be 32 hex chars (16 bytes), got {}",
+            "{var} must be {CREDENTIALS_HEX_SIZE} hex chars ({CREDENTIALS_SIZE} bytes), got {}",
             s.len()
         )));
     }
-    let mut out = [0u8; 16];
+    let mut out = [0u8; CREDENTIALS_SIZE];
     for (dst, pair) in out.iter_mut().zip(s.as_bytes().chunks_exact(2)) {
         let pair_str = std::str::from_utf8(pair)
             .map_err(|_| EngineError::Other(format!("{var} has non-ASCII byte")))?;

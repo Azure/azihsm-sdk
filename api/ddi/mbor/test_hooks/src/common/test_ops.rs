@@ -3,7 +3,7 @@
 
 //! DDI request, response, and command-envelope wire types for test hooks.
 //!
-//! `GetPrivKey` and `RawKeyImport` have distinct typed responses, but both use
+//! `GetPrivKey`, `RawKeyImport`, and `GetRng` have distinct typed responses, but use
 //! the common TestAction opcode and request envelope. The request type selects
 //! the response decoder through [`DdiOpReq::OpResp`].
 
@@ -197,6 +197,64 @@ pub struct DdiRawKeyImportCmdResp {
 
 impl DdiOpReq for DdiRawKeyImportCmdReq {
     type OpResp = DdiRawKeyImportCmdResp;
+
+    fn get_opcode(&self) -> DdiOp {
+        self.hdr.op
+    }
+
+    fn get_session_id(&self) -> Option<u16> {
+        self.hdr.sess_id
+    }
+}
+
+/// Action-specific request for `GetRng`.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiGetRngReq {
+    /// Requested output length in bytes; firmware accepts 0 through 64.
+    #[ddi(id = 1)]
+    pub rng_len: u8,
+}
+
+/// Typed response data returned by `GetRng`.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiGetRngResp {
+    /// Random output from the device RNG.
+    #[ddi(id = 1)]
+    pub rng_number: MborByteArray<64>,
+}
+
+/// Command envelope for the `GetRng` TestAction.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiGetRngCmdReq {
+    #[ddi(id = 0)]
+    pub hdr: DdiReqHdr,
+    #[ddi(id = 1)]
+    pub data: DdiTestActionReq,
+    #[ddi(id = 2)]
+    pub ext: Option<DdiReqExt>,
+}
+
+/// Command response envelope for the `GetRng` TestAction.
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+#[derive(Debug, Ddi)]
+#[ddi(map)]
+pub struct DdiGetRngCmdResp {
+    #[ddi(id = 0)]
+    pub hdr: DdiRespHdr,
+    #[ddi(id = 1)]
+    pub data: DdiGetRngResp,
+    #[ddi(id = 2)]
+    pub ext: Option<DdiRespExt>,
+}
+
+impl DdiOpReq for DdiGetRngCmdReq {
+    type OpResp = DdiGetRngCmdResp;
 
     fn get_opcode(&self) -> DdiOp {
         self.hdr.op

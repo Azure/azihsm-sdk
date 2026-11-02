@@ -456,6 +456,19 @@ fn default_tests(exclude: &[String], profile: Option<String>) -> Vec<Nextest> {
         });
     }
 
+    if !exclude.iter().any(|e| e == "azihsm_api_tests") {
+        tests.push(Nextest {
+            features: Some("emu,session-ex-tests".to_string()),
+            package: Some("azihsm_api_tests".to_string()),
+            no_default_features: false,
+            filterset: None,
+            profile: profile.clone().or(Some("ci-api-ex".to_string())),
+            exclude: exclude.to_owned(),
+            test: None,
+            filter: vec![],
+        });
+    }
+
     // Run emu smoke tests
     if !exclude.iter().any(|e| e == "azihsm_ddi_mbor_types") {
         tests.push(Nextest {

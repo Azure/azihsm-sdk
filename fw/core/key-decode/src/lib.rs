@@ -12,6 +12,10 @@
 //! public key for the asymmetric classes.  *Persisting* the key (the
 //! `vault_key_create`) is left to the caller.
 //!
+//! For RSA / ECC, the crate also picks, from the key's usage, the pairwise
+//! consistency test (PCT) that it passes to the PAL's conversion
+//! ([`rsa_pct_for`], [`ecc_pct_for`]).
+//!
 //! The material can come from any source: today the MBOR `RsaUnwrap`
 //! handler (after OAEP + AES-KWP unwrap, via `azihsm_fw_hsm_key_unwrap`)
 //! and, in future, a `DerKeyImport` handler that receives the DER directly.
@@ -19,9 +23,12 @@
 //! across wire protocols and import paths.
 
 use azihsm_fw_hsm_pal_traits::DmaBuf;
+use azihsm_fw_hsm_pal_traits::HsmEccPct;
 use azihsm_fw_hsm_pal_traits::HsmIo;
 use azihsm_fw_hsm_pal_traits::HsmPal;
 use azihsm_fw_hsm_pal_traits::HsmResult;
+use azihsm_fw_hsm_pal_traits::HsmRsaPct;
+use azihsm_fw_hsm_pal_traits::HsmVaultKeyAttrs;
 use azihsm_fw_hsm_pal_traits::HsmVaultKeyKind;
 
 mod aes;
@@ -79,24 +86,54 @@ pub struct DecodedKey<'p> {
 /// AES (the material itself) and RSA (the in-place converted prefix); the
 /// ECC path allocates a fresh converted buffer.
 ///
+/// `attrs` are the attributes the caller stores the key with.  For RSA /
+/// ECC, their usage selects the PCT that `decode` passes to the PAL's
+/// conversion.
+///
 /// # Errors
 /// - [`HsmError::InvalidArg`](azihsm_fw_hsm_pal_traits::HsmError::InvalidArg)
 ///   — the AES key is not 16 / 24 / 32 B, or the RSA / ECC DER fails to
 ///   parse.
-/// - Propagated PAL conversion / public-key derivation failures.
+/// - Propagated PAL conversion / public-key derivation failures, including
+///   a key that the PAL's key assurance rejects.
 pub async fn decode<'p, P: HsmPal>(
     pal: &'p P,
     io: &impl HsmIo,
     material: &'p mut DmaBuf,
     class: KeyClass,
+    attrs: HsmVaultKeyAttrs,
 ) -> HsmResult<DecodedKey<'p>> {
     match class {
         KeyClass::Aes => aes::decode(material),
-        KeyClass::Rsa => rsa::decode(pal, io, material, false).await,
-        KeyClass::RsaCrt => rsa::decode(pal, io, material, true).await,
-        KeyClass::Ecc => ecc::decode(pal, io, material).await,
+        KeyClass::Rsa => rsa::decode(pal, io, material, false, rsa_pct_for(attrs)).await,
+        KeyClass::RsaCrt => rsa::decode(pal, io, material, true, rsa_pct_for(attrs)).await,
+        KeyClass::Ecc => ecc::decode(pal, io, material, ecc_pct_for(attrs)).await,
         KeyClass::HmacSha256 => hmac::decode(material, HsmVaultKeyKind::VarLenHmacSha256),
         KeyClass::HmacSha384 => hmac::decode(material, HsmVaultKeyKind::VarLenHmacSha384),
         KeyClass::HmacSha512 => hmac::decode(material, HsmVaultKeyKind::VarLenHmacSha512),
+    }
+}
+
+/// Returns the PCT for an ECC key pair with usage `attrs`.
+///
+/// A signing key gets a sign/verify PCT.  Any other ECC key is a
+/// key-agreement key and gets an ECDH PCT.
+pub fn ecc_pct_for(attrs: HsmVaultKeyAttrs) -> HsmEccPct {
+    if attrs.sign() {
+        HsmEccPct::SignVerify
+    } else {
+        HsmEccPct::KeyAgreement
+    }
+}
+
+/// Returns the PCT for an RSA key pair with usage `attrs`.
+///
+/// A signing key gets a sign/verify PCT.  Any other RSA key decrypts or
+/// unwraps, and gets an encrypt/decrypt PCT.
+pub fn rsa_pct_for(attrs: HsmVaultKeyAttrs) -> HsmRsaPct {
+    if attrs.sign() {
+        HsmRsaPct::SignVerify
+    } else {
+        HsmRsaPct::EncryptDecrypt
     }
 }

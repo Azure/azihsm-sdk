@@ -38,7 +38,9 @@ use azihsm_ossl_engine_sys as ffi;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::error::EngineResult;
+use crate::error::RetCode;
 use crate::error::catch_panic;
+use crate::error::ossl_check;
 use crate::error::result_to_int;
 use crate::method_table::MethodTable;
 
@@ -98,7 +100,7 @@ fn ec_param2type(ec: *const ffi::EC_KEY) -> EngineResult<(c_int, *mut c_void)> {
             ffi::EC_GROUP_get_curve_name(group),
         )
     };
-    if asn1_flag != 0 && nid != 0 {
+    if asn1_flag != 0 && nid != ffi::NID_undef as c_int {
         // Named curve: the OID object is a library constant, never freed.
         // SAFETY: nid names a builtin curve.
         let obj = unsafe { ffi::OBJ_nid2obj(nid) };
@@ -136,6 +138,9 @@ fn free_param_pval(ptype: c_int, pval: *mut c_void) {
         unsafe { ffi::ASN1_STRING_free(pval.cast()) };
     }
 }
+
+/// PKCS#8 `PrivateKeyInfo` version v1 (RFC 5208), as `eckey_priv_encode` writes.
+const PKCS8_VERSION_V1: c_int = 0;
 
 /// Port of `eckey_priv_encode` (ec_ameth.c) via public API: fill `p8` with the
 /// PKCS#8 encoding of a software EC private key. The enc-flags toggle uses an
@@ -179,19 +184,19 @@ fn sw_priv_encode(
                 free_param_pval(ptype, pval);
                 return Err(EngineError::Other("i2d_ECPrivateKey failed".into()));
             }
-            if ffi::PKCS8_pkey_set0(
+            let rc = ffi::PKCS8_pkey_set0(
                 p8,
                 ffi::OBJ_nid2obj(ffi::NID_X9_62_id_ecPublicKey as c_int),
-                0,
+                PKCS8_VERSION_V1,
                 ptype,
                 pval,
                 ep,
                 eplen,
-            ) != 1
-            {
+            );
+            if let Err(e) = ossl_check(rc, "PKCS8_pkey_set0 failed") {
                 free_param_pval(ptype, pval);
-                ffi::CRYPTO_free(ep.cast::<c_void>(), c"".as_ptr(), 0);
-                return Err(EngineError::Other("PKCS8_pkey_set0 failed".into()));
+                crate::mem::openssl_free(ep.cast::<c_void>());
+                return Err(e);
             }
         }
         Ok(())
@@ -214,9 +219,8 @@ fn sw_priv_decode(
     let mut palg: *const ffi::X509_ALGOR = std::ptr::null();
     // SAFETY: p8 is the PKCS8 structure OpenSSL passed us; get0 fills borrowed
     // out-params.
-    if unsafe { ffi::PKCS8_pkey_get0(null_mut(), &mut p, &mut pklen, &mut palg, p8) } != 1 {
-        return Err(EngineError::Other("PKCS8_pkey_get0 failed".into()));
-    }
+    let rc = unsafe { ffi::PKCS8_pkey_get0(null_mut(), &mut p, &mut pklen, &mut palg, p8) };
+    ossl_check(rc, "PKCS8_pkey_get0 failed")?;
     let mut ptype: c_int = 0;
     let mut pval: *const c_void = std::ptr::null();
     // SAFETY: palg is the borrowed algorithm identifier.
@@ -246,10 +250,13 @@ fn sw_priv_decode(
                 return Err(EngineError::Other("unknown curve in PKCS#8".into()));
             }
             ffi::EC_GROUP_set_asn1_flag(group, ffi::OPENSSL_EC_NAMED_CURVE as c_int);
-            if ffi::EC_KEY_set_group(eckey, group) != 1 {
+            if let Err(e) = ossl_check(
+                ffi::EC_KEY_set_group(eckey, group),
+                "EC_KEY_set_group failed",
+            ) {
                 ffi::EC_GROUP_free(group);
                 ffi::EC_KEY_free(eckey);
-                return Err(EngineError::Other("EC_KEY_set_group failed".into()));
+                return Err(e);
             }
             ffi::EC_GROUP_free(group);
         } else {
@@ -261,9 +268,10 @@ fn sw_priv_decode(
             ffi::EC_KEY_free(eckey);
             return Err(EngineError::Other("d2i_ECPrivateKey failed".into()));
         }
-        if ffi::EVP_PKEY_assign(pkey, ffi::EVP_PKEY_EC as c_int, eckey.cast::<c_void>()) != 1 {
+        let rc = ffi::EVP_PKEY_assign(pkey, ffi::EVP_PKEY_EC as c_int, eckey.cast::<c_void>());
+        if let Err(e) = ossl_check(rc, "EVP_PKEY_assign failed") {
             ffi::EC_KEY_free(eckey);
-            return Err(EngineError::Other("EVP_PKEY_assign failed".into()));
+            return Err(e);
         }
     }
     Ok(())
@@ -282,14 +290,14 @@ unsafe extern "C" fn c_priv_encode<H: EcAsn1Handler>(
     catch_panic(
         || {
             if pk.is_null() {
-                return 0;
+                return RetCode::Fail.into();
             }
             if H::owns(pk) {
                 return result_to_int::<()>(Err(EngineError::Other(H::export_refusal().into())));
             }
             result_to_int(sw_priv_encode(p8, pk))
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -303,7 +311,10 @@ unsafe extern "C" fn c_priv_decode(
     pk: *mut ffi::EVP_PKEY,
     p8: *const ffi::PKCS8_PRIV_KEY_INFO,
 ) -> c_int {
-    catch_panic(|| result_to_int(sw_priv_decode(pk, p8)), 0)
+    catch_panic(
+        || result_to_int(sw_priv_decode(pk, p8)),
+        RetCode::Fail.into(),
+    )
 }
 
 /// `priv_print` override: provider-style info block for owned keys,
@@ -321,7 +332,7 @@ unsafe extern "C" fn c_priv_print<H: EcAsn1Handler>(
     catch_panic(
         || {
             if pkey.is_null() {
-                return 0;
+                return RetCode::Fail.into();
             }
             if H::owns(pkey) {
                 return result_to_int(H::print_owned(out, pkey, indent));
@@ -331,12 +342,12 @@ unsafe extern "C" fn c_priv_print<H: EcAsn1Handler>(
             unsafe {
                 let ec = ffi::EVP_PKEY_get0_EC_KEY(pkey.cast_mut());
                 if ec.is_null() {
-                    return 0;
+                    return RetCode::Fail.into();
                 }
                 ffi::EC_KEY_print(out, ec, indent)
             }
         },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -398,7 +409,7 @@ unsafe extern "C" fn c_pkey_asn1_meths(
     catch_panic(
         // SAFETY: forwarding the out-params OpenSSL passed us.
         || unsafe { crate::method_table::dispatch(&ENGINE_METHODS, e, ameth, nids, nid, |_| ()) },
-        0,
+        RetCode::Fail.into(),
     )
 }
 
@@ -413,17 +424,11 @@ pub fn register_ec_asn1_method<H: EcAsn1Handler>(engine: &Engine) -> EngineResul
     // SAFETY: engine's ptr is valid (from NonNull); c_pkey_asn1_meths is a
     // 'static fn item with the ENGINE_PKEY_ASN1_METHS_PTR signature.
     let rc = unsafe { ffi::ENGINE_set_pkey_asn1_meths(engine.as_ptr(), Some(c_pkey_asn1_meths)) };
-    crate::error::ossl_check(
-        rc,
-        EngineError::Other("ENGINE_set_pkey_asn1_meths failed".into()),
-    )?;
+    crate::error::ossl_check(rc, "ENGINE_set_pkey_asn1_meths failed")?;
     // SAFETY: adds the engine to the global per-NID ASN1 table so
     // EVP_PKEY_asn1_find resolves our method for EC.
     let rc = unsafe { ffi::ENGINE_register_pkey_asn1_meths(engine.as_ptr()) };
-    crate::error::ossl_check(
-        rc,
-        EngineError::Other("ENGINE_register_pkey_asn1_meths failed".into()),
-    )
+    crate::error::ossl_check(rc, "ENGINE_register_pkey_asn1_meths failed")
 }
 
 /// Remove `engine` from the global ASN1 table and drop its method-table entry.

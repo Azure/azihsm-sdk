@@ -3,9 +3,9 @@
 
 //! Module for HACKY generation of Manticore Attestation Key Certificates
 
-use der::Encode;
 use p384::ecdsa::signature::Signer;
 use p384::ecdsa::DerSignature;
+use p384::pkcs8::der::Encode;
 use p384::pkcs8::DecodePrivateKey;
 
 use crate::errors::ManticoreError;
