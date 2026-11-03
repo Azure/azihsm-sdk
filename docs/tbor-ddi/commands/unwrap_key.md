@@ -59,11 +59,7 @@ returned in `pub_key`; symmetric classes (`Aes`, `HmacSha*`) return an empty
 Scope → masking key (resolved on-device):
 
 - `Session` → the per-session masking key (works for any Active session,
-  including before `PartFinal`).  **Platform note:** provisioned only on
-  the std/emu PAL today; the Uno (hardware) PAL returns `UnsupportedCmd`
-  from `session_masking_key`, so `scope = Session` fails on hardware until
-  session-key masking is implemented — target a persisted scope
-  (`Local` / `SecurityDomain`) on Uno.
+  including before `PartFinal`).
 - `Ephemeral` → the partition `PartitionEphemeralMaskingKey`.
 - `Local` → the partition `PartitionLocalMaskingKey`.
 - `SecurityDomain` → the security-domain masking key (`SDMK`).
