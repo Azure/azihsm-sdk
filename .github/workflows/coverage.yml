@@ -56,7 +56,7 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Upload coverage report
       if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: coverage-report-ubuntu
         path: ./target/reports/
@@ -106,7 +106,7 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Upload coverage report
       if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: coverage-report-azihsm-x64-gh-ubuntu2404-pool
         path: ./target/reports/
@@ -143,7 +143,7 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Upload coverage report
       if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: coverage-report-windows
         path: ./target/reports/
@@ -180,7 +180,7 @@ jobs:
       run: cargo xtask precheck --coverage-report
     - name: Upload coverage report
       if: ${{ steps.test-mock-coverage.outcome == 'success' && steps.test-res-fault.outcome == 'success' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: coverage-report-azihsm-x64-gh-winserver22-pool
         path: ./target/reports/
