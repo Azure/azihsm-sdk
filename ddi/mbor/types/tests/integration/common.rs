@@ -106,6 +106,17 @@ pub(crate) const HARD_CODED_BK3: [u8; 48] = [
     0x0F, 0x1E, 0x2D, 0x3C, 0x4B, 0x5A, 0x69, 0x78, 0x87, 0x96, 0xA5, 0xB4, 0xC3, 0xD2, 0xE1, 0xF0,
 ];
 
+/// Joins every handle before propagating the first worker panic, so no
+/// straggler thread keeps issuing DDI commands into the next test.
+#[allow(dead_code)]
+pub fn join_all<T>(handles: Vec<thread::JoinHandle<T>>) -> Vec<T> {
+    let results: Vec<_> = handles.into_iter().map(|h| h.join()).collect();
+    results
+        .into_iter()
+        .map(|r| r.unwrap_or_else(|e| std::panic::resume_unwind(e)))
+        .collect()
+}
+
 #[allow(dead_code)]
 pub fn common_setup(dev: &mut <DdiTest as Ddi>::Dev, ddi: &DdiTest, path: &str) -> u16 {
     common_cleanup(dev, ddi, path, None);

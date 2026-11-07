@@ -945,15 +945,14 @@ fn test_live_migration_concurrent_shared_session() {
         key_threads.push(key_thread);
     }
 
-    // Wait for migration thread to complete
-    let migration_result = migration_thread.join().unwrap();
-
-    // Wait for all key threads to complete
-    let mut key_results = Vec::new();
-    for (i, key_thread) in key_threads.into_iter().enumerate() {
-        let result = key_thread.join().unwrap();
-        key_results.push((i + 1, result));
-    }
+    // Join every thread before propagating any panic so none outlives the test
+    let migration_join = migration_thread.join();
+    let key_results: Vec<_> = join_all(key_threads)
+        .into_iter()
+        .enumerate()
+        .map(|(i, result)| (i + 1, result))
+        .collect();
+    let migration_result = migration_join.unwrap_or_else(|e| std::panic::resume_unwind(e));
 
     // Check results
     assert!(

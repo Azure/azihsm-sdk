@@ -52,9 +52,7 @@ fn test_aes_gcm_encrypt_decrypt_multi_threaded_stress() {
                 threads.push(thread);
             }
 
-            for thread in threads {
-                thread.join().unwrap();
-            }
+            join_all(threads);
         },
     );
 }

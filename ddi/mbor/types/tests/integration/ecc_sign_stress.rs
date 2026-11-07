@@ -44,9 +44,7 @@ fn test_ecc_sign_multi_threaded_stress() {
                 threads.push(thread);
             }
 
-            for thread in threads {
-                thread.join().unwrap();
-            }
+            join_all(threads);
         },
     );
 }
