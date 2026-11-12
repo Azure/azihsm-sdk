@@ -574,6 +574,11 @@ enum azihsm_part_prop_id
      Raw ECC-P384 partition identity public key (`x ‖ y`, 96 bytes).
      */
     AZIHSM_PART_PROP_ID_PART_EX_PUB_KEY = 14,
+    /*
+     Current firmware lifecycle state as an `azihsm_part_state`.
+     Requires API revision 1.1 or newer and queries the device on every call.
+     */
+    AZIHSM_PART_PROP_ID_STATE = 15,
 };
 #ifndef __cplusplus
 typedef uint32_t azihsm_part_prop_id;
@@ -718,6 +723,50 @@ enum azihsm_key_class
 };
 #ifndef __cplusplus
 typedef uint32_t azihsm_key_class;
+#endif // __cplusplus
+
+/*
+ Firmware lifecycle state of a partition.
+
+ This API-level type preserves unrecognized firmware values without exposing
+ the DDI wire type. Not every state permits a partition query to complete.
+ */
+enum azihsm_part_state
+#ifdef __cplusplus
+    : uint32_t
+#endif // __cplusplus
+{
+    /*
+     The partition slot is free.
+     */
+    AZIHSM_PART_STATE_UNALLOCATED = 0,
+    /*
+     Resources and identity are allocated, but DDI traffic is not enabled.
+     */
+    AZIHSM_PART_STATE_ALLOCATED = 1,
+    /*
+     The partition accepts DDI traffic; TBOR finalization has not run.
+     */
+    AZIHSM_PART_STATE_ENABLED = 2,
+    /*
+     The partition is disabled and does not accept DDI traffic.
+     */
+    AZIHSM_PART_STATE_DISABLED = 3,
+    /*
+     TBOR partition initialization has completed; finalization is pending.
+     */
+    AZIHSM_PART_STATE_INITIALIZING = 4,
+    /*
+     TBOR partition finalization has provisioned partition-local masking keys.
+     */
+    AZIHSM_PART_STATE_INITIALIZED = 5,
+    /*
+     The partition is quarantined after an unrecoverable rollback failure.
+     */
+    AZIHSM_PART_STATE_FAULTED = 6,
+};
+#ifndef __cplusplus
+typedef uint32_t azihsm_part_state;
 #endif // __cplusplus
 
 /*

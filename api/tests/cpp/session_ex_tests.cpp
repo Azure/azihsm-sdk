@@ -7,8 +7,10 @@
 #include <scope_guard.hpp>
 
 #include "handle/part_list_handle.hpp"
+#include "utils/sd_provision.hpp"
 #include "utils/utils.hpp"
 
+static_assert(sizeof(azihsm_part_state) == sizeof(uint32_t));
 static_assert(offsetof(azihsm_sess_ex_part_init_params, part_policy) == 0);
 static_assert(offsetof(azihsm_sess_ex_part_final_params, part_policy) == 0);
 static_assert(offsetof(azihsm_sd_create_remote_backup_params, part_policy) == 0);
@@ -87,6 +89,109 @@ class azihsm_sess_ex : public ::testing::Test
 // returns `UnsupportedEncoding` for TBOR ops. Exclude these tests from the mock
 // lane (see `AZIHSM_FEATURE_MOCK` in CMakeLists).
 #if !defined(AZIHSM_FEATURE_MOCK)
+TEST_F(azihsm_sess_ex, part_state_updates_after_provisioning)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_part_state state = AZIHSM_PART_STATE_FAULTED;
+        azihsm_part_prop prop{ AZIHSM_PART_PROP_ID_STATE, &state, sizeof(state) };
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_SUCCESS);
+        ASSERT_EQ(state, AZIHSM_PART_STATE_ENABLED);
+        ASSERT_EQ(prop.len, sizeof(state));
+
+        azihsm_handle sess_handle = provision_sd_co_session(part_handle);
+        ASSERT_NE(sess_handle, 0);
+        auto sess_guard =
+            scope_guard::make_scope_exit([&sess_handle] { azihsm_sess_close(sess_handle); });
+
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_SUCCESS);
+        EXPECT_EQ(state, AZIHSM_PART_STATE_INITIALIZED);
+        EXPECT_EQ(prop.len, sizeof(state));
+    });
+}
+
+TEST_F(azihsm_sess_ex, part_state_buffer_contract)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        azihsm_handle part_handle = open_reset_partition(path);
+        if (part_handle == 0)
+        {
+            return;
+        }
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_part_prop prop{ AZIHSM_PART_PROP_ID_STATE, nullptr, 0 };
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        ASSERT_EQ(prop.len, sizeof(azihsm_part_state));
+
+        constexpr uint8_t sentinel = 0xA5;
+        std::vector<uint8_t> short_buffer(sizeof(azihsm_part_state) - 1, sentinel);
+        prop.val = short_buffer.data();
+        prop.len = static_cast<uint32_t>(short_buffer.size());
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_BUFFER_TOO_SMALL);
+        EXPECT_EQ(prop.len, sizeof(azihsm_part_state));
+        for (auto value : short_buffer)
+        {
+            EXPECT_EQ(value, sentinel);
+        }
+
+        prop.val = nullptr;
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_INVALID_ARGUMENT);
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, nullptr), AZIHSM_STATUS_INVALID_ARGUMENT);
+
+        constexpr uint32_t guard_value = 0xA5A5A5A5;
+        struct
+        {
+            azihsm_part_state state;
+            uint32_t guard;
+        } output{ AZIHSM_PART_STATE_FAULTED, guard_value };
+        prop.val = &output;
+        prop.len = sizeof(output);
+        ASSERT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_SUCCESS);
+        EXPECT_EQ(output.state, AZIHSM_PART_STATE_ENABLED);
+        EXPECT_EQ(output.guard, guard_value);
+        EXPECT_EQ(prop.len, sizeof(output.state));
+    });
+}
+
+TEST_F(azihsm_sess_ex, part_state_invalid_handle)
+{
+    const azihsm_handle bad_handle = 0xDEADBEEF;
+    azihsm_part_state state = AZIHSM_PART_STATE_FAULTED;
+    azihsm_part_prop prop{ AZIHSM_PART_PROP_ID_STATE, &state, sizeof(state) };
+
+    EXPECT_EQ(azihsm_part_get_prop(bad_handle, &prop), AZIHSM_STATUS_INVALID_HANDLE);
+    EXPECT_EQ(state, AZIHSM_PART_STATE_FAULTED);
+}
+
+TEST_F(azihsm_sess_ex, part_state_rejects_legacy_api_revision)
+{
+    part_list_.for_each_part([](std::vector<azihsm_char> &path) {
+        const azihsm_str part_path{ path.data(), static_cast<uint32_t>(path.size()) };
+        const azihsm_api_rev legacy_revision{ 1, 0 };
+        azihsm_handle part_handle = 0;
+        ASSERT_EQ(
+            azihsm_part_open(&part_path, &part_handle, legacy_revision),
+            AZIHSM_STATUS_SUCCESS
+        );
+        auto part_guard =
+            scope_guard::make_scope_exit([&part_handle] { azihsm_part_close(part_handle); });
+
+        azihsm_part_state state = AZIHSM_PART_STATE_FAULTED;
+        azihsm_part_prop prop{ AZIHSM_PART_PROP_ID_STATE, &state, sizeof(state) };
+        EXPECT_EQ(azihsm_part_get_prop(part_handle, &prop), AZIHSM_STATUS_UNSUPPORTED_API_REVISION);
+        EXPECT_EQ(state, AZIHSM_PART_STATE_FAULTED);
+    });
+}
+
 TEST_F(azihsm_sess_ex, open_and_close)
 {
     part_list_.for_each_part([](std::vector<azihsm_char> &path) {

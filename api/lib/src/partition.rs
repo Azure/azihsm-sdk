@@ -852,6 +852,23 @@ impl HsmPartition {
         ddi::get_cert_chain(self, slot)
     }
 
+    /// Queries the partition's current firmware lifecycle state via TBOR.
+    ///
+    /// Performs a fresh `PartInfo` query on every call without opening a
+    /// session. The returned state is a point-in-time observation, not a
+    /// guarantee that a subsequent operation will observe the same state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HsmError::UnsupportedApiRevision`] for API revisions below
+    /// 1.1 and propagates device or transport failures. Firmware accepts
+    /// queries only in the Enabled, Initializing, and Initialized states;
+    /// a failed query must not be interpreted as a particular lifecycle state.
+    pub fn state(&self) -> HsmResult<HsmPartState> {
+        ddi::require_tbor_rev(self.api_rev())?;
+        Ok(ddi::part_info(self)?.state)
+    }
+
     /// Queries the partition's stable identity (PID) via `PartInfo`.
     ///
     /// Returns the 16-byte PID, which a caller uses to name this
