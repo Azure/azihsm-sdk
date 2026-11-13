@@ -3,8 +3,6 @@
 
 //! Module maps physical session IDs to virtual session IDs.
 
-use bitfield::Bit;
-use bitfield::BitMut;
 use zeroize::Zeroize;
 
 use crate::errors::ManticoreError;
@@ -89,8 +87,8 @@ impl SessionTable {
             return false;
         }
 
-        self.session_allocation_mask.bit(id.into())
-            && self.session_renegotiation_mask.bit(id.into())
+        bitfield::Bit::bit(&self.session_allocation_mask, id.into())
+            && bitfield::Bit::bit(&self.session_renegotiation_mask, id.into())
     }
 
     /// Returns whether the session is valid or not. A session is valid if it is currently
@@ -108,8 +106,8 @@ impl SessionTable {
             return false;
         }
 
-        self.session_allocation_mask.bit(id.into())
-            && !self.session_renegotiation_mask.bit(id.into())
+        bitfield::Bit::bit(&self.session_allocation_mask, id.into())
+            && !bitfield::Bit::bit(&self.session_renegotiation_mask, id.into())
     }
 
     /// Similar to create_session but allows to map a specific virtual session to
@@ -122,7 +120,7 @@ impl SessionTable {
     #[allow(unused)]
     pub(crate) fn recreate_session(&mut self, id: u16, target_id: u16) {
         if (id as usize) < MAX_SESSIONS && self.needs_renegotiation(id) {
-            self.session_renegotiation_mask.set_bit(id.into(), false);
+            bitfield::BitMut::set_bit(&mut self.session_renegotiation_mask, id.into(), false);
             self.table[id as usize] = target_id;
         }
     }
@@ -144,7 +142,7 @@ impl SessionTable {
         }
 
         self.table[id as usize] = target_id;
-        self.session_allocation_mask.set_bit(id.into(), true);
+        bitfield::BitMut::set_bit(&mut self.session_allocation_mask, id.into(), true);
         Ok(id)
     }
 
@@ -172,8 +170,8 @@ impl SessionTable {
     /// * `id` - Virtual session id in the SessionTable
     pub(crate) fn delete(&mut self, id: u16) {
         if (id as usize) < MAX_SESSIONS {
-            self.session_allocation_mask.set_bit(id.into(), false);
-            self.session_renegotiation_mask.set_bit(id.into(), false);
+            bitfield::BitMut::set_bit(&mut self.session_allocation_mask, id.into(), false);
+            bitfield::BitMut::set_bit(&mut self.session_renegotiation_mask, id.into(), false);
             self.table[id as usize] = 0;
         }
     }
