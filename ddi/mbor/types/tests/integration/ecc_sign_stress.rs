@@ -9,7 +9,6 @@ use std::time::Instant;
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_codec::MborByteArray;
 use azihsm_ddi_mbor_types::*;
-use chrono::Local;
 use test_with_tracing::test;
 
 use super::common::*;
@@ -113,10 +112,7 @@ fn test_thread_fn(_thread_id: u8, device_path: String, max_attempts: usize) {
 
     thread::sleep(std::time::Duration::from_secs(1));
 
-    // Get the current local time
-    let now = Local::now();
-    // Format the time with milliseconds
-    println!("start {}", now.format("%Y-%m-%d %H:%M:%S%.3f"));
+    println!("start");
     let mut counter: usize = 0;
     let start_time = Instant::now();
     while Instant::now().duration_since(start_time).as_secs() < NUM_SECS {
@@ -134,11 +130,9 @@ fn test_thread_fn(_thread_id: u8, device_path: String, max_attempts: usize) {
         counter += 1;
     }
 
-    // Get the current local time
-    let now = Local::now();
+    let elapsed = start_time.elapsed();
     thread::sleep(std::time::Duration::from_secs(1));
-    // Format the time with milliseconds
-    println!("End {}", now.format("%Y-%m-%d %H:%M:%S%.3f"));
+    println!("End after {elapsed:?}");
 
     println!(
         "Number of Ecc-Sign ops/sec : {}",
