@@ -8,7 +8,6 @@ use std::time::Instant;
 
 use azihsm_ddi::*;
 use azihsm_ddi_mbor_types::*;
-use chrono::Local;
 use test_with_tracing::test;
 
 use super::common::*;
@@ -133,10 +132,7 @@ fn test_aes_xts_encrypt_decrypt_thread_fn(
     let tweak = [0x4; 16usize];
     let data_len = data.len();
 
-    // Get the current local time
-    let now = Local::now();
-    // Format the time with milliseconds
-    println!("start {}", now.format("%Y-%m-%d %H:%M:%S%.3f"));
+    println!("start");
     let mut counter: usize = 0;
     let start_time = Instant::now();
     while Instant::now().duration_since(start_time).as_secs() < NUM_SECS {
@@ -179,11 +175,9 @@ fn test_aes_xts_encrypt_decrypt_thread_fn(
         counter += 1;
     }
 
-    // Get the current local time
-    let now = Local::now();
+    let elapsed = start_time.elapsed();
     thread::sleep(std::time::Duration::from_secs(1));
-    // Format the time with milliseconds
-    println!("End {}", now.format("%Y-%m-%d %H:%M:%S%.3f"));
+    println!("End after {elapsed:?}");
 
     println!("Number of XTS Encrypt Decrypt ops completed : {}", counter);
 
